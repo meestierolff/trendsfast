@@ -219,6 +219,14 @@ export function createV1Service(input: { schedule(publicId: string): void }): V1
           "The API key provider-cost limit would be exceeded.",
         );
       }
+      if (admitted.status === "USAGE_LIMITED") {
+        throw new ApiServiceError(
+          "USAGE_LIMITED",
+          admitted.reason === "ON_DEMAND_MONTHLY_LIMIT"
+            ? "The Founder plan's ten accepted on-demand runs for this billing period have been used."
+            : "This project does not currently have an active Founder entitlement.",
+        );
+      }
       if (admitted.status === "IDEMPOTENCY_CONFLICT") {
         throw new ApiServiceError(
           "CONFLICT",

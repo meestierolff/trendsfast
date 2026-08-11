@@ -100,4 +100,31 @@ describe("v1 service cost admission wiring", () => {
     expect(schedule).toHaveBeenCalledOnce();
     expect(schedule).toHaveBeenCalledWith("scan_1");
   });
+
+  it("surfaces a durable Founder monthly admission limit without scheduling work", async () => {
+    repositoryMocks.getProject.mockResolvedValue({
+      id: "project_1",
+      normalizedUrl: "https://example.com/",
+    });
+    repositoryMocks.admitApiRequest.mockResolvedValue({
+      status: "USAGE_LIMITED",
+      reason: "ON_DEMAND_MONTHLY_LIMIT",
+    });
+    const schedule = vi.fn();
+    const service = createV1Service({ schedule });
+
+    await expect(
+      service.createOrReuse({
+        principal: {
+          apiKeyId: "key_1",
+          projectId: "project_1",
+          environment: "live",
+          scopes: ["next_move:write"],
+        },
+        idempotencyKey: "5c55b81c-bd64-4bdb-b579-91017b476b7f",
+        request: { product_url: "https://example.com" },
+      }),
+    ).rejects.toMatchObject({ code: "USAGE_LIMITED", status: 429 });
+    expect(schedule).not.toHaveBeenCalled();
+  });
 });

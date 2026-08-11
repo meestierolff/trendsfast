@@ -127,10 +127,26 @@ export const EnvironmentSchema = z
     NEXT_PUBLIC_TURNSTILE_SITE_KEY: OptionalTextSchema,
 
     BILLING_ENABLED: BooleanSchema(false),
+    PAID_MONITORING_ENABLED: BooleanSchema(false),
+    FOUNDING_100_ENABLED: BooleanSchema(false),
+    CLOUD_TRIAL_ENABLED: BooleanSchema(false),
     STRIPE_MODE: z.enum(["test", "live"]).default("test"),
     STRIPE_SECRET_KEY: OptionalSecretSchema,
     STRIPE_WEBHOOK_SECRET: OptionalSecretSchema,
     STRIPE_FOUNDER_CLOUD_PRICE_ID: OptionalTextSchema,
+    CRON_SECRET: OptionalSecretSchema,
+    MONITORING_CRON_BATCH_SIZE: NumberSchema({
+      defaultValue: 1,
+      min: 1,
+      max: 10,
+      integer: true,
+    }),
+    MONITORING_LEASE_SECONDS: NumberSchema({
+      defaultValue: 300,
+      min: 60,
+      max: 900,
+      integer: true,
+    }),
 
     DATAFAST_ENABLED: BooleanSchema(false),
     DATAFAST_WEBSITE_ID: OptionalTextSchema,
@@ -255,11 +271,11 @@ export const EnvironmentSchema = z
           message: "Billing requires both Stripe server-side secrets",
         });
       }
-      if (!env.STRIPE_FOUNDER_CLOUD_PRICE_ID) {
+      if (!env.STRIPE_FOUNDER_CLOUD_PRICE_ID?.startsWith("price_")) {
         context.addIssue({
           code: "custom",
           path: ["STRIPE_FOUNDER_CLOUD_PRICE_ID"],
-          message: "Billing requires an explicit Stripe price ID",
+          message: "Billing requires an explicit Stripe price_ ID",
         });
       }
       if (env.STRIPE_MODE === "live" && env.NODE_ENV !== "production") {
@@ -269,6 +285,67 @@ export const EnvironmentSchema = z
           message: "Live Stripe mode is accepted only in production",
         });
       }
+    }
+
+    if (env.STRIPE_SECRET_KEY) {
+      const expectedPrefixes =
+        env.STRIPE_MODE === "test" ? ["sk_test_", "rk_test_"] : ["sk_live_", "rk_live_"];
+      if (!expectedPrefixes.some((prefix) => env.STRIPE_SECRET_KEY?.startsWith(prefix))) {
+        context.addIssue({
+          code: "custom",
+          path: ["STRIPE_SECRET_KEY"],
+          message: "Stripe secret-key prefix must match STRIPE_MODE",
+        });
+      }
+    }
+
+    if (env.STRIPE_WEBHOOK_SECRET && !env.STRIPE_WEBHOOK_SECRET.startsWith("whsec_")) {
+      context.addIssue({
+        code: "custom",
+        path: ["STRIPE_WEBHOOK_SECRET"],
+        message: "Stripe webhook secret must use the whsec_ prefix",
+      });
+    }
+
+    if (env.PAID_MONITORING_ENABLED && !env.BILLING_ENABLED) {
+      context.addIssue({
+        code: "custom",
+        path: ["PAID_MONITORING_ENABLED"],
+        message: "Paid monitoring requires BILLING_ENABLED",
+      });
+    }
+
+    if (env.FOUNDING_100_ENABLED) {
+      context.addIssue({
+        code: "custom",
+        path: ["FOUNDING_100_ENABLED"],
+        message: "Founding 100 is not authorized for launch",
+      });
+    }
+    if (env.CLOUD_TRIAL_ENABLED) {
+      context.addIssue({
+        code: "custom",
+        path: ["CLOUD_TRIAL_ENABLED"],
+        message: "Cloud trial is not authorized for launch",
+      });
+    }
+
+    if (env.PAID_MONITORING_ENABLED && (!env.CRON_SECRET || env.CRON_SECRET.length < 32)) {
+      context.addIssue({
+        code: "custom",
+        path: ["CRON_SECRET"],
+        message: "Paid monitoring requires CRON_SECRET with at least 32 characters",
+      });
+    }
+    if (
+      env.PAID_MONITORING_ENABLED &&
+      env.MONITORING_LEASE_SECONDS < env.MAX_SCAN_DURATION_SECONDS + 30
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["MONITORING_LEASE_SECONDS"],
+        message: "Paid monitoring lease must exceed the scan deadline by at least 30 seconds",
+      });
     }
 
     if (env.DATAFAST_ENABLED && !env.DATAFAST_WEBSITE_ID) {

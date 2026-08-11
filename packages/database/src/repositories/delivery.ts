@@ -6,6 +6,8 @@ import type { TrendsFastDatabase } from "../client";
 import {
   deliveryTokens,
   evidenceReceipts,
+  founderUsageEvents,
+  monitoringRuns,
   nextMoves,
   projectContextVersions,
   projects,
@@ -13,6 +15,18 @@ import {
   scanRequests,
   scanRuns,
 } from "../schema";
+import { admitFounderUsage } from "./founder-usage";
+
+export class FounderDeliveryAdmissionError extends Error {
+  constructor(readonly reason: "ENTITLEMENT_INACTIVE" | "DELIVERY_DAILY_LIMIT") {
+    super(
+      reason === "DELIVERY_DAILY_LIMIT"
+        ? "The Founder plan daily delivery limit has been reached"
+        : "The Founder entitlement is not active",
+    );
+    this.name = "FounderDeliveryAdmissionError";
+  }
+}
 
 export type DeliveryIssueResult =
   | {
@@ -69,6 +83,32 @@ export class DeliveryRepository {
 
       const now = new Date();
       if (input.expiresAt <= now) throw new Error("Delivery expiry must be future-dated");
+      const [paidAcceptance] = await tx
+        .select({ projectId: founderUsageEvents.projectId })
+        .from(founderUsageEvents)
+        .where(
+          and(
+            eq(founderUsageEvents.scanRequestId, move.scanRequestId),
+            inArray(founderUsageEvents.kind, ["SCHEDULED_RUN_ACCEPTED", "ON_DEMAND_RUN_ACCEPTED"]),
+          ),
+        )
+        .limit(1);
+      if (paidAcceptance) {
+        const admission = await admitFounderUsage(tx as unknown as TrendsFastDatabase, {
+          projectId: paidAcceptance.projectId,
+          scanRequestId: move.scanRequestId,
+          kind: "NEXT_MOVE_DELIVERED",
+          idempotencyKey: `delivery:${move.id}`,
+          occurredAt: now,
+        });
+        if (admission.status === "LIMITED") {
+          throw new FounderDeliveryAdmissionError(
+            admission.reason === "DELIVERY_DAILY_LIMIT"
+              ? "DELIVERY_DAILY_LIMIT"
+              : "ENTITLEMENT_INACTIVE",
+          );
+        }
+      }
       const issued = createDeliveryToken();
       await tx.insert(deliveryTokens).values({
         nextMoveId: move.id,
@@ -90,6 +130,15 @@ export class DeliveryRepository {
         .update(scanRuns)
         .set({ state: "READY", completedAt: now, updatedAt: now })
         .where(eq(scanRuns.id, move.scanRunId));
+      await tx
+        .update(monitoringRuns)
+        .set({ state: "COMPLETED", completedAt: now, updatedAt: now })
+        .where(
+          and(
+            eq(monitoringRuns.scanRequestId, move.scanRequestId),
+            eq(monitoringRuns.state, "REVIEW_REQUIRED"),
+          ),
+        );
       await tx.insert(reviewEvents).values({
         scanRequestId: move.scanRequestId,
         scanRunId: move.scanRunId,

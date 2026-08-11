@@ -15,12 +15,15 @@ import {
   apiKeys,
   deliveryTokens,
   evidenceReceipts,
+  founderUsageEvents,
   nextMoves,
+  projectEntitlements,
   projectContextVersions,
   projects,
   scanRequests,
   scanRuns,
 } from "../schema";
+import { admitFounderUsage } from "./founder-usage";
 
 const USD_MICROS = 1_000_000;
 
@@ -107,7 +110,7 @@ export function normalizeProductUrl(value: string): string {
 
 export type CreateScanRequestInput = {
   request: NextMoveRequest;
-  origin: "PUBLIC_FORM" | "API" | "OPS" | "FIXTURE";
+  origin: "PUBLIC_FORM" | "API" | "OPS" | "FIXTURE" | "MONITORING";
   projectId?: string;
   apiKeyId?: string;
   idempotencyKey?: string;
@@ -136,7 +139,8 @@ export type AdmitApiScanRequestResult =
       committedCostUsd: number;
       projectedCostUsd: number;
       maximumCostUsd: number;
-    };
+    }
+  | { status: "USAGE_LIMITED"; reason: "ENTITLEMENT_INACTIVE" | "ON_DEMAND_MONTHLY_LIMIT" };
 
 export type TransitionScanOptions = {
   failureCode?: string;
@@ -434,6 +438,33 @@ export class ScanRepository {
         };
       }
 
+      let founderUsageEventId: string | null = null;
+      if (input.projectId) {
+        const [founderEntitlement] = await tx
+          .select({ projectId: projectEntitlements.projectId })
+          .from(projectEntitlements)
+          .where(eq(projectEntitlements.projectId, input.projectId))
+          .limit(1);
+        if (founderEntitlement) {
+          const usage = await admitFounderUsage(tx as unknown as TrendsFastDatabase, {
+            projectId: input.projectId,
+            kind: "ON_DEMAND_RUN_ACCEPTED",
+            idempotencyKey: `api:${input.apiKeyId}:${idempotencyKeyHash}`,
+            occurredAt: input.now,
+          });
+          if (usage.status === "LIMITED") {
+            return {
+              status: "USAGE_LIMITED" as const,
+              reason:
+                usage.reason === "ON_DEMAND_MONTHLY_LIMIT"
+                  ? "ON_DEMAND_MONTHLY_LIMIT"
+                  : "ENTITLEMENT_INACTIVE",
+            };
+          }
+          founderUsageEventId = usage.event.id;
+        }
+      }
+
       const [created] = await tx
         .insert(scanRequests)
         .values({
@@ -457,6 +488,12 @@ export class ScanRepository {
         })
         .returning();
       if (!created) throw new Error("Could not atomically admit the API scan request");
+      if (founderUsageEventId) {
+        await tx
+          .update(founderUsageEvents)
+          .set({ scanRequestId: created.id })
+          .where(eq(founderUsageEvents.id, founderUsageEventId));
+      }
       return { status: "CREATED" as const, request: created };
     });
   }

@@ -14,6 +14,11 @@ describe("environment validation", () => {
     expect(env.PUBLIC_SCAN_PROCESSING).toBe("inline");
     expect(env.PUBLIC_SCAN_DAILY_LIMIT).toBe(20);
     expect(env.BILLING_ENABLED).toBe(false);
+    expect(env.PAID_MONITORING_ENABLED).toBe(false);
+    expect(env.FOUNDING_100_ENABLED).toBe(false);
+    expect(env.CLOUD_TRIAL_ENABLED).toBe(false);
+    expect(env.CRON_SECRET).toBeUndefined();
+    expect(env.MONITORING_CRON_BATCH_SIZE).toBe(1);
     expect(env.STRIPE_MODE).toBe("test");
     expect(env.XAI_MAX_TOOL_CALLS_PER_SCAN).toBe(2);
     expect(env.TAVILY_MAX_CREDITS_PER_SCAN).toBe(2);
@@ -112,6 +117,98 @@ describe("environment validation", () => {
     expect(tryParseEnv({ BILLING_ENABLED: "true", STRIPE_SECRET_KEY: "sk_test_one" }).success).toBe(
       false,
     );
+  });
+
+  it("requires a strong cron secret before paid monitoring can run", () => {
+    expect(tryParseEnv({ PAID_MONITORING_ENABLED: "true" }).success).toBe(false);
+    expect(
+      tryParseEnv({
+        BILLING_ENABLED: "true",
+        PAID_MONITORING_ENABLED: "true",
+        STRIPE_SECRET_KEY: "sk_test_configured",
+        STRIPE_WEBHOOK_SECRET: "whsec_configured",
+        STRIPE_FOUNDER_CLOUD_PRICE_ID: "price_founder",
+        CRON_SECRET: "c".repeat(32),
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects paid monitoring without the billing gate", () => {
+    expect(
+      tryParseEnv({
+        PAID_MONITORING_ENABLED: "true",
+        CRON_SECRET: "c".repeat(32),
+      }).success,
+    ).toBe(false);
+  });
+
+  it("fails closed when an unimplemented commercial offer is toggled on", () => {
+    expect(tryParseEnv({ FOUNDING_100_ENABLED: "true" }).success).toBe(false);
+    expect(tryParseEnv({ CLOUD_TRIAL_ENABLED: "true" }).success).toBe(false);
+  });
+
+  it("rejects Stripe keys whose mode prefix does not match STRIPE_MODE", () => {
+    expect(tryParseEnv({ STRIPE_MODE: "test", STRIPE_SECRET_KEY: "sk_live_wrong" }).success).toBe(
+      false,
+    );
+    expect(tryParseEnv({ STRIPE_MODE: "live", STRIPE_SECRET_KEY: "rk_test_wrong" }).success).toBe(
+      false,
+    );
+    expect(tryParseEnv({ STRIPE_MODE: "test", STRIPE_SECRET_KEY: "rk_test_valid" }).success).toBe(
+      true,
+    );
+  });
+
+  it("rejects malformed Stripe webhook secrets and enabled billing price IDs", () => {
+    expect(tryParseEnv({ STRIPE_WEBHOOK_SECRET: "not-a-webhook-secret" }).success).toBe(false);
+    expect(
+      tryParseEnv({
+        BILLING_ENABLED: "true",
+        STRIPE_SECRET_KEY: "sk_test_configured",
+        STRIPE_WEBHOOK_SECRET: "whsec_configured",
+        STRIPE_FOUNDER_CLOUD_PRICE_ID: "prod_not_a_price",
+      }).success,
+    ).toBe(false);
+    expect(
+      tryParseEnv({
+        BILLING_ENABLED: "true",
+        STRIPE_SECRET_KEY: "sk_test_configured",
+        STRIPE_WEBHOOK_SECRET: "whsec_configured",
+        STRIPE_FOUNDER_CLOUD_PRICE_ID: "price_founder",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("keeps the monitoring cron batch bounded", () => {
+    expect(parseEnv({ MONITORING_CRON_BATCH_SIZE: "5" }).MONITORING_CRON_BATCH_SIZE).toBe(5);
+    expect(tryParseEnv({ MONITORING_CRON_BATCH_SIZE: "11" }).success).toBe(false);
+  });
+
+  it("requires a monitoring lease longer than the configured scan deadline", () => {
+    expect(
+      tryParseEnv({
+        BILLING_ENABLED: "true",
+        PAID_MONITORING_ENABLED: "true",
+        STRIPE_SECRET_KEY: "sk_test_configured",
+        STRIPE_WEBHOOK_SECRET: "whsec_configured",
+        STRIPE_FOUNDER_CLOUD_PRICE_ID: "price_founder",
+        CRON_SECRET: "c".repeat(32),
+        MAX_SCAN_DURATION_SECONDS: "300",
+        MONITORING_LEASE_SECONDS: "300",
+      }).success,
+    ).toBe(false);
+    expect(
+      tryParseEnv({
+        BILLING_ENABLED: "true",
+        PAID_MONITORING_ENABLED: "true",
+        STRIPE_SECRET_KEY: "sk_test_configured",
+        STRIPE_WEBHOOK_SECRET: "whsec_configured",
+        STRIPE_FOUNDER_CLOUD_PRICE_ID: "price_founder",
+        CRON_SECRET: "c".repeat(32),
+        MAX_SCAN_DURATION_SECONDS: "300",
+        MONITORING_LEASE_SECONDS: "330",
+      }).success,
+    ).toBe(true);
   });
 
   it("requires both Turnstile credentials when abuse protection is enabled", () => {
