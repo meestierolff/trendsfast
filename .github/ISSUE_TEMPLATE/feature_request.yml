@@ -1,0 +1,45 @@
+name: Focused feature request
+description: Propose one evidence-backed user outcome.
+title: "feature: "
+labels: [enhancement, needs-triage]
+body:
+  - type: textarea
+    id: user_problem
+    attributes:
+      label: User problem
+      description: Who has this problem, when, and what evidence shows it matters?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Smallest useful outcome
+      description: Describe one vertical slice, not a bundle of unrelated providers/features.
+    validations:
+      required: true
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-goals
+    validations:
+      required: true
+  - type: textarea
+    id: contract
+    attributes:
+      label: Product/API/data contract
+      description: Include expected WAIT/failure behavior and affected feature document.
+    validations:
+      required: true
+  - type: textarea
+    id: trust
+    attributes:
+      label: Security, privacy, provider rights, and cost
+      description: Identify new data, calls, terms, bounds, abuse cases, and rollback.
+    validations:
+      required: true
+  - type: textarea
+    id: tests
+    attributes:
+      label: Tests to write first
+    validations:
+      required: true

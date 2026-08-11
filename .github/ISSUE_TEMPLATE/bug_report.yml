@@ -1,0 +1,59 @@
+name: Bug report
+description: Report a reproducible defect without secrets or private data.
+title: "bug: "
+labels: [bug, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report exploitable vulnerabilities here; follow `SECURITY.md`.
+        Use fixture or synthetic data and remove API keys, result tokens, emails,
+        customer URLs, provider payloads, and database contents.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the observed result and why it violates the product contract.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal fixture reproduction
+      description: Include commands and synthetic input; never include a credential or private link.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Commit/tag
+      placeholder: Full commit SHA or tag
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Credential mode
+      options: [fixture, byok, managed, unknown]
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Node/pnpm/PostgreSQL/browser versions; no environment values.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety checks
+      options:
+        - label: I removed secrets, personal/customer data, and private URLs/tokens.
+          required: true
+        - label: This is not an undisclosed security vulnerability.
+          required: true

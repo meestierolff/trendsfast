@@ -1,0 +1,51 @@
+name: Provider integration proposal
+description: Propose one bounded source only after evidence of a missing signal.
+title: "provider: "
+labels: [provider, legal-review, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Provider code is not permission. New sources need demand evidence,
+        account ownership, current terms review, fixture/contract tests, exact
+        attribution, bounded cost, health/read-back, degradation, and rollback.
+        Automated Reddit proposals remain blocked at `LEGAL_REVIEW`.
+  - type: input
+    id: provider
+    attributes:
+      label: Provider and exact API product
+    validations:
+      required: true
+  - type: textarea
+    id: missing_signal
+    attributes:
+      label: Missing user signal
+      description: Which measured cohort evidence shows the launch panel is insufficient?
+    validations:
+      required: true
+  - type: textarea
+    id: rights
+    attributes:
+      label: Rights and account review
+      description: Link current official terms/policies and summarize commercial use, display, retention, attribution, deletion, and owner actions. Do not claim legal approval.
+    validations:
+      required: true
+  - type: textarea
+    id: bounds
+    attributes:
+      label: Calls, quota, cost, retention, and failure bounds
+    validations:
+      required: true
+  - type: textarea
+    id: fixture
+    attributes:
+      label: Fixture and tests-first plan
+      description: Include malformed, missing-key, timeout/rate-limit, partial, cost-ceiling, provenance, and secret-redaction cases.
+    validations:
+      required: true
+  - type: textarea
+    id: rollout
+    attributes:
+      label: Health check, production read-back, status, and rollback
+    validations:
+      required: true
