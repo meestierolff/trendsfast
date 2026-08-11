@@ -6,7 +6,7 @@ export const DEFAULT_TITLE = "TrendsFast — Social Media Trend API for AI Agent
 export const DEFAULT_DESCRIPTION =
   "Spot relevant social media and search trends, then turn them into evidence-backed content ideas, hooks, formats, and channels for ChatGPT, Claude, Codex, Cursor, OpenClaw, and other AI agents.";
 
-type SiteEnvironment = Partial<Pick<NodeJS.ProcessEnv, "APP_URL" | "VERCEL_ENV">>;
+type SiteEnvironment = Readonly<Record<string, string | undefined>>;
 
 export function siteOrigin(environment: SiteEnvironment = process.env): string {
   const configuredOrigin = environment.APP_URL?.trim();
