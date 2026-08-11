@@ -6,7 +6,6 @@ import { createStripeBilling, normalizeStripeEvent } from "@trendsfast/billing";
 import { loadEnv, type Environment } from "@trendsfast/config";
 
 import { getRepositories } from "./server-database";
-import { derivePrivacyHash } from "./first-party-analytics";
 
 export class StripeWebhookVerificationError extends Error {
   constructor() {
@@ -43,36 +42,10 @@ export async function projectStripeWebhook(input: { rawBody: Uint8Array; signatu
   if (!event) return { status: "IGNORED" as const, reason: "UNSUPPORTED_OR_INVALID_EVENT" };
   const payloadHash = `sha256:${createHash("sha256").update(body).digest("hex")}`;
   const repositories = getRepositories();
-  const result = await repositories.billing.projectWebhook({
+  return repositories.billing.projectWebhook({
     event,
     payloadHash,
     expectedLivemode: env.STRIPE_MODE === "live",
     expectedPriceId: env.STRIPE_FOUNDER_CLOUD_PRICE_ID ?? "",
   });
-  const subscriptionId =
-    event.kind === "subscription"
-      ? event.subscriptionId
-      : event.kind === "invoice"
-        ? event.subscriptionId
-        : null;
-  const secret = env.SESSION_SECRET ?? "";
-  if (
-    result.status === "APPLIED" &&
-    result.entitlementActivated &&
-    subscriptionId &&
-    secret.length >= 32
-  ) {
-    await repositories.analytics
-      .appendOnce({
-        name: "subscription_started",
-        dedupeKey: derivePrivacyHash(
-          secret,
-          "analytics-dedupe:v1",
-          `subscription_started:${subscriptionId}`,
-        ),
-        properties: { plan: "founder_cloud", mode: env.STRIPE_MODE },
-      })
-      .catch(() => undefined);
-  }
-  return result;
 }

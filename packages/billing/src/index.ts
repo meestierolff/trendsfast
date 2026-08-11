@@ -46,8 +46,26 @@ export function billingAvailability(input: {
 export function projectEntitlement(input: {
   subscriptionStatus: SubscriptionProjectionStatus;
   paymentState: PaymentProjectionState;
+  subscriptionPeriodStart: Date | null;
+  subscriptionPeriodEnd: Date | null;
+  paymentPeriodStart: Date | null;
+  paymentPeriodEnd: Date | null;
 }): "founder_cloud" | null {
-  return input.paymentState === "paid" && input.subscriptionStatus === "active"
+  const subscriptionStart = input.subscriptionPeriodStart?.getTime();
+  const subscriptionEnd = input.subscriptionPeriodEnd?.getTime();
+  const paymentStart = input.paymentPeriodStart?.getTime();
+  const paymentEnd = input.paymentPeriodEnd?.getTime();
+  const currentPeriodPaid =
+    subscriptionStart !== undefined &&
+    subscriptionEnd !== undefined &&
+    paymentStart !== undefined &&
+    paymentEnd !== undefined &&
+    Number.isFinite(subscriptionStart) &&
+    Number.isFinite(subscriptionEnd) &&
+    subscriptionStart < subscriptionEnd &&
+    subscriptionStart === paymentStart &&
+    subscriptionEnd === paymentEnd;
+  return input.paymentState === "paid" && input.subscriptionStatus === "active" && currentPeriodPaid
     ? "founder_cloud"
     : null;
 }
@@ -58,6 +76,28 @@ type CheckoutCreate = (
 ) => Promise<{
   id: string;
   url?: string | null;
+  status?: "open" | "complete" | "expired" | null;
+}>;
+
+type CheckoutRetrieve = (id: string) => Promise<{
+  id: string;
+  url?: string | null;
+  status: "open" | "complete" | "expired" | null;
+  metadata?: Record<string, string> | null;
+}>;
+
+type CheckoutList = (input: {
+  created: { gte: number };
+  limit: number;
+  starting_after?: string;
+}) => Promise<{
+  data: Array<{
+    id: string;
+    url?: string | null;
+    status: "open" | "complete" | "expired" | null;
+    metadata?: Record<string, string> | null;
+  }>;
+  has_more: boolean;
 }>;
 
 type PortalCreate = (
@@ -69,7 +109,9 @@ type PortalCreate = (
 }>;
 
 export type StripeBillingClient = {
-  checkout: { sessions: { create: CheckoutCreate } };
+  checkout: {
+    sessions: { create: CheckoutCreate; retrieve: CheckoutRetrieve; list: CheckoutList };
+  };
   billingPortal: { sessions: { create: PortalCreate } };
   webhooks: {
     constructEvent(rawBody: string | Buffer, signature: string, secret: string): unknown;
@@ -100,12 +142,37 @@ export function stripeMutationIdempotencyKey(input: {
 }) {
   if (Number.isNaN(input.now.getTime())) throw new Error("STRIPE_IDEMPOTENCY_WINDOW_INVALID");
   const iso = input.now.toISOString();
-  const window = input.kind === "checkout" ? iso.slice(0, 10) : iso.slice(0, 13);
+  const window = iso.slice(0, 13);
   const digest = createHash("sha256")
     .update(`${input.kind}\0${input.subject}\0${input.plan ?? ""}\0${window}`)
     .digest("hex")
     .slice(0, 48);
   return `tf_${input.kind}_${digest}`;
+}
+
+export function checkoutSessionExpiresAt(now: Date): Date {
+  if (Number.isNaN(now.getTime())) throw new Error("STRIPE_CHECKOUT_TIME_INVALID");
+  const minimum = new Date(now.getTime() + 31 * 60 * 1_000);
+  minimum.setUTCMinutes(0, 0, 0);
+  if (minimum <= now || minimum.getTime() < now.getTime() + 31 * 60 * 1_000) {
+    minimum.setUTCHours(minimum.getUTCHours() + 1);
+  }
+  return minimum;
+}
+
+export function stripeCheckoutIdempotencyKey(input: {
+  reservationId: string;
+  projectId: string;
+  plan: string;
+}) {
+  if (!input.reservationId || !input.projectId || !input.plan) {
+    throw new Error("STRIPE_CHECKOUT_RESERVATION_INVALID");
+  }
+  const digest = createHash("sha256")
+    .update(`checkout\0${input.reservationId}\0${input.projectId}\0${input.plan}`)
+    .digest("hex")
+    .slice(0, 48);
+  return `tf_checkout_${digest}`;
 }
 
 export function createStripeBilling(input: {
@@ -137,21 +204,33 @@ export function createStripeBilling(input: {
       actorId: string;
       customerId?: string;
       customerEmail?: string;
-      idempotencyWindow?: Date;
+      expiresAt: Date;
+      reservationId: string;
     }) {
       if (!availability.checkoutAvailable || !stripe || !input.founderCloudPriceId) {
         throw new Error(availability.reason ?? "STRIPE_NOT_CONFIGURED");
       }
       if (!checkout.projectId || !checkout.actorId)
         throw new Error("PROJECT_BOUND_OPS_AUTH_REQUIRED");
+      if (Number.isNaN(checkout.expiresAt.getTime())) {
+        throw new Error("STRIPE_CHECKOUT_EXPIRATION_INVALID");
+      }
       return stripe.checkout.sessions.create(
         {
           mode: "subscription",
           line_items: [{ price: input.founderCloudPriceId, quantity: 1 }],
           client_reference_id: checkout.projectId,
-          metadata: { project_id: checkout.projectId, scope: "founder_ops" },
+          metadata: {
+            project_id: checkout.projectId,
+            checkout_reservation_id: checkout.reservationId,
+            scope: "founder_ops",
+          },
           subscription_data: {
-            metadata: { plan: "founder", project_id: checkout.projectId },
+            metadata: {
+              plan: "founder",
+              project_id: checkout.projectId,
+              checkout_reservation_id: checkout.reservationId,
+            },
           },
           ...(checkout.customerId
             ? { customer: checkout.customerId }
@@ -160,17 +239,58 @@ export function createStripeBilling(input: {
               : {}),
           success_url: `${appUrl}/ops/billing?checkout=returned`,
           cancel_url: `${appUrl}/ops/billing?checkout=canceled`,
+          expires_at: Math.floor(checkout.expiresAt.getTime() / 1_000),
           allow_promotion_codes: false,
         },
         {
-          idempotencyKey: stripeMutationIdempotencyKey({
-            kind: "checkout",
-            subject: checkout.projectId,
+          idempotencyKey: stripeCheckoutIdempotencyKey({
+            reservationId: checkout.reservationId,
+            projectId: checkout.projectId,
             plan: input.founderCloudPriceId,
-            now: checkout.idempotencyWindow ?? new Date(),
           }),
         },
       );
+    },
+    async retrieveCheckout(checkoutSessionId: string) {
+      if (!availability.checkoutAvailable || !stripe) {
+        throw new Error(availability.reason ?? "STRIPE_NOT_CONFIGURED");
+      }
+      if (!checkoutSessionId) throw new Error("STRIPE_CHECKOUT_SESSION_REQUIRED");
+      const session = await stripe.checkout.sessions.retrieve(checkoutSessionId);
+      if (
+        !session.id ||
+        !session.status ||
+        !["open", "complete", "expired"].includes(session.status)
+      ) {
+        throw new Error("STRIPE_CHECKOUT_STATUS_UNRESOLVED");
+      }
+      return session;
+    },
+    async findCheckoutForReservation(input: { reservationId: string; createdAt: Date }) {
+      if (!availability.checkoutAvailable || !stripe) {
+        throw new Error(availability.reason ?? "STRIPE_NOT_CONFIGURED");
+      }
+      if (!input.reservationId || Number.isNaN(input.createdAt.getTime())) {
+        throw new Error("STRIPE_CHECKOUT_RESERVATION_INVALID");
+      }
+      let startingAfter: string | undefined;
+      for (let page = 0; page < 5; page += 1) {
+        const response = await stripe.checkout.sessions.list({
+          created: { gte: Math.floor((input.createdAt.getTime() - 60_000) / 1_000) },
+          limit: 100,
+          ...(startingAfter ? { starting_after: startingAfter } : {}),
+        });
+        const found = response.data.find(
+          (session) =>
+            session.metadata?.checkout_reservation_id === input.reservationId &&
+            session.id.length > 0,
+        );
+        if (found) return found;
+        if (!response.has_more) return null;
+        startingAfter = response.data.at(-1)?.id;
+        if (!startingAfter) throw new Error("STRIPE_CHECKOUT_RECONCILIATION_INCOMPLETE");
+      }
+      throw new Error("STRIPE_CHECKOUT_RECONCILIATION_LIMIT_REACHED");
     },
     async createPortal(customerId: string, options: { idempotencyWindow?: Date } = {}) {
       if (!availability.checkoutAvailable || !stripe) {

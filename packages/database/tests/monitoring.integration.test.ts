@@ -40,6 +40,11 @@ databaseDescribe("paid monitoring claims", () => {
     if (!project) throw new Error("project setup failed");
     projectId = project.id;
 
+    const checkout = await repositories.billing.recordCheckout({
+      projectId,
+      stripeCheckoutSessionId: `cs_test_monitoring_${randomUUID()}`,
+      initiatedBy: "founder:integration",
+    });
     await repositories.billing.projectWebhook({
       event: {
         eventId: `evt_monitoring_${randomUUID()}`,
@@ -48,6 +53,7 @@ databaseDescribe("paid monitoring claims", () => {
         livemode: false,
         kind: "subscription",
         subscriptionId: stripeSubscriptionId,
+        checkoutReservationId: checkout.id,
         customerId: stripeCustomerId,
         projectId,
         priceId: "price_founder",
@@ -72,6 +78,8 @@ databaseDescribe("paid monitoring claims", () => {
         subscriptionId: stripeSubscriptionId,
         customerId: stripeCustomerId,
         paymentState: "paid",
+        periodStart: new Date("2026-08-01T00:00:00Z"),
+        periodEnd: new Date("2026-09-01T00:00:00Z"),
         rank: 20,
       },
       payloadHash,
@@ -193,6 +201,8 @@ databaseDescribe("paid monitoring claims", () => {
         subscriptionId: stripeSubscriptionId,
         customerId: stripeCustomerId,
         paymentState: "failed",
+        periodStart: new Date("2026-08-01T00:00:00Z"),
+        periodEnd: new Date("2026-09-01T00:00:00Z"),
         rank: 100,
       },
       payloadHash,
@@ -230,6 +240,7 @@ databaseDescribe("paid monitoring claims", () => {
         livemode: false,
         kind: "subscription",
         subscriptionId: stripeSubscriptionId,
+        checkoutReservationId: null,
         customerId: stripeCustomerId,
         projectId,
         priceId: "price_founder",

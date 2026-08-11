@@ -41,6 +41,20 @@ describe("Stripe webhook normalization", () => {
             id: "in_123",
             customer: "cus_123",
             parent: { subscription_details: { subscription: "sub_123" } },
+            lines: {
+              data: [
+                {
+                  parent: {
+                    type: "subscription_item_details",
+                    subscription_item_details: {
+                      subscription: "sub_123",
+                      proration: false,
+                    },
+                  },
+                  period: { start: 1_785_542_400, end: 1_788_220_800 },
+                },
+              ],
+            },
           };
     expect(normalizeStripeEvent(event(type, object))).toMatchObject({ type });
   });
@@ -57,6 +71,7 @@ describe("Stripe webhook normalization", () => {
       ),
     ).toMatchObject({
       kind: "checkout",
+      checkoutReservationId: null,
       projectId,
       customerId: null,
       subscriptionId: null,
@@ -64,8 +79,75 @@ describe("Stripe webhook normalization", () => {
     });
   });
 
+  it("accepts only UUID-shaped durable Checkout reservation metadata", () => {
+    const reservationId = "0198a5d3-d718-7000-8000-000000000001";
+    expect(
+      normalizeStripeEvent(
+        event("checkout.session.completed", {
+          id: "cs_test_reserved",
+          metadata: { project_id: projectId, checkout_reservation_id: reservationId },
+        }),
+      ),
+    ).toMatchObject({ checkoutReservationId: reservationId });
+    expect(
+      normalizeStripeEvent(
+        event("checkout.session.completed", {
+          id: "cs_test_invalid_reservation",
+          metadata: { project_id: projectId, checkout_reservation_id: "not-a-reservation" },
+        }),
+      ),
+    ).toMatchObject({ checkoutReservationId: null });
+  });
+
   it("ignores unsupported events without treating them as errors", () => {
     expect(normalizeStripeEvent(event("customer.created", { id: "cus_123" }))).toBeNull();
+  });
+
+  it("uses the non-proration subscription line service period, not the invoice aggregation period", () => {
+    expect(
+      normalizeStripeEvent(
+        event("invoice.paid", {
+          id: "in_period",
+          customer: "cus_123",
+          parent: { subscription_details: { subscription: "sub_123" } },
+          period_start: 1_782_950_400,
+          period_end: 1_785_542_400,
+          lines: {
+            data: [
+              {
+                parent: {
+                  type: "subscription_item_details",
+                  subscription_item_details: {
+                    subscription: "sub_123",
+                    proration: false,
+                  },
+                },
+                period: { start: 1_785_542_400, end: 1_788_220_800 },
+              },
+            ],
+          },
+        }),
+      ),
+    ).toMatchObject({
+      kind: "invoice",
+      periodStart: new Date("2026-08-01T00:00:00.000Z"),
+      periodEnd: new Date("2026-09-01T00:00:00.000Z"),
+    });
+  });
+
+  it("fails closed when an invoice has no unambiguous subscription service period", () => {
+    expect(
+      normalizeStripeEvent(
+        event("invoice.paid", {
+          id: "in_period_missing",
+          customer: "cus_123",
+          parent: { subscription_details: { subscription: "sub_123" } },
+          period_start: 1_785_542_400,
+          period_end: 1_788_220_800,
+          lines: { data: [] },
+        }),
+      ),
+    ).toMatchObject({ kind: "invoice", periodStart: null, periodEnd: null });
   });
 });
 

@@ -22,6 +22,7 @@ export type NormalizedBillingWebhook =
   | (WebhookBase & {
       kind: "checkout";
       checkoutSessionId: string;
+      checkoutReservationId: string | null;
       projectId: string | null;
       customerId: string | null;
       subscriptionId: string | null;
@@ -30,6 +31,7 @@ export type NormalizedBillingWebhook =
   | (WebhookBase & {
       kind: "subscription";
       subscriptionId: string;
+      checkoutReservationId: string | null;
       customerId: string;
       projectId: string | null;
       priceId: string | null;
@@ -45,6 +47,8 @@ export type NormalizedBillingWebhook =
       subscriptionId: string | null;
       customerId: string | null;
       paymentState: Exclude<PaymentProjectionState, "unknown">;
+      periodStart: Date | null;
+      periodEnd: Date | null;
       rank: number;
     });
 
@@ -74,6 +78,14 @@ function metadataProjectId(object: UnknownRecord): string | null {
   if (typeof projectId === "string" && projectId.length > 0) return projectId;
   const reference = object.client_reference_id;
   return typeof reference === "string" && reference.length > 0 ? reference : null;
+}
+
+function metadataCheckoutReservationId(object: UnknownRecord): string | null {
+  const reservationId = record(object.metadata).checkout_reservation_id;
+  return typeof reservationId === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(reservationId)
+    ? reservationId
+    : null;
 }
 
 const subscriptionStatuses = new Set<SubscriptionProjectionStatus>([
@@ -127,6 +139,41 @@ function invoiceSubscriptionId(object: UnknownRecord): string | null {
   return stringId(record(record(object.parent).subscription_details).subscription);
 }
 
+function invoiceServicePeriod(
+  object: UnknownRecord,
+  subscriptionId: string | null,
+): { periodStart: Date | null; periodEnd: Date | null } {
+  const data = record(object.lines).data;
+  if (!Array.isArray(data)) return { periodStart: null, periodEnd: null };
+
+  const periods = new Map<string, { periodStart: Date; periodEnd: Date }>();
+  for (const value of data) {
+    const line = record(value);
+    const parent = record(line.parent);
+    const subscriptionDetails = record(parent.subscription_item_details);
+    const legacySubscriptionLine = line.type === "subscription";
+    const subscriptionLine = parent.type === "subscription_item_details" || legacySubscriptionLine;
+    const proration =
+      subscriptionDetails.proration === true ||
+      record(parent.invoice_item_details).proration === true ||
+      line.proration === true;
+    if (!subscriptionLine || proration) continue;
+
+    const lineSubscriptionId =
+      stringId(line.subscription) ?? stringId(subscriptionDetails.subscription);
+    if (subscriptionId && lineSubscriptionId !== subscriptionId) continue;
+
+    const period = record(line.period);
+    const periodStart = timestamp(period.start);
+    const periodEnd = timestamp(period.end);
+    if (!periodStart || !periodEnd || periodStart >= periodEnd) continue;
+    periods.set(`${periodStart.getTime()}:${periodEnd.getTime()}`, { periodStart, periodEnd });
+  }
+
+  if (periods.size !== 1) return { periodStart: null, periodEnd: null };
+  return [...periods.values()][0] ?? { periodStart: null, periodEnd: null };
+}
+
 export function normalizeStripeEvent(eventValue: unknown): NormalizedBillingWebhook | null {
   const event = record(eventValue);
   const eventId = stringId(event.id);
@@ -156,6 +203,7 @@ export function normalizeStripeEvent(eventValue: unknown): NormalizedBillingWebh
       type,
       kind: "checkout",
       checkoutSessionId,
+      checkoutReservationId: metadataCheckoutReservationId(object),
       projectId: metadataProjectId(object),
       customerId: stringId(object.customer),
       subscriptionId: stringId(object.subscription),
@@ -181,6 +229,7 @@ export function normalizeStripeEvent(eventValue: unknown): NormalizedBillingWebh
       type: type as Extract<SupportedBillingEventType, `customer.subscription.${string}`>,
       kind: "subscription",
       subscriptionId,
+      checkoutReservationId: metadataCheckoutReservationId(object),
       customerId,
       projectId: metadataProjectId(object),
       priceId: subscriptionPriceId(object),
@@ -195,14 +244,17 @@ export function normalizeStripeEvent(eventValue: unknown): NormalizedBillingWebh
   const invoiceId = stringId(object.id);
   if (!invoiceId) return null;
   const paymentState = type === "invoice.paid" ? "paid" : "failed";
+  const subscriptionId = invoiceSubscriptionId(object);
+  const servicePeriod = invoiceServicePeriod(object, subscriptionId);
   return {
     ...base,
     type: type as "invoice.paid" | "invoice.payment_failed",
     kind: "invoice",
     invoiceId,
-    subscriptionId: invoiceSubscriptionId(object),
+    subscriptionId,
     customerId: stringId(object.customer),
     paymentState,
+    ...servicePeriod,
     rank: paymentState === "failed" ? 100 : 20,
   };
 }

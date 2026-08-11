@@ -1,7 +1,10 @@
-import { and, eq, or } from "drizzle-orm";
+import { createHash } from "node:crypto";
+
+import { and, eq, inArray, sql } from "drizzle-orm";
 
 import type { TrendsFastDatabase } from "../client";
 import {
+  analyticsEvents,
   billingCheckoutSessions,
   billingPaymentStates,
   billingWebhookEvents,
@@ -23,6 +26,15 @@ export type BillingSubscriptionStatus =
   | "unpaid"
   | "paused";
 
+const NONTERMINAL_SUBSCRIPTION_STATUSES = [
+  "INCOMPLETE",
+  "TRIALING",
+  "ACTIVE",
+  "PAST_DUE",
+  "UNPAID",
+  "PAUSED",
+] as const;
+
 type BillingEventBase = {
   eventId: string;
   type: string;
@@ -34,6 +46,7 @@ export type BillingProjectionEvent =
   | (BillingEventBase & {
       kind: "checkout";
       checkoutSessionId: string;
+      checkoutReservationId: string | null;
       projectId: string | null;
       customerId: string | null;
       subscriptionId: string | null;
@@ -42,6 +55,7 @@ export type BillingProjectionEvent =
   | (BillingEventBase & {
       kind: "subscription";
       subscriptionId: string;
+      checkoutReservationId: string | null;
       customerId: string;
       projectId: string | null;
       priceId: string | null;
@@ -57,6 +71,8 @@ export type BillingProjectionEvent =
       subscriptionId: string | null;
       customerId: string | null;
       paymentState: "paid" | "failed";
+      periodStart: Date | null;
+      periodEnd: Date | null;
       rank: number;
     });
 
@@ -74,6 +90,22 @@ export class WebhookPayloadConflictError extends Error {
   constructor(eventId: string) {
     super(`Stripe event ${eventId} was replayed with a different payload hash`);
     this.name = "WebhookPayloadConflictError";
+  }
+}
+
+export type BillingCheckoutConflictCode =
+  "CHECKOUT_ALREADY_OPEN" | "CHECKOUT_COMPLETED_PENDING" | "SUBSCRIPTION_ALREADY_NONTERMINAL";
+
+export class BillingCheckoutConflictError extends Error {
+  constructor(readonly code: BillingCheckoutConflictCode) {
+    const messages: Record<BillingCheckoutConflictCode, string> = {
+      CHECKOUT_ALREADY_OPEN: "The project already has an open Stripe Checkout session",
+      CHECKOUT_COMPLETED_PENDING:
+        "The project has a completed Stripe Checkout awaiting subscription projection",
+      SUBSCRIPTION_ALREADY_NONTERMINAL: "The project already has a nonterminal Stripe subscription",
+    };
+    super(messages[code]);
+    this.name = "BillingCheckoutConflictError";
   }
 }
 
@@ -143,6 +175,30 @@ async function finishReceipt(
     .where(eq(billingWebhookEvents.stripeEventId, eventId));
 }
 
+function billingAnalyticsDedupeKey(name: "checkout_started" | "subscription_started", id: string) {
+  return createHash("sha256").update(`trendsfast:billing:v1\0${name}\0${id}`).digest("hex");
+}
+
+async function appendBillingAnalytics(
+  tx: TrendsFastDatabase,
+  input: {
+    name: "checkout_started" | "subscription_started";
+    externalId: string;
+    livemode: boolean;
+    occurredAt: Date;
+  },
+) {
+  await tx
+    .insert(analyticsEvents)
+    .values({
+      name: input.name,
+      dedupeKey: billingAnalyticsDedupeKey(input.name, input.externalId),
+      properties: { plan: "founder_cloud", mode: input.livemode ? "live" : "test" },
+      occurredAt: input.occurredAt,
+    })
+    .onConflictDoNothing();
+}
+
 async function ensureProject(tx: TrendsFastDatabase, projectId: string) {
   const [project] = await tx
     .select()
@@ -154,6 +210,44 @@ async function ensureProject(tx: TrendsFastDatabase, projectId: string) {
     throw new Error("Stripe billing requires an existing active project");
   }
   return project;
+}
+
+async function assertNoPaidEnrollment(tx: TrendsFastDatabase, projectId: string) {
+  const [nonterminalSubscription] = await tx
+    .select({ id: subscriptions.id })
+    .from(subscriptions)
+    .where(
+      and(
+        eq(subscriptions.projectId, projectId),
+        inArray(subscriptions.status, [...NONTERMINAL_SUBSCRIPTION_STATUSES]),
+      ),
+    )
+    .limit(1);
+  if (nonterminalSubscription) {
+    throw new BillingCheckoutConflictError("SUBSCRIPTION_ALREADY_NONTERMINAL");
+  }
+
+  const [completedPending] = await tx
+    .select({ id: billingCheckoutSessions.id })
+    .from(billingCheckoutSessions)
+    .where(
+      and(
+        eq(billingCheckoutSessions.projectId, projectId),
+        eq(billingCheckoutSessions.state, "COMPLETED"),
+        sql`(
+          ${billingCheckoutSessions.stripeSubscriptionId} IS NULL
+          OR NOT EXISTS (
+            SELECT 1 FROM ${subscriptions}
+            WHERE ${subscriptions.stripeSubscriptionId} = ${billingCheckoutSessions.stripeSubscriptionId}
+              AND (${subscriptions.status} = 'CANCELED' OR ${subscriptions.status} = 'INCOMPLETE_EXPIRED')
+          )
+        )`,
+      ),
+    )
+    .limit(1);
+  if (completedPending) {
+    throw new BillingCheckoutConflictError("CHECKOUT_COMPLETED_PENDING");
+  }
 }
 
 async function ensureCustomer(
@@ -203,11 +297,30 @@ function entitlementActive(input: {
   paymentState: string | null;
   priceId: string;
   expectedPriceId: string;
+  subscriptionPeriodStart: Date | null;
+  subscriptionPeriodEnd: Date | null;
+  paymentPeriodStart: Date | null;
+  paymentPeriodEnd: Date | null;
 }) {
+  const subscriptionStart = input.subscriptionPeriodStart?.getTime();
+  const subscriptionEnd = input.subscriptionPeriodEnd?.getTime();
+  const paymentStart = input.paymentPeriodStart?.getTime();
+  const paymentEnd = input.paymentPeriodEnd?.getTime();
+  const currentPeriodPaid =
+    subscriptionStart !== undefined &&
+    subscriptionEnd !== undefined &&
+    paymentStart !== undefined &&
+    paymentEnd !== undefined &&
+    Number.isFinite(subscriptionStart) &&
+    Number.isFinite(subscriptionEnd) &&
+    subscriptionStart < subscriptionEnd &&
+    subscriptionStart === paymentStart &&
+    subscriptionEnd === paymentEnd;
   return (
     input.priceId === input.expectedPriceId &&
     input.status === "ACTIVE" &&
-    input.paymentState === "PAID"
+    input.paymentState === "PAID" &&
+    currentPeriodPaid
   );
 }
 
@@ -215,7 +328,10 @@ async function syncEntitlement(
   tx: TrendsFastDatabase,
   input: {
     subscription: typeof subscriptions.$inferSelect;
-    paymentState: "UNKNOWN" | "PAID" | "FAILED" | null;
+    payment: Pick<
+      typeof billingPaymentStates.$inferSelect,
+      "state" | "periodStart" | "periodEnd"
+    > | null;
     sourceEvent: BillingProjectionEvent;
     expectedPriceId: string;
   },
@@ -223,9 +339,13 @@ async function syncEntitlement(
   if (!input.subscription.projectId) return null;
   const active = entitlementActive({
     status: input.subscription.status,
-    paymentState: input.paymentState,
+    paymentState: input.payment?.state ?? null,
     priceId: input.subscription.stripePriceId,
     expectedPriceId: input.expectedPriceId,
+    subscriptionPeriodStart: input.subscription.currentPeriodStart,
+    subscriptionPeriodEnd: input.subscription.currentPeriodEnd,
+    paymentPeriodStart: input.payment?.periodStart ?? null,
+    paymentPeriodEnd: input.payment?.periodEnd ?? null,
   });
   const now = new Date();
   const [previousEntitlement] = await tx
@@ -324,30 +444,116 @@ async function resolveSubscriptionProject(
     .where(eq(stripeCustomers.stripeCustomerId, event.customerId))
     .limit(1)
     .for("update");
-  const [checkout] = await tx
+  const [checkoutBySubscription] = await tx
     .select()
     .from(billingCheckoutSessions)
     .where(
-      or(
+      and(
+        inArray(billingCheckoutSessions.state, ["OPEN", "COMPLETED"]),
         eq(billingCheckoutSessions.stripeSubscriptionId, event.subscriptionId),
-        eq(billingCheckoutSessions.stripeCustomerId, event.customerId),
       ),
     )
     .limit(1)
     .for("update");
+  const [checkoutByReservation] = event.checkoutReservationId
+    ? await tx
+        .select()
+        .from(billingCheckoutSessions)
+        .where(
+          and(
+            inArray(billingCheckoutSessions.state, ["OPEN", "COMPLETED"]),
+            eq(billingCheckoutSessions.id, event.checkoutReservationId),
+          ),
+        )
+        .limit(1)
+        .for("update")
+    : [];
+  if (
+    checkoutBySubscription &&
+    checkoutByReservation &&
+    checkoutBySubscription.id !== checkoutByReservation.id
+  ) {
+    throw new Error("Stripe webhook Checkout bindings conflicted");
+  }
+  const checkout = checkoutBySubscription ?? checkoutByReservation ?? null;
+  const authorizedCandidates = new Set(
+    [existingSubscription?.projectId, checkout?.projectId].filter((value): value is string =>
+      Boolean(value),
+    ),
+  );
+  if (authorizedCandidates.size > 1) throw new Error("Stripe webhook project bindings conflicted");
+  const authorizedProjectId = [...authorizedCandidates][0] ?? null;
   const candidates = new Set(
-    [
-      event.projectId,
-      existingSubscription?.projectId,
-      customer?.projectId,
-      checkout?.projectId,
-    ].filter((value): value is string => Boolean(value)),
+    [authorizedProjectId, event.projectId, customer?.projectId].filter((value): value is string =>
+      Boolean(value),
+    ),
   );
   if (candidates.size > 1) throw new Error("Stripe webhook project bindings conflicted");
   return {
-    projectId: [...candidates][0] ?? null,
+    projectId: authorizedProjectId,
     existingSubscription: existingSubscription ?? null,
+    checkout: checkout ?? null,
   };
+}
+
+async function candidateSubscriptionProject(
+  tx: TrendsFastDatabase,
+  event: Extract<BillingProjectionEvent, { kind: "subscription" }>,
+) {
+  const [existingSubscription] = await tx
+    .select({ projectId: subscriptions.projectId })
+    .from(subscriptions)
+    .where(eq(subscriptions.stripeSubscriptionId, event.subscriptionId))
+    .limit(1);
+  const [customer] = await tx
+    .select({ projectId: stripeCustomers.projectId })
+    .from(stripeCustomers)
+    .where(eq(stripeCustomers.stripeCustomerId, event.customerId))
+    .limit(1);
+  const [checkoutBySubscription] = await tx
+    .select({ id: billingCheckoutSessions.id, projectId: billingCheckoutSessions.projectId })
+    .from(billingCheckoutSessions)
+    .where(
+      and(
+        inArray(billingCheckoutSessions.state, ["OPEN", "COMPLETED"]),
+        eq(billingCheckoutSessions.stripeSubscriptionId, event.subscriptionId),
+      ),
+    )
+    .limit(1);
+  const [checkoutByReservation] = event.checkoutReservationId
+    ? await tx
+        .select({ id: billingCheckoutSessions.id, projectId: billingCheckoutSessions.projectId })
+        .from(billingCheckoutSessions)
+        .where(
+          and(
+            inArray(billingCheckoutSessions.state, ["OPEN", "COMPLETED"]),
+            eq(billingCheckoutSessions.id, event.checkoutReservationId),
+          ),
+        )
+        .limit(1)
+    : [];
+  if (
+    checkoutBySubscription &&
+    checkoutByReservation &&
+    checkoutBySubscription.id !== checkoutByReservation.id
+  ) {
+    throw new Error("Stripe webhook Checkout bindings conflicted");
+  }
+  const checkout = checkoutBySubscription ?? checkoutByReservation ?? null;
+  const authorizedCandidates = new Set(
+    [existingSubscription?.projectId, checkout?.projectId].filter((value): value is string =>
+      Boolean(value),
+    ),
+  );
+  if (authorizedCandidates.size > 1) throw new Error("Stripe webhook project bindings conflicted");
+  const authorizedProjectId = [...authorizedCandidates][0] ?? null;
+  const candidates = new Set(
+    [authorizedProjectId, event.projectId, customer?.projectId].filter((value): value is string =>
+      Boolean(value),
+    ),
+  );
+  if (candidates.size > 1) throw new Error("Stripe webhook project bindings conflicted");
+  return authorizedProjectId;
 }
 
 export class BillingRepository {
@@ -358,23 +564,214 @@ export class BillingRepository {
     stripeCheckoutSessionId: string;
     initiatedBy: string;
   }) {
-    return this.db.transaction(async (tx) => {
-      await ensureProject(tx as unknown as TrendsFastDatabase, input.projectId);
-      const [created] = await tx
-        .insert(billingCheckoutSessions)
-        .values(input)
-        .onConflictDoNothing()
-        .returning();
-      if (created) return created;
+    return this.db.transaction(async (rawTx) => {
+      const tx = rawTx as unknown as TrendsFastDatabase;
+      await ensureProject(tx, input.projectId);
       const [existing] = await tx
         .select()
         .from(billingCheckoutSessions)
         .where(eq(billingCheckoutSessions.stripeCheckoutSessionId, input.stripeCheckoutSessionId))
+        .limit(1)
+        .for("update");
+      if (existing) {
+        if (existing.projectId !== input.projectId) {
+          throw new Error("The Stripe Checkout session is bound to a different project");
+        }
+        return existing;
+      }
+      await assertNoPaidEnrollment(tx, input.projectId);
+      const [openCheckout] = await tx
+        .select({ id: billingCheckoutSessions.id })
+        .from(billingCheckoutSessions)
+        .where(
+          and(
+            eq(billingCheckoutSessions.projectId, input.projectId),
+            eq(billingCheckoutSessions.state, "OPEN"),
+          ),
+        )
         .limit(1);
-      if (!existing || existing.projectId !== input.projectId) {
+      if (openCheckout) throw new BillingCheckoutConflictError("CHECKOUT_ALREADY_OPEN");
+      const [created] = await tx
+        .insert(billingCheckoutSessions)
+        .values({
+          ...input,
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1_000),
+        })
+        .onConflictDoNothing()
+        .returning();
+      if (created) return created;
+      const [conflict] = await tx
+        .select()
+        .from(billingCheckoutSessions)
+        .where(eq(billingCheckoutSessions.stripeCheckoutSessionId, input.stripeCheckoutSessionId))
+        .limit(1);
+      if (!conflict) throw new BillingCheckoutConflictError("CHECKOUT_ALREADY_OPEN");
+      if (conflict.projectId !== input.projectId) {
         throw new Error("The Stripe Checkout session is bound to a different project");
       }
-      return existing;
+      return conflict;
+    });
+  }
+
+  async reserveProjectCheckout(input: {
+    projectId: string;
+    initiatedBy: string;
+    now: Date;
+    expiresAt: Date;
+  }) {
+    return this.db.transaction(async (rawTx) => {
+      const tx = rawTx as unknown as TrendsFastDatabase;
+      const nowMs = input.now.getTime();
+      const expirationMs = input.expiresAt.getTime();
+      const expirationDelta = expirationMs - nowMs;
+      if (
+        !Number.isFinite(nowMs) ||
+        !Number.isFinite(expirationMs) ||
+        expirationDelta < 30 * 60 * 1_000 ||
+        expirationDelta > 24 * 60 * 60 * 1_000
+      ) {
+        throw new Error("Stripe Checkout expiration must be 30 minutes to 24 hours in the future");
+      }
+      await ensureProject(tx, input.projectId);
+      await assertNoPaidEnrollment(tx, input.projectId);
+      const [existing] = await tx
+        .select()
+        .from(billingCheckoutSessions)
+        .where(
+          and(
+            eq(billingCheckoutSessions.projectId, input.projectId),
+            eq(billingCheckoutSessions.state, "OPEN"),
+          ),
+        )
+        .limit(1)
+        .for("update");
+      if (existing) return { created: false as const, reservation: existing };
+
+      const [customer] = await tx
+        .select({ stripeCustomerId: stripeCustomers.stripeCustomerId })
+        .from(stripeCustomers)
+        .where(eq(stripeCustomers.projectId, input.projectId))
+        .limit(1);
+      const [reservation] = await tx
+        .insert(billingCheckoutSessions)
+        .values({
+          projectId: input.projectId,
+          requestedStripeCustomerId: customer?.stripeCustomerId ?? null,
+          initiatedBy: input.initiatedBy,
+          expiresAt: input.expiresAt,
+          createdAt: input.now,
+          updatedAt: input.now,
+        })
+        .returning();
+      if (!reservation) throw new Error("The Stripe Checkout reservation could not be created");
+      return { created: true as const, reservation };
+    });
+  }
+
+  async bindProjectCheckout(input: {
+    reservationId: string;
+    stripeCheckoutSessionId: string;
+    livemode: boolean;
+    occurredAt: Date;
+  }) {
+    return this.db.transaction(async (rawTx) => {
+      const tx = rawTx as unknown as TrendsFastDatabase;
+      const [candidate] = await tx
+        .select()
+        .from(billingCheckoutSessions)
+        .where(eq(billingCheckoutSessions.id, input.reservationId))
+        .limit(1);
+      if (!candidate) throw new Error("The Stripe Checkout reservation was not found");
+      await ensureProject(tx, candidate.projectId);
+      const [reservation] = await tx
+        .select()
+        .from(billingCheckoutSessions)
+        .where(eq(billingCheckoutSessions.id, input.reservationId))
+        .limit(1)
+        .for("update");
+      if (!reservation || reservation.state !== "OPEN") {
+        throw new BillingCheckoutConflictError("CHECKOUT_ALREADY_OPEN");
+      }
+      if (
+        reservation.stripeCheckoutSessionId &&
+        reservation.stripeCheckoutSessionId !== input.stripeCheckoutSessionId
+      ) {
+        throw new Error("The Checkout reservation is already bound to a different Stripe session");
+      }
+      const [bound] = await tx
+        .update(billingCheckoutSessions)
+        .set({
+          stripeCheckoutSessionId: input.stripeCheckoutSessionId,
+          updatedAt: input.occurredAt,
+        })
+        .where(eq(billingCheckoutSessions.id, reservation.id))
+        .returning();
+      if (!bound) throw new Error("The Stripe Checkout reservation could not be bound");
+      await appendBillingAnalytics(tx, {
+        name: "checkout_started",
+        externalId: input.stripeCheckoutSessionId,
+        livemode: input.livemode,
+        occurredAt: input.occurredAt,
+      });
+      return bound;
+    });
+  }
+
+  async expireProjectCheckout(input: {
+    reservationId: string;
+    stripeCheckoutSessionId: string;
+    occurredAt: Date;
+  }) {
+    return this.db.transaction(async (rawTx) => {
+      const tx = rawTx as unknown as TrendsFastDatabase;
+      const [candidate] = await tx
+        .select()
+        .from(billingCheckoutSessions)
+        .where(eq(billingCheckoutSessions.id, input.reservationId))
+        .limit(1);
+      if (!candidate) throw new Error("The Stripe Checkout reservation was not found");
+      await ensureProject(tx, candidate.projectId);
+      const [expired] = await tx
+        .update(billingCheckoutSessions)
+        .set({ state: "EXPIRED", updatedAt: input.occurredAt })
+        .where(
+          and(
+            eq(billingCheckoutSessions.id, input.reservationId),
+            eq(billingCheckoutSessions.state, "OPEN"),
+            eq(billingCheckoutSessions.stripeCheckoutSessionId, input.stripeCheckoutSessionId),
+          ),
+        )
+        .returning();
+      if (!expired) throw new Error("The expired Stripe Checkout session could not be reconciled");
+      return expired;
+    });
+  }
+
+  /** Caller must first complete an authoritative Stripe reservation search. */
+  async expireUnboundProjectCheckout(input: { reservationId: string; occurredAt: Date }) {
+    return this.db.transaction(async (rawTx) => {
+      const tx = rawTx as unknown as TrendsFastDatabase;
+      const [candidate] = await tx
+        .select()
+        .from(billingCheckoutSessions)
+        .where(eq(billingCheckoutSessions.id, input.reservationId))
+        .limit(1);
+      if (!candidate) throw new Error("The Stripe Checkout reservation was not found");
+      await ensureProject(tx, candidate.projectId);
+      const [expired] = await tx
+        .update(billingCheckoutSessions)
+        .set({ state: "EXPIRED", updatedAt: input.occurredAt })
+        .where(
+          and(
+            eq(billingCheckoutSessions.id, input.reservationId),
+            eq(billingCheckoutSessions.state, "OPEN"),
+            sql`${billingCheckoutSessions.stripeCheckoutSessionId} IS NULL`,
+            sql`${billingCheckoutSessions.expiresAt} <= ${input.occurredAt}`,
+          ),
+        )
+        .returning();
+      if (!expired) throw new Error("The unbound Checkout reservation could not be expired");
+      return expired;
     });
   }
 
@@ -412,47 +809,73 @@ export class BillingRepository {
       }
 
       if (input.event.kind === "checkout") {
-        const [stored] = await tx
+        const [candidateStored] = await tx
           .select()
           .from(billingCheckoutSessions)
-          .where(eq(billingCheckoutSessions.stripeCheckoutSessionId, input.event.checkoutSessionId))
-          .limit(1)
-          .for("update");
-        const projectId = stored?.projectId ?? input.event.projectId;
-        if (!projectId) {
-          await finishReceipt(tx, input.event.eventId, "IGNORED", "CHECKOUT_PROJECT_UNRESOLVED");
-          return { status: "IGNORED" as const, reason: "CHECKOUT_PROJECT_UNRESOLVED" };
+          .where(
+            and(
+              inArray(billingCheckoutSessions.state, ["OPEN", "COMPLETED"]),
+              input.event.checkoutReservationId
+                ? eq(billingCheckoutSessions.id, input.event.checkoutReservationId)
+                : eq(
+                    billingCheckoutSessions.stripeCheckoutSessionId,
+                    input.event.checkoutSessionId,
+                  ),
+            ),
+          )
+          .limit(1);
+        if (!candidateStored) {
+          await finishReceipt(tx, input.event.eventId, "IGNORED", "CHECKOUT_NOT_AUTHORIZED");
+          return { status: "IGNORED" as const, reason: "CHECKOUT_NOT_AUTHORIZED" };
         }
-        if (stored && input.event.projectId && stored.projectId !== input.event.projectId) {
+        const projectId = candidateStored.projectId;
+        if (input.event.projectId && candidateStored.projectId !== input.event.projectId) {
           throw new Error("Stripe Checkout project metadata does not match its durable binding");
         }
         await ensureProject(tx, projectId);
-        const checkout =
-          stored ??
-          (
-            await tx
-              .insert(billingCheckoutSessions)
-              .values({
-                projectId,
-                stripeCheckoutSessionId: input.event.checkoutSessionId,
-                initiatedBy: "stripe:webhook",
-              })
-              .returning()
-          )[0];
-        if (!checkout) throw new Error("The Stripe Checkout binding could not be repaired");
+        const [stored] = await tx
+          .select()
+          .from(billingCheckoutSessions)
+          .where(eq(billingCheckoutSessions.id, candidateStored.id))
+          .limit(1)
+          .for("update");
+        if (!stored || stored.projectId !== projectId) {
+          throw new Error("Stripe Checkout project binding changed during projection");
+        }
+        if (
+          stored.stripeCheckoutSessionId &&
+          stored.stripeCheckoutSessionId !== input.event.checkoutSessionId
+        ) {
+          throw new Error("Stripe Checkout session does not match its durable reservation");
+        }
+        if (
+          input.event.customerId &&
+          ((stored.requestedStripeCustomerId &&
+            stored.requestedStripeCustomerId !== input.event.customerId) ||
+            (stored.stripeCustomerId && stored.stripeCustomerId !== input.event.customerId))
+        ) {
+          throw new Error("Stripe customer does not match its durable Checkout reservation");
+        }
         await tx
           .update(billingCheckoutSessions)
           .set({
+            stripeCheckoutSessionId: input.event.checkoutSessionId,
             state: "COMPLETED",
-            stripeCustomerId: input.event.customerId,
-            stripeSubscriptionId: input.event.subscriptionId,
+            stripeCustomerId: input.event.customerId ?? stored.stripeCustomerId,
+            stripeSubscriptionId: input.event.subscriptionId ?? stored.stripeSubscriptionId,
             completedAt: input.event.createdAt,
             updatedAt: new Date(),
           })
-          .where(eq(billingCheckoutSessions.id, checkout.id));
+          .where(eq(billingCheckoutSessions.id, stored.id));
         if (input.event.customerId) {
           await ensureCustomer(tx, { projectId, stripeCustomerId: input.event.customerId });
         }
+        await appendBillingAnalytics(tx, {
+          name: "checkout_started",
+          externalId: input.event.checkoutSessionId,
+          livemode: input.event.livemode,
+          occurredAt: input.event.createdAt,
+        });
         await finishReceipt(tx, input.event.eventId, "PROCESSED");
         return {
           status: "APPLIED" as const,
@@ -462,21 +885,16 @@ export class BillingRepository {
       }
 
       if (input.event.kind === "subscription") {
-        const resolved = await resolveSubscriptionProject(tx, input.event);
-        if (!resolved.projectId) {
-          await finishReceipt(
-            tx,
-            input.event.eventId,
-            "IGNORED",
-            "SUBSCRIPTION_PROJECT_UNRESOLVED",
-          );
-          return { status: "IGNORED" as const, reason: "SUBSCRIPTION_PROJECT_UNRESOLVED" };
+        const candidateProjectId = await candidateSubscriptionProject(tx, input.event);
+        if (!candidateProjectId) {
+          await finishReceipt(tx, input.event.eventId, "IGNORED", "SUBSCRIPTION_NOT_AUTHORIZED");
+          return { status: "IGNORED" as const, reason: "SUBSCRIPTION_NOT_AUTHORIZED" };
         }
-        await ensureProject(tx, resolved.projectId);
-        const customer = await ensureCustomer(tx, {
-          projectId: resolved.projectId,
-          stripeCustomerId: input.event.customerId,
-        });
+        await ensureProject(tx, candidateProjectId);
+        const resolved = await resolveSubscriptionProject(tx, input.event);
+        if (resolved.projectId !== candidateProjectId) {
+          throw new Error("Stripe webhook project binding changed during projection");
+        }
         const existing = resolved.existingSubscription;
         if (
           existing &&
@@ -502,6 +920,50 @@ export class BillingRepository {
           return { status: "IGNORED" as const, reason: "SUBSCRIPTION_PRICE_UNRESOLVED" };
         }
         const status = subscriptionStatus(input.event.status);
+        const [otherNonterminal] = await tx
+          .select({ id: subscriptions.id })
+          .from(subscriptions)
+          .where(
+            and(
+              eq(subscriptions.projectId, resolved.projectId),
+              inArray(subscriptions.status, [...NONTERMINAL_SUBSCRIPTION_STATUSES]),
+              existing ? sql`${subscriptions.id} <> ${existing.id}` : undefined,
+            ),
+          )
+          .limit(1)
+          .for("update");
+        if (otherNonterminal && status !== "CANCELED" && status !== "INCOMPLETE_EXPIRED") {
+          await finishReceipt(tx, input.event.eventId, "IGNORED", "DUPLICATE_PROJECT_SUBSCRIPTION");
+          return { status: "IGNORED" as const, reason: "DUPLICATE_PROJECT_SUBSCRIPTION" };
+        }
+        const customer = await ensureCustomer(tx, {
+          projectId: resolved.projectId,
+          stripeCustomerId: input.event.customerId,
+        });
+        if (resolved.checkout) {
+          if (
+            (resolved.checkout.requestedStripeCustomerId &&
+              resolved.checkout.requestedStripeCustomerId !== input.event.customerId) ||
+            (resolved.checkout.stripeCustomerId &&
+              resolved.checkout.stripeCustomerId !== input.event.customerId)
+          ) {
+            throw new Error("Stripe customer does not match its durable Checkout reservation");
+          }
+          if (
+            resolved.checkout.stripeSubscriptionId &&
+            resolved.checkout.stripeSubscriptionId !== input.event.subscriptionId
+          ) {
+            throw new Error("Stripe subscription does not match its durable Checkout reservation");
+          }
+          await tx
+            .update(billingCheckoutSessions)
+            .set({
+              stripeCustomerId: input.event.customerId,
+              stripeSubscriptionId: input.event.subscriptionId,
+              updatedAt: new Date(),
+            })
+            .where(eq(billingCheckoutSessions.id, resolved.checkout.id));
+        }
         const now = new Date();
         const [subscription] = existing
           ? await tx
@@ -548,10 +1010,18 @@ export class BillingRepository {
           .limit(1);
         const entitlement = await syncEntitlement(tx, {
           subscription,
-          paymentState: payment?.state ?? null,
+          payment: payment ?? null,
           sourceEvent: input.event,
           expectedPriceId: input.expectedPriceId,
         });
+        if (entitlement?.activated) {
+          await appendBillingAnalytics(tx, {
+            name: "subscription_started",
+            externalId: subscription.stripeSubscriptionId,
+            livemode: input.event.livemode,
+            occurredAt: input.event.createdAt,
+          });
+        }
         await finishReceipt(tx, input.event.eventId, "PROCESSED");
         return {
           status: "APPLIED" as const,
@@ -596,6 +1066,8 @@ export class BillingRepository {
           stripeCustomerId: input.event.customerId,
           state: paymentState,
           lastInvoiceId: input.event.invoiceId,
+          periodStart: input.event.periodStart,
+          periodEnd: input.event.periodEnd,
           lastStripeEventId: input.event.eventId,
           lastStripeEventCreatedAt: input.event.createdAt,
           lastStripeEventRank: input.event.rank,
@@ -607,6 +1079,8 @@ export class BillingRepository {
             stripeCustomerId: input.event.customerId,
             state: paymentState,
             lastInvoiceId: input.event.invoiceId,
+            periodStart: input.event.periodStart,
+            periodEnd: input.event.periodEnd,
             lastStripeEventId: input.event.eventId,
             lastStripeEventCreatedAt: input.event.createdAt,
             lastStripeEventRank: input.event.rank,
@@ -622,11 +1096,23 @@ export class BillingRepository {
       const entitlement = subscription
         ? await syncEntitlement(tx, {
             subscription,
-            paymentState,
+            payment: {
+              state: paymentState,
+              periodStart: input.event.periodStart,
+              periodEnd: input.event.periodEnd,
+            },
             sourceEvent: input.event,
             expectedPriceId: input.expectedPriceId,
           })
         : null;
+      if (entitlement?.activated && subscription) {
+        await appendBillingAnalytics(tx, {
+          name: "subscription_started",
+          externalId: subscription.stripeSubscriptionId,
+          livemode: input.event.livemode,
+          occurredAt: input.event.createdAt,
+        });
+      }
       await finishReceipt(tx, input.event.eventId, "PROCESSED");
       return {
         status: "APPLIED" as const,

@@ -144,6 +144,11 @@ databaseDescribe("Founder delivery limits", () => {
     projectIds.push(project.id);
     const subscriptionId = `sub_delivery_${randomUUID()}`;
     const customerId = `cus_delivery_${randomUUID()}`;
+    const checkout = await repositories.billing.recordCheckout({
+      projectId: project.id,
+      stripeCheckoutSessionId: `cs_test_delivery_${randomUUID()}`,
+      initiatedBy: "founder:integration",
+    });
     await repositories.billing.projectWebhook({
       event: {
         eventId: `evt_delivery_subscription_${randomUUID()}`,
@@ -152,6 +157,7 @@ databaseDescribe("Founder delivery limits", () => {
         livemode: false,
         kind: "subscription",
         subscriptionId,
+        checkoutReservationId: checkout.id,
         customerId,
         projectId: project.id,
         priceId: "price_founder",
@@ -176,6 +182,8 @@ databaseDescribe("Founder delivery limits", () => {
         subscriptionId,
         customerId,
         paymentState: "paid",
+        periodStart: new Date("2026-01-01T00:00:00Z"),
+        periodEnd: new Date("2027-01-01T00:00:00Z"),
         rank: 20,
       },
       payloadHash,

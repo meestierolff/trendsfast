@@ -1134,6 +1134,11 @@ export const subscriptions = pgTable(
   },
   (table) => [
     uniqueIndex("subscriptions_external_uidx").on(table.stripeSubscriptionId),
+    uniqueIndex("subscriptions_project_nonterminal_uidx")
+      .on(table.projectId)
+      .where(
+        sql`${table.projectId} IS NOT NULL AND ${table.status} IN ('INCOMPLETE', 'TRIALING', 'ACTIVE', 'PAST_DUE', 'UNPAID', 'PAUSED')`,
+      ),
     uniqueIndex("subscriptions_last_event_uidx")
       .on(table.lastStripeEventId)
       .where(sql`${table.lastStripeEventId} IS NOT NULL`),
@@ -1158,22 +1163,35 @@ export const billingCheckoutSessions = pgTable(
     projectId: uuid("project_id")
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
-    stripeCheckoutSessionId: varchar("stripe_checkout_session_id", { length: 255 }).notNull(),
+    stripeCheckoutSessionId: varchar("stripe_checkout_session_id", { length: 255 }),
+    requestedStripeCustomerId: varchar("requested_stripe_customer_id", { length: 255 }),
     stripeCustomerId: varchar("stripe_customer_id", { length: 255 }),
     stripeSubscriptionId: varchar("stripe_subscription_id", { length: 255 }),
     state: billingCheckoutStateEnum("state").default("OPEN").notNull(),
     initiatedBy: varchar("initiated_by", { length: 160 }).notNull(),
     ...timestamps,
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
   },
   (table) => [
     uniqueIndex("billing_checkout_external_uidx").on(table.stripeCheckoutSessionId),
+    uniqueIndex("billing_checkout_project_open_uidx")
+      .on(table.projectId)
+      .where(sql`${table.state} = 'OPEN'`),
     index("billing_checkout_project_state_idx").on(table.projectId, table.state),
     index("billing_checkout_subscription_idx").on(table.stripeSubscriptionId),
     check("billing_checkout_actor_check", sql`length(${table.initiatedBy}) BETWEEN 1 AND 160`),
     check(
       "billing_checkout_completion_check",
       sql`(${table.state} = 'COMPLETED') = (${table.completedAt} IS NOT NULL)`,
+    ),
+    check(
+      "billing_checkout_expiration_check",
+      sql`${table.expiresAt} IS NULL OR ${table.expiresAt} > ${table.createdAt}`,
+    ),
+    check(
+      "billing_checkout_binding_check",
+      sql`${table.state} <> 'COMPLETED' OR ${table.stripeCheckoutSessionId} IS NOT NULL`,
     ),
   ],
 );
@@ -1214,6 +1232,8 @@ export const billingPaymentStates = pgTable(
     stripeCustomerId: varchar("stripe_customer_id", { length: 255 }),
     state: billingPaymentStateEnum("state").default("UNKNOWN").notNull(),
     lastInvoiceId: varchar("last_invoice_id", { length: 255 }),
+    periodStart: timestamp("period_start", { withTimezone: true }),
+    periodEnd: timestamp("period_end", { withTimezone: true }),
     lastStripeEventId: varchar("last_stripe_event_id", { length: 255 }).notNull(),
     lastStripeEventCreatedAt: timestamp("last_stripe_event_created_at", {
       withTimezone: true,
@@ -1225,6 +1245,10 @@ export const billingPaymentStates = pgTable(
     uniqueIndex("billing_payment_last_event_uidx").on(table.lastStripeEventId),
     index("billing_payment_customer_idx").on(table.stripeCustomerId),
     check("billing_payment_event_rank_check", sql`${table.lastStripeEventRank} >= 0`),
+    check(
+      "billing_payment_period_check",
+      sql`(${table.periodStart} IS NULL AND ${table.periodEnd} IS NULL) OR (${table.periodStart} IS NOT NULL AND ${table.periodEnd} IS NOT NULL AND ${table.periodStart} < ${table.periodEnd})`,
+    ),
   ],
 );
 

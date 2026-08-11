@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import Stripe from "stripe";
-import { billingAvailability, createStripeBilling, projectEntitlement } from "../src/index";
+import {
+  billingAvailability,
+  checkoutSessionExpiresAt,
+  createStripeBilling,
+  projectEntitlement,
+} from "../src/index";
 
 describe("billing launch gate", () => {
   it.each([
@@ -47,18 +52,72 @@ describe("billing launch gate", () => {
   });
 
   it("projects Founder access only from paid webhook state", () => {
-    expect(projectEntitlement({ subscriptionStatus: "active", paymentState: "paid" })).toBe(
-      "founder_cloud",
-    );
+    const currentPeriod = {
+      subscriptionPeriodStart: new Date("2026-08-01T00:00:00Z"),
+      subscriptionPeriodEnd: new Date("2026-09-01T00:00:00Z"),
+      paymentPeriodStart: new Date("2026-08-01T00:00:00Z"),
+      paymentPeriodEnd: new Date("2026-09-01T00:00:00Z"),
+    };
     expect(
-      projectEntitlement({ subscriptionStatus: "trialing", paymentState: "unknown" }),
+      projectEntitlement({
+        subscriptionStatus: "active",
+        paymentState: "paid",
+        ...currentPeriod,
+      }),
+    ).toBe("founder_cloud");
+    expect(
+      projectEntitlement({
+        subscriptionStatus: "trialing",
+        paymentState: "unknown",
+        ...currentPeriod,
+      }),
     ).toBeNull();
     expect(
-      projectEntitlement({ subscriptionStatus: "active", paymentState: "unknown" }),
+      projectEntitlement({
+        subscriptionStatus: "active",
+        paymentState: "unknown",
+        ...currentPeriod,
+      }),
     ).toBeNull();
-    expect(projectEntitlement({ subscriptionStatus: "active", paymentState: "failed" })).toBeNull();
-    expect(projectEntitlement({ subscriptionStatus: "past_due", paymentState: "paid" })).toBeNull();
-    expect(projectEntitlement({ subscriptionStatus: "canceled", paymentState: "paid" })).toBeNull();
+    expect(
+      projectEntitlement({
+        subscriptionStatus: "active",
+        paymentState: "failed",
+        ...currentPeriod,
+      }),
+    ).toBeNull();
+    expect(
+      projectEntitlement({
+        subscriptionStatus: "past_due",
+        paymentState: "paid",
+        ...currentPeriod,
+      }),
+    ).toBeNull();
+    expect(
+      projectEntitlement({
+        subscriptionStatus: "canceled",
+        paymentState: "paid",
+        ...currentPeriod,
+      }),
+    ).toBeNull();
+    expect(
+      projectEntitlement({
+        subscriptionStatus: "active",
+        paymentState: "paid",
+        ...currentPeriod,
+        paymentPeriodStart: new Date("2026-07-01T00:00:00Z"),
+        paymentPeriodEnd: new Date("2026-08-01T00:00:00Z"),
+      }),
+    ).toBeNull();
+    expect(
+      projectEntitlement({
+        subscriptionStatus: "active",
+        paymentState: "paid",
+        ...currentPeriod,
+        paymentPeriodStart: null,
+        paymentPeriodEnd: null,
+      }),
+    ).toBeNull();
   });
 });
 
@@ -113,7 +172,7 @@ describe("project-bound Stripe sessions", () => {
       founderCloudPriceId: "price_founder",
       appUrl: "https://trendsfast.example",
       stripe: {
-        checkout: { sessions: { create } },
+        checkout: { sessions: { create, retrieve: vi.fn(), list: vi.fn() } },
         billingPortal: { sessions: { create: vi.fn() } },
         webhooks: { constructEvent: vi.fn() },
       },
@@ -123,7 +182,8 @@ describe("project-bound Stripe sessions", () => {
       projectId: "2a7f6ec1-11dd-4b80-b22b-6d1489a20cb9",
       actorId: "founder:session",
       customerEmail: "founder@example.com",
-      idempotencyWindow: new Date("2026-08-11T10:00:00Z"),
+      expiresAt: new Date("2026-08-11T12:00:00Z"),
+      reservationId: "reservation-123",
     });
 
     expect(create).toHaveBeenCalledWith(
@@ -132,21 +192,24 @@ describe("project-bound Stripe sessions", () => {
         client_reference_id: "2a7f6ec1-11dd-4b80-b22b-6d1489a20cb9",
         metadata: {
           project_id: "2a7f6ec1-11dd-4b80-b22b-6d1489a20cb9",
+          checkout_reservation_id: "reservation-123",
           scope: "founder_ops",
         },
         subscription_data: {
           metadata: {
             plan: "founder",
             project_id: "2a7f6ec1-11dd-4b80-b22b-6d1489a20cb9",
+            checkout_reservation_id: "reservation-123",
           },
         },
         success_url: "https://trendsfast.example/ops/billing?checkout=returned",
+        expires_at: 1_786_449_600,
       }),
       { idempotencyKey: expect.stringMatching(/^tf_checkout_[a-f0-9]{48}$/) },
     );
   });
 
-  it("reuses a server-derived Checkout idempotency key within the UTC window", async () => {
+  it("reuses a server-derived Checkout idempotency key for the durable reservation", async () => {
     const create = vi
       .fn()
       .mockResolvedValue({ id: "cs_test_same", url: "https://checkout.stripe.com/x" });
@@ -159,7 +222,7 @@ describe("project-bound Stripe sessions", () => {
       founderCloudPriceId: "price_founder",
       appUrl: "https://trendsfast.example",
       stripe: {
-        checkout: { sessions: { create } },
+        checkout: { sessions: { create, retrieve: vi.fn(), list: vi.fn() } },
         billingPortal: { sessions: { create: vi.fn() } },
         webhooks: { constructEvent: vi.fn() },
       },
@@ -167,11 +230,106 @@ describe("project-bound Stripe sessions", () => {
     const checkout = {
       projectId: "2a7f6ec1-11dd-4b80-b22b-6d1489a20cb9",
       actorId: "founder:session",
-      idempotencyWindow: new Date("2026-08-11T23:59:00Z"),
+      expiresAt: new Date("2026-08-12T01:00:00Z"),
+      reservationId: "reservation-stable",
     };
     await billing.createCheckout(checkout);
     await billing.createCheckout(checkout);
     expect(create.mock.calls[0]?.[1]).toEqual(create.mock.calls[1]?.[1]);
+  });
+
+  it("reads back the current Stripe Checkout state for reconciliation", async () => {
+    const retrieve = vi.fn().mockResolvedValue({
+      id: "cs_test_readback",
+      status: "expired",
+      url: null,
+    });
+    const billing = createStripeBilling({
+      billingEnabled: true,
+      paidMonitoringEnabled: true,
+      mode: "test",
+      secretKey: "sk_test_example",
+      webhookSecret: "whsec_example",
+      founderCloudPriceId: "price_founder",
+      appUrl: "https://trendsfast.example",
+      stripe: {
+        checkout: { sessions: { create: vi.fn(), retrieve, list: vi.fn() } },
+        billingPortal: { sessions: { create: vi.fn() } },
+        webhooks: { constructEvent: vi.fn() },
+      },
+    });
+    await expect(billing.retrieveCheckout("cs_test_readback")).resolves.toMatchObject({
+      id: "cs_test_readback",
+      status: "expired",
+    });
+  });
+
+  it("reconciles an unknown-effect Checkout attempt by durable reservation metadata", async () => {
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce({
+        data: [
+          {
+            id: "cs_test_other",
+            status: "open",
+            metadata: { checkout_reservation_id: "other-reservation" },
+          },
+        ],
+        has_more: true,
+      })
+      .mockResolvedValueOnce({
+        data: [
+          {
+            id: "cs_test_recovered",
+            status: "open",
+            metadata: { checkout_reservation_id: "reservation-recovered" },
+          },
+        ],
+        has_more: false,
+      });
+    const billing = createStripeBilling({
+      billingEnabled: true,
+      paidMonitoringEnabled: true,
+      mode: "test",
+      secretKey: "sk_test_example",
+      webhookSecret: "whsec_example",
+      founderCloudPriceId: "price_founder",
+      appUrl: "https://trendsfast.example",
+      stripe: {
+        checkout: { sessions: { create: vi.fn(), retrieve: vi.fn(), list } },
+        billingPortal: { sessions: { create: vi.fn() } },
+        webhooks: { constructEvent: vi.fn() },
+      },
+    });
+    const createdAt = new Date("2026-08-11T10:00:00Z");
+
+    await expect(
+      billing.findCheckoutForReservation({
+        reservationId: "reservation-recovered",
+        createdAt,
+      }),
+    ).resolves.toMatchObject({ id: "cs_test_recovered" });
+    expect(list).toHaveBeenNthCalledWith(1, {
+      created: { gte: Math.floor((createdAt.getTime() - 60_000) / 1_000) },
+      limit: 100,
+    });
+    expect(list).toHaveBeenNthCalledWith(2, {
+      created: { gte: Math.floor((createdAt.getTime() - 60_000) / 1_000) },
+      limit: 100,
+      starting_after: "cs_test_other",
+    });
+  });
+
+  it("aligns Checkout expiration to a retry-safe hour after Stripe's minimum window", () => {
+    expect(checkoutSessionExpiresAt(new Date("2026-08-11T10:00:00Z"))).toEqual(
+      new Date("2026-08-11T11:00:00Z"),
+    );
+    expect(checkoutSessionExpiresAt(new Date("2026-08-11T10:50:00Z"))).toEqual(
+      new Date("2026-08-11T12:00:00Z"),
+    );
+    expect(() => checkoutSessionExpiresAt(new Date(Number.NaN))).toThrow(
+      "STRIPE_CHECKOUT_TIME_INVALID",
+    );
   });
 
   it("uses a bounded server-derived hourly key for Customer Portal", async () => {
@@ -187,7 +345,7 @@ describe("project-bound Stripe sessions", () => {
       founderCloudPriceId: "price_founder",
       appUrl: "http://127.0.0.1:3000",
       stripe: {
-        checkout: { sessions: { create: vi.fn() } },
+        checkout: { sessions: { create: vi.fn(), retrieve: vi.fn(), list: vi.fn() } },
         billingPortal: { sessions: { create } },
         webhooks: { constructEvent: vi.fn() },
       },
@@ -203,7 +361,7 @@ describe("project-bound Stripe sessions", () => {
   it("rejects wrong-mode Stripe keys and non-HTTP localhost URLs before any mutation", () => {
     const create = vi.fn();
     const stripe = {
-      checkout: { sessions: { create } },
+      checkout: { sessions: { create, retrieve: vi.fn(), list: vi.fn() } },
       billingPortal: { sessions: { create: vi.fn() } },
       webhooks: { constructEvent: vi.fn() },
     };

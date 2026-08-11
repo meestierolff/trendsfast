@@ -41,6 +41,11 @@ databaseDescribe("durable Founder usage admission", () => {
 
     const stripeSubscriptionId = `sub_usage_${randomUUID()}`;
     const stripeCustomerId = `cus_usage_${randomUUID()}`;
+    const checkout = await repositories.billing.recordCheckout({
+      projectId,
+      stripeCheckoutSessionId: `cs_test_usage_${randomUUID()}`,
+      initiatedBy: "founder:integration",
+    });
     await repositories.billing.projectWebhook({
       event: {
         eventId: `evt_usage_subscription_${randomUUID()}`,
@@ -49,6 +54,7 @@ databaseDescribe("durable Founder usage admission", () => {
         livemode: false,
         kind: "subscription",
         subscriptionId: stripeSubscriptionId,
+        checkoutReservationId: checkout.id,
         customerId: stripeCustomerId,
         projectId,
         priceId: "price_founder",
@@ -73,6 +79,8 @@ databaseDescribe("durable Founder usage admission", () => {
         subscriptionId: stripeSubscriptionId,
         customerId: stripeCustomerId,
         paymentState: "paid",
+        periodStart: new Date("2026-08-01T00:00:00Z"),
+        periodEnd: new Date("2026-09-01T00:00:00Z"),
         rank: 20,
       },
       payloadHash,

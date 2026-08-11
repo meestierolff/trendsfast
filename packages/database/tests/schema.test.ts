@@ -255,6 +255,42 @@ describe("portable PostgreSQL schema", () => {
     expect(migration).toContain("founder_launch_interests_expiry_check");
   });
 
+  it("binds payment truth to service periods and prevents duplicate paid enrollment in 0015", () => {
+    expect(Object.keys(billingPaymentStates)).toEqual(
+      expect.arrayContaining(["periodStart", "periodEnd"]),
+    );
+    expect(
+      getTableConfig(billingCheckoutSessions).indexes.map((index) => index.config.name),
+    ).toContain("billing_checkout_project_open_uidx");
+    expect(Object.keys(billingCheckoutSessions)).toEqual(
+      expect.arrayContaining(["expiresAt", "requestedStripeCustomerId"]),
+    );
+    expect(billingCheckoutSessions.stripeCheckoutSessionId.notNull).toBe(false);
+    expect(getTableConfig(subscriptions).indexes.map((index) => index.config.name)).toContain(
+      "subscriptions_project_nonterminal_uidx",
+    );
+
+    const migration = readFileSync(
+      fileURLToPath(
+        new URL("../migrations/0015_billing_period_checkout_guards.sql", import.meta.url),
+      ),
+      "utf8",
+    );
+    expect(migration).toContain('ADD COLUMN "period_start"');
+    expect(migration).toContain('ADD COLUMN "expires_at"');
+    expect(migration).toContain('ADD COLUMN "requested_stripe_customer_id"');
+    expect(migration).toContain('ALTER COLUMN "stripe_checkout_session_id" DROP NOT NULL');
+    expect(migration).toContain("billing_payment_period_check");
+    expect(migration).toContain("billing_checkout_binding_check");
+    expect(migration).toContain("BILLING_CHECKOUT_DUPLICATE_OPEN_REQUIRES_RECONCILIATION");
+    expect(migration).toContain(
+      "BILLING_DUPLICATE_NONTERMINAL_SUBSCRIPTIONS_REQUIRE_RECONCILIATION",
+    );
+    expect(migration).toContain(`"created_at" + interval '24 hours'`);
+    expect(migration).toContain("billing_checkout_project_open_uidx");
+    expect(migration).toContain("subscriptions_project_nonterminal_uidx");
+  });
+
   it("keeps the same external signal independent across scan source runs", () => {
     const index = getTableConfig(signals).indexes.find(
       (candidate) => candidate.config.name === "signals_run_source_source_id_uidx",
