@@ -72,7 +72,7 @@ export default function AgentsPage() {
           </div>
           <p>Each example uses the same authenticated create, poll, and result sequence.</p>
         </div>
-        <div className="agent-grid">
+        <div className="agent-grid" tabIndex={0} aria-label="AI agent workflow examples">
           {AGENT_TOOLS.map((tool) => (
             <article key={tool}>
               <span aria-hidden="true">{tool.slice(0, 2).toUpperCase()}</span>

@@ -152,7 +152,7 @@ export default function HomePage() {
           {PROOF_POINTS.map((point, index) => (
             <span key={point}>
               <i aria-hidden="true">{index === 0 ? "◆" : "◇"}</i>
-              {point}
+              <strong>{point}</strong>
             </span>
           ))}
         </div>
@@ -270,7 +270,7 @@ export default function HomePage() {
           </div>
           <p>Give the tools you already use one structured, evidence-backed distribution move.</p>
         </div>
-        <div className="agent-grid">
+        <div className="agent-grid" tabIndex={0} aria-label="AI agent workflow examples">
           {AGENT_TOOLS.map((tool) => (
             <article key={tool}>
               <span aria-hidden="true">{tool.slice(0, 2).toUpperCase()}</span>

@@ -61,7 +61,18 @@ export function SocialImage() {
         >
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: "15px" }}>
             <span style={{ color: "#AAB3CB" }}>YOUR NEXT DISTRIBUTION MOVE</span>
-            <span style={{ color: "#C8FF4D" }}>◆ FOUNDER-REVIEWED</span>
+            <span style={{ color: "#C8FF4D", display: "flex", alignItems: "center", gap: "9px" }}>
+              <i
+                style={{
+                  display: "flex",
+                  width: "9px",
+                  height: "9px",
+                  background: "#C8FF4D",
+                  transform: "rotate(45deg)",
+                }}
+              />
+              FOUNDER-REVIEWED
+            </span>
           </div>
           <div style={{ display: "flex", gap: "12px", marginTop: "30px" }}>
             <span

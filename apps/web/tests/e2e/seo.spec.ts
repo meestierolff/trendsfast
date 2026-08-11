@@ -8,7 +8,9 @@ test("home metadata and structured data match the public proposition", async ({ 
     "content",
     "Spot relevant social media and search trends, then turn them into evidence-backed content ideas, hooks, formats, and channels for ChatGPT, Claude, Codex, Cursor, OpenClaw, and other AI agents.",
   );
-  await expect(page.locator('link[rel="canonical"]')).toHaveAttribute("href", /\/$/);
+  const canonical = await page.locator('link[rel="canonical"]').getAttribute("href");
+  expect(canonical).not.toBeNull();
+  expect(new URL(canonical!).pathname).toBe("/");
 
   const jsonLd = await page.locator('script[type="application/ld+json"]').allTextContents();
   const combined = jsonLd.join("\n");

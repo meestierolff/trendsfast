@@ -11,7 +11,7 @@
   --line-strong: rgba(255, 255, 255, 0.22);
   --lime: #c8ff4d;
   --cyan: #43e7ff;
-  --violet: #8b5cf6;
+  --violet: #a78bfa;
   --coral: #ff6b6b;
   --amber: #ffb84d;
   --max: 1240px;
@@ -2701,22 +2701,43 @@ pre:focus-visible,
   }
 
   .announcement-bar {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 2px;
+    align-items: center;
+    flex-direction: row;
+    gap: 8px;
     padding-top: 9px;
     padding-bottom: 9px;
     text-align: left;
   }
 
+  .announcement-bar span {
+    line-height: 1.25;
+  }
+
+  .announcement-bar a {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
   .hero {
     min-height: auto;
-    padding-top: 72px;
-    padding-bottom: 90px;
+    padding-top: 36px;
+    padding-bottom: 72px;
   }
 
   .hero h1 {
-    font-size: clamp(3.15rem, 16vw, 5rem);
+    margin-top: 20px;
+    font-size: clamp(2.35rem, 11.5vw, 3.15rem);
+    line-height: 0.94;
+  }
+
+  .hero-copy {
+    margin-top: 24px;
+    font-size: 0.98rem;
+    line-height: 1.5;
+  }
+
+  .hero-support {
+    margin: 10px 0 22px;
   }
 
   .signal-visual {

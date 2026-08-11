@@ -56,11 +56,11 @@ test("public source labels stay friendly while technical truth remains available
   await expect(
     page.getByRole("heading", { name: "Every source, honestly labeled." }),
   ).toBeVisible();
-  await expect(page.getByText("Reddit automation")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Reddit automation", exact: true })).toBeVisible();
   await expect(page.getByText("Permission required", { exact: true })).toBeVisible();
   await expect(page.getByText("Coming soon", { exact: true }).first()).toBeVisible();
 
-  const technical = page.getByRole("button", { name: /technical source state/i }).first();
+  const technical = page.locator("summary", { hasText: /technical source state/i }).first();
   await technical.click();
   await expect(page.getByText("UNVERIFIED", { exact: true }).first()).toBeVisible();
 });
@@ -84,7 +84,11 @@ test("mobile navigation is operable and the primary action stays usable", async 
   await expect(toggle).toBeVisible();
   await toggle.click();
   await expect(page.getByRole("navigation", { name: "Primary navigation" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Pricing", exact: true })).toBeVisible();
+  await expect(
+    page
+      .getByRole("navigation", { name: "Primary navigation" })
+      .getByRole("link", { name: "Pricing", exact: true }),
+  ).toBeVisible();
 
   await page.getByRole("button", { name: "Close navigation" }).click();
   const input = page.getByLabel("Product URL").first();
