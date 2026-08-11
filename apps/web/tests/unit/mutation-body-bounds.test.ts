@@ -19,6 +19,10 @@ vi.mock("../../lib/scan-processing", () => ({ runPersistedScan: vi.fn() }));
 
 import { createCsrfToken, issueOpsSession } from "../../lib/ops-session";
 import { POST as postOpsAction } from "../../app/api/ops/scans/[scanId]/actions/[action]/route";
+import { POST as postManualEvidence } from "../../app/api/ops/scans/[scanId]/manual-evidence/route";
+import { POST as postApiKeyIssue } from "../../app/api/ops/api-keys/route";
+import { POST as postApiKeyLifecycle } from "../../app/api/ops/api-keys/[keyId]/[action]/route";
+import { POST as postProviderVerification } from "../../app/api/ops/providers/[provider]/verify/route";
 import { POST as postOpsSession } from "../../app/api/ops/session/route";
 import { POST as postFeedback } from "../../app/api/scans/[token]/feedback/route";
 import { POST as postShareConsent } from "../../app/api/scans/[token]/share-consent/route";
@@ -166,4 +170,62 @@ describe("mutation route actual-byte bounds", () => {
     expect(response.status).toBe(413);
     expect(getRepositories).not.toHaveBeenCalled();
   });
+
+  it.each([
+    {
+      label: "manual evidence",
+      path: "/api/ops/scans/scan_1/manual-evidence",
+      paddingBytes: 9_000,
+      invoke: (request: Request) =>
+        postManualEvidence(request, { params: Promise.resolve({ scanId: "scan_1" }) }),
+    },
+    {
+      label: "API key issue",
+      path: "/api/ops/api-keys",
+      paddingBytes: 9_000,
+      invoke: (request: Request) => postApiKeyIssue(request),
+    },
+    {
+      label: "API key lifecycle",
+      path: "/api/ops/api-keys/00000000-0000-4000-8000-000000000001/rotate",
+      paddingBytes: 5_000,
+      invoke: (request: Request) =>
+        postApiKeyLifecycle(request, {
+          params: Promise.resolve({
+            keyId: "00000000-0000-4000-8000-000000000001",
+            action: "rotate",
+          }),
+        }),
+    },
+    {
+      label: "provider verification",
+      path: "/api/ops/providers/website/verify",
+      paddingBytes: 5_000,
+      invoke: (request: Request) =>
+        postProviderVerification(request, { params: Promise.resolve({ provider: "website" }) }),
+    },
+  ])(
+    "bounds authenticated $label bodies by actual bytes",
+    async ({ path, paddingBytes, invoke }) => {
+      vi.stubEnv("APP_URL", origin);
+      vi.stubEnv("SESSION_SECRET", sessionSecret);
+      const session = issueOpsSession({ secret: sessionSecret });
+      const response = await invoke(
+        streamedRequest({
+          path,
+          prefix: '{"padding":"',
+          paddingBytes,
+          suffix: '"}',
+          contentType: "application/json",
+          contentLength: "1",
+          headers: {
+            cookie: `tf_ops_session=${session}`,
+            "x-csrf-token": createCsrfToken(session, sessionSecret),
+          },
+        }),
+      );
+      expect(response.status).toBe(413);
+      expect(getRepositories).not.toHaveBeenCalled();
+    },
+  );
 });

@@ -53,6 +53,7 @@ export const EvidenceReceiptSchema = z
     observedAt: IsoDateTimeSchema,
     reason: LongTextSchema,
     provider: IdentifierSchema,
+    role: z.enum(["DECISION_SUPPORT", "SUPPLEMENTAL"]).default("DECISION_SUPPORT"),
     verified: z.boolean(),
     availability: z
       .enum(["AVAILABLE", "SOURCE_NO_LONGER_AVAILABLE", "REJECTED"])
@@ -144,6 +145,7 @@ const ApiEvidenceSchema = z
     observed_at: IsoDateTimeSchema,
     reason: LongTextSchema,
     provider: IdentifierSchema,
+    role: z.enum(["DECISION_SUPPORT", "SUPPLEMENTAL"]),
     verified: z.boolean(),
     availability: z.enum(["AVAILABLE", "SOURCE_NO_LONGER_AVAILABLE", "REJECTED"]).optional(),
   })

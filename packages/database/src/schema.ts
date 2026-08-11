@@ -114,6 +114,12 @@ export const outcomeKindEnum = pgEnum("outcome_kind", [
 ]);
 export const apiKeyEnvironmentEnum = pgEnum("api_key_environment", ["test", "live"]);
 export const apiKeyStatusEnum = pgEnum("api_key_status", ["ACTIVE", "REVOKED"]);
+export const apiKeyManagementActionEnum = pgEnum("api_key_management_action", [
+  "ISSUED",
+  "REVOKED",
+  "ROTATED",
+  "REISSUED",
+]);
 export const apiAuthOutcomeEnum = pgEnum("api_auth_outcome", [
   "SUCCESS",
   "NOT_FOUND",
@@ -128,6 +134,10 @@ export const evidenceAvailabilityEnum = pgEnum("evidence_availability", [
   "SOURCE_NO_LONGER_AVAILABLE",
   "REJECTED",
 ]);
+export const evidenceBindingRoleEnum = pgEnum("evidence_binding_role", [
+  "DECISION_SUPPORT",
+  "SUPPLEMENTAL",
+]);
 export const subscriptionStatusEnum = pgEnum("subscription_status", [
   "INCOMPLETE",
   "TRIALING",
@@ -136,6 +146,15 @@ export const subscriptionStatusEnum = pgEnum("subscription_status", [
   "CANCELED",
   "UNPAID",
   "PAUSED",
+]);
+export const providerVerificationStateEnum = pgEnum("provider_verification_state", [
+  "RUNNING",
+  "VERIFIED",
+  "DEGRADED",
+  "FAILED",
+  "UNCONFIGURED",
+  "FIXTURE",
+  "LEGAL_REVIEW",
 ]);
 
 export const projects = pgTable(
@@ -232,6 +251,36 @@ export const apiKeys = pgTable(
       "api_keys_revocation_consistency_check",
       sql`(${table.status} = 'REVOKED') = (${table.revokedAt} IS NOT NULL)`,
     ),
+  ],
+);
+
+/**
+ * Append-only founder actions for project key lifecycle changes. Raw key
+ * material is never accepted by or persisted in this ledger.
+ */
+export const apiKeyManagementEvents = pgTable(
+  "api_key_management_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    projectId: uuid("project_id").references(() => projects.id, {
+      onDelete: "set null",
+    }),
+    apiKeyId: uuid("api_key_id").references(() => apiKeys.id, {
+      onDelete: "set null",
+    }),
+    relatedApiKeyId: uuid("related_api_key_id").references(() => apiKeys.id, {
+      onDelete: "set null",
+    }),
+    action: apiKeyManagementActionEnum("action").notNull(),
+    actorId: varchar("actor_id", { length: 160 }).notNull(),
+    before: jsonb("before").$type<Record<string, unknown>>(),
+    after: jsonb("after").$type<Record<string, unknown>>(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("api_key_management_project_occurred_idx").on(table.projectId, table.occurredAt),
+    index("api_key_management_key_occurred_idx").on(table.apiKeyId, table.occurredAt),
+    check("api_key_management_actor_check", sql`length(${table.actorId}) BETWEEN 1 AND 160`),
   ],
 );
 
@@ -616,6 +665,7 @@ export const evidenceReceipts = pgTable(
     publishedAt: timestamp("published_at", { withTimezone: true }),
     observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
     reason: text("reason").notNull(),
+    bindingRole: evidenceBindingRoleEnum("binding_role").default("DECISION_SUPPORT").notNull(),
     verified: boolean("verified").default(false).notNull(),
     availability: evidenceAvailabilityEnum("availability").default("AVAILABLE").notNull(),
     reviewedBy: varchar("reviewed_by", { length: 160 }),
@@ -852,6 +902,78 @@ export const apiAuthAdmissionBuckets = pgTable(
   ],
 );
 
+/**
+ * Append-only deployed-provider verification history. A healthy credential
+ * check is deliberately distinct from a verified source read-back.
+ */
+export const providerVerificationRecords = pgTable(
+  "provider_verification_records",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    source: sourceSlugEnum("source").notNull(),
+    provider: varchar("provider", { length: 100 }).notNull(),
+    state: providerVerificationStateEnum("state").notNull(),
+    credentialMode: varchar("credential_mode", { length: 20 }).notNull(),
+    deploymentEnvironment: varchar("deployment_environment", { length: 20 }).notNull(),
+    releaseSha: varchar("release_sha", { length: 100 }),
+    deploymentHost: varchar("deployment_host", { length: 255 }),
+    deploymentId: varchar("deployment_id", { length: 255 }),
+    healthStatus: varchar("health_status", { length: 20 }),
+    readbackVerified: boolean("readback_verified").default(false).notNull(),
+    canonicalUrls: jsonb("canonical_urls").$type<string[]>().default([]).notNull(),
+    latencyMs: integer("latency_ms"),
+    estimatedCostUsd: numeric("estimated_cost_usd", { precision: 10, scale: 6 })
+      .default("0")
+      .notNull(),
+    actualCostUsd: numeric("actual_cost_usd", { precision: 10, scale: 6 }),
+    quotaUsed: numeric("quota_used", { precision: 14, scale: 4 }).default("0").notNull(),
+    limitations: jsonb("limitations").$type<string[]>().default([]).notNull(),
+    failureCode: varchar("failure_code", { length: 100 }),
+    failureMessage: varchar("failure_message", { length: 500 }),
+    initiatedBy: varchar("initiated_by", { length: 160 }).notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
+    checkedAt: timestamp("checked_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("provider_verification_source_completed_idx").on(table.source, table.completedAt),
+    index("provider_verification_state_completed_idx").on(table.state, table.completedAt),
+    check(
+      "provider_verification_credential_mode_check",
+      sql`${table.credentialMode} IN ('fixture', 'managed', 'byok', 'none')`,
+    ),
+    check(
+      "provider_verification_deployment_environment_check",
+      sql`${table.deploymentEnvironment} IN ('local', 'preview', 'production')`,
+    ),
+    check(
+      "provider_verification_production_identity_check",
+      sql`${table.deploymentEnvironment} <> 'production' OR (${table.releaseSha} IS NOT NULL AND length(${table.releaseSha}) >= 7 AND ${table.deploymentHost} IS NOT NULL AND length(${table.deploymentHost}) >= 3)`,
+    ),
+    check(
+      "provider_verification_health_status_check",
+      sql`${table.healthStatus} IS NULL OR ${table.healthStatus} IN ('HEALTHY', 'DEGRADED', 'UNCONFIGURED', 'FAILED')`,
+    ),
+    check(
+      "provider_verification_cost_check",
+      sql`${table.estimatedCostUsd} >= 0 AND (${table.actualCostUsd} IS NULL OR ${table.actualCostUsd} >= 0) AND ${table.quotaUsed} >= 0`,
+    ),
+    check(
+      "provider_verification_latency_check",
+      sql`${table.latencyMs} IS NULL OR ${table.latencyMs} >= 0`,
+    ),
+    check(
+      "provider_verification_completion_check",
+      sql`(${table.state} = 'RUNNING') = (${table.completedAt} IS NULL)`,
+    ),
+    check(
+      "provider_verification_truth_check",
+      sql`${table.state} <> 'VERIFIED' OR (${table.readbackVerified} = true AND jsonb_array_length(${table.canonicalUrls}) > 0)`,
+    ),
+  ],
+);
+
 export const stripeCustomers = pgTable(
   "stripe_customers",
   {
@@ -901,6 +1023,7 @@ export const databaseSchema = {
   projects,
   projectContextVersions,
   apiKeys,
+  apiKeyManagementEvents,
   scanRequests,
   scanRuns,
   sourceRuns,
@@ -919,6 +1042,7 @@ export const databaseSchema = {
   analyticsEvents,
   apiKeyAuthEvents,
   apiAuthAdmissionBuckets,
+  providerVerificationRecords,
   stripeCustomers,
   subscriptions,
 };

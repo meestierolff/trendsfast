@@ -48,6 +48,7 @@ export type EvidenceReceipt = {
   observedAt: string;
   reason: string;
   metrics: EvidenceMetrics;
+  role: "DECISION_SUPPORT" | "SUPPLEMENTAL";
   verified: boolean;
   availability: EvidenceAvailability;
   lastCheckedAt?: string;

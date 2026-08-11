@@ -217,6 +217,7 @@ export async function bindStoredEvidence<
       observedAt: signal.observedAt,
       reason: reason.slice(0, 1_000),
       metrics: { ...signal.metrics },
+      role: "DECISION_SUPPORT",
       verified: input.verificationBySignalId?.[signal.id] === true,
       availability: "AVAILABLE",
     };
@@ -274,6 +275,7 @@ export function toPublicEvidenceReceipt(receipt: EvidenceReceipt): PublicEvidenc
     observedAt: receipt.observedAt,
     reason: receipt.reason,
     provider: receipt.provider,
+    role: receipt.role,
     verified: receipt.verified,
     availability: receipt.availability,
   };

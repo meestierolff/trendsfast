@@ -64,6 +64,59 @@ databaseDescribe("persisted fixture scan", () => {
     if (!pending?.move) throw new Error("The persisted draft is missing");
 
     if (pending.move.action !== "WAIT") {
+      const originalSourceCount = pending.move.independentSourceCount;
+      const manual = await repositories.manualEvidence.add({
+        scanPublicId: publicId,
+        signal: {
+          id: "manual_integration_signal",
+          source: "manual",
+          sourceId: "manual_integration_unrelated",
+          url: "https://example.com/unrelated-post",
+          title: "An unrelated founder-observed post",
+          observedAt: new Date().toISOString(),
+          metrics: {},
+          queryId: "manual_integration_query",
+          provenance: {
+            provider: "MANUAL_FOUNDER_EVIDENCE",
+            requestId: "manual_integration_request",
+            retrievedAt: new Date().toISOString(),
+            cached: false,
+            rawPayloadHash: "0123456789abcdef0123456789abcdef",
+          },
+        },
+        sourceLabel: "Unrelated founder observation",
+        reason: "Stored only to prove post-hoc evidence cannot qualify this recommendation.",
+        reviewerId: "integration-founder",
+        deployment: {
+          deploymentEnvironment: "local",
+          releaseSha: null,
+          deploymentHost: null,
+          deploymentId: null,
+        },
+      });
+      expect(manual.receipt).toMatchObject({
+        bindingRole: "SUPPLEMENTAL",
+        verified: false,
+      });
+      await repositories.scanData.bindEvidence({
+        nextMoveId: pending.move.id,
+        signalId: manual.signal.id,
+        reason: "The founder checked the URL, but it remains supplemental to the prior synthesis.",
+        reviewerId: "integration-founder",
+        verified: true,
+      });
+      await expect(
+        repositories.reviews.approve({
+          nextMoveId: pending.move.id,
+          reviewerId: "integration-founder",
+        }),
+      ).rejects.toThrow("requires verified stored evidence");
+      const afterManual = await repositories.scans.getStatusByPublicId(publicId);
+      expect(afterManual?.move?.independentSourceCount).toBe(originalSourceCount);
+      expect(
+        afterManual?.evidence.find((receipt) => receipt.id === manual.receipt.id)?.bindingRole,
+      ).toBe("SUPPLEMENTAL");
+
       const receipt = pending.evidence[0];
       if (!receipt) throw new Error("An actionable move requires persisted evidence");
       await repositories.scanData.bindEvidence({

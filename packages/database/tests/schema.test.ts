@@ -9,6 +9,7 @@ import {
   analyticsEvents,
   apiAuthAdmissionBuckets,
   apiKeyAuthEvents,
+  apiKeyManagementEvents,
   apiKeys,
   clusterMembers,
   clusters,
@@ -21,6 +22,7 @@ import {
   projectContextVersions,
   projects,
   providerCostLedger,
+  providerVerificationRecords,
   reviewEvents,
   scanRequests,
   scanRuns,
@@ -31,7 +33,7 @@ import {
   subscriptions,
 } from "../src/index";
 
-const minimumTableNames = [
+const foundationTableNames = [
   "scan_requests",
   "projects",
   "project_context_versions",
@@ -55,6 +57,12 @@ const minimumTableNames = [
   "subscriptions",
 ];
 
+const minimumTableNames = [
+  ...foundationTableNames,
+  "api_key_management_events",
+  "provider_verification_records",
+];
+
 describe("portable PostgreSQL schema", () => {
   it("defines every minimum relational table plus API auth auditing", () => {
     const tables = [
@@ -75,7 +83,9 @@ describe("portable PostgreSQL schema", () => {
       feedbackEvents,
       outcomes,
       apiKeys,
+      apiKeyManagementEvents,
       providerCostLedger,
+      providerVerificationRecords,
       analyticsEvents,
       stripeCustomers,
       subscriptions,
@@ -153,6 +163,30 @@ describe("portable PostgreSQL schema", () => {
     expect(migration).toContain("scan_requests_api_cost_window_idx");
   });
 
+  it("persists audited API-key lifecycle and deployment-bound provider truth", () => {
+    expect(Object.keys(apiKeyManagementEvents)).not.toContain("rawKey");
+    expect(Object.keys(apiKeyManagementEvents)).not.toContain("secret");
+    expect(Object.keys(providerVerificationRecords)).toEqual(
+      expect.arrayContaining([
+        "state",
+        "readbackVerified",
+        "deploymentEnvironment",
+        "releaseSha",
+        "deploymentHost",
+      ]),
+    );
+
+    const migration = readFileSync(
+      fileURLToPath(new URL("../migrations/0008_luxuriant_onslaught.sql", import.meta.url)),
+      "utf8",
+    );
+    expect(migration).toContain('CREATE TABLE "api_key_management_events"');
+    expect(migration).toContain('CREATE TABLE "provider_verification_records"');
+    expect(migration).toContain("provider_verification_production_identity_check");
+    expect(migration).toContain("provider_verification_truth_check");
+    expect(migration).toContain('ADD COLUMN "binding_role"');
+  });
+
   it("keeps the same external signal independent across scan source runs", () => {
     const index = getTableConfig(signals).indexes.find(
       (candidate) => candidate.config.name === "signals_run_source_source_id_uidx",
@@ -177,7 +211,7 @@ describe("portable PostgreSQL schema", () => {
     );
     const sql = readFileSync(migrationPath, "utf8");
 
-    for (const table of minimumTableNames) {
+    for (const table of foundationTableNames) {
       expect(sql).toContain(`CREATE TABLE "${table}"`);
     }
     expect(sql).toContain("CHECK");

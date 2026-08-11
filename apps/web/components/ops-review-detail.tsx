@@ -1,6 +1,10 @@
 import Link from "next/link";
 
-import { OpsActionControls, OpsEvidenceControls } from "./ops-action-controls";
+import {
+  OpsActionControls,
+  OpsEvidenceControls,
+  OpsManualEvidenceControl,
+} from "./ops-action-controls";
 import { formatOpsDuration } from "./ops-queue";
 
 type OpsDate = string | Date;
@@ -112,6 +116,7 @@ export type OpsReviewDetailView = {
     publishedAt?: OpsDate | null;
     observedAt: OpsDate;
     reason: string;
+    bindingRole: "DECISION_SUPPORT" | "SUPPLEMENTAL";
     verified: boolean;
     availability: string;
     reviewedBy?: string | null;
@@ -644,6 +649,11 @@ export function OpsReviewDetail({
             {detail.evidence.length} stored receipt{detail.evidence.length === 1 ? "" : "s"}
           </p>
         </div>
+        <OpsManualEvidenceControl
+          scanId={detail.request.publicId}
+          csrfToken={csrfToken}
+          canReview={canReviewEvidence}
+        />
         <div className="ops-evidence-list">
           {detail.evidence.length ? (
             detail.evidence.map((receipt, index) => {
@@ -654,6 +664,7 @@ export function OpsReviewDetail({
                   <div className="ops-evidence-body">
                     <div className="ops-evidence-topline">
                       <span>{codeLabel(receipt.source)}</span>
+                      <span>{codeLabel(receipt.bindingRole)}</span>
                       <span>{receipt.provider}</span>
                       <span data-verified={receipt.verified}>
                         {receipt.verified ? "VERIFIED" : "NOT VERIFIED"}

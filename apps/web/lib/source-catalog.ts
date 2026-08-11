@@ -1,4 +1,15 @@
 export type PublicSourceStatus = "LIVE" | "BETA" | "ADAPTER_ONLY" | "LEGAL_REVIEW" | "PLANNED";
+export type SourceEngineeringState =
+  | PublicSourceStatus
+  | "UNVERIFIED"
+  | "VERIFIED"
+  | "DEGRADED"
+  | "FAILED"
+  | "UNCONFIGURED"
+  | "FIXTURE"
+  | "DISABLED";
+export type PublicSourceLabel =
+  "Connected" | "Limited" | "Coming soon" | "Unavailable" | "Permission required";
 
 export type SourceCatalogItem = {
   slug: string;
@@ -6,6 +17,8 @@ export type SourceCatalogItem = {
   provider: string;
   status: PublicSourceStatus;
   fixtureAvailable: boolean;
+  engineeringState: SourceEngineeringState;
+  exampleAvailable: boolean;
   productionVerified: boolean;
   role: string;
   limitation: string;
@@ -22,6 +35,8 @@ export const SOURCE_CATALOG: readonly SourceCatalogItem[] = [
     provider: "Direct fetch",
     status: "LIVE",
     fixtureAvailable: true,
+    engineeringState: "UNVERIFIED",
+    exampleAvailable: true,
     productionVerified: false,
     role: "Product context and credible topics",
     limitation:
@@ -33,6 +48,8 @@ export const SOURCE_CATALOG: readonly SourceCatalogItem[] = [
     provider: "xAI X Search",
     status: "BETA",
     fixtureAvailable: true,
+    engineeringState: "UNVERIFIED",
+    exampleAvailable: true,
     productionVerified: false,
     role: "Current narratives and reply opportunities",
     limitation: "One to two bounded searches; managed credential read-back pending.",
@@ -43,6 +60,8 @@ export const SOURCE_CATALOG: readonly SourceCatalogItem[] = [
     provider: "DataForSEO Google Trends",
     status: "LIVE",
     fixtureAvailable: true,
+    engineeringState: "UNVERIFIED",
+    exampleAvailable: true,
     productionVerified: false,
     role: "Measured search-demand time series",
     limitation: "At most five related keywords; production credential read-back pending.",
@@ -53,6 +72,8 @@ export const SOURCE_CATALOG: readonly SourceCatalogItem[] = [
     provider: "Algolia",
     status: "LIVE",
     fixtureAvailable: true,
+    engineeringState: "UNVERIFIED",
+    exampleAvailable: true,
     productionVerified: false,
     role: "Developer pain, launches, and objections",
     limitation: "Seven-day default window and at most five queries.",
@@ -63,6 +84,8 @@ export const SOURCE_CATALOG: readonly SourceCatalogItem[] = [
     provider: "Official API",
     status: "LIVE",
     fixtureAvailable: true,
+    engineeringState: "UNVERIFIED",
+    exampleAvailable: true,
     productionVerified: false,
     role: "Releases, issues, and ecosystem activity",
     limitation: "Public metadata only; no star-velocity claim without stored snapshots.",
@@ -73,6 +96,8 @@ export const SOURCE_CATALOG: readonly SourceCatalogItem[] = [
     provider: "Tavily",
     status: "BETA",
     fixtureAvailable: true,
+    engineeringState: "UNVERIFIED",
+    exampleAvailable: true,
     productionVerified: false,
     role: "Trigger events and independent verification",
     limitation: "Two basic searches maximum; production credential read-back pending.",
@@ -83,6 +108,8 @@ export const SOURCE_CATALOG: readonly SourceCatalogItem[] = [
     provider: "YouTube Data API",
     status: "BETA",
     fixtureAvailable: true,
+    engineeringState: "UNVERIFIED",
+    exampleAvailable: true,
     productionVerified: false,
     role: "Video traction, hooks, and formats",
     limitation: "Public search and statistics only; no transcript or comment crawl.",
@@ -91,12 +118,14 @@ export const SOURCE_CATALOG: readonly SourceCatalogItem[] = [
     slug: "manual",
     name: "Manual evidence",
     provider: "Founder review",
-    status: "ADAPTER_ONLY",
+    status: "LIVE",
     fixtureAvailable: true,
+    engineeringState: "UNVERIFIED",
+    exampleAvailable: true,
     productionVerified: false,
     role: "Founder-observed public evidence",
     limitation:
-      "Adapter contract only; no callable founder entry UI or API exists yet. Accepted records must be labeled MANUAL_FOUNDER_EVIDENCE with reviewer and timestamp.",
+      "Founder-authenticated entry is callable. New records are supplemental and cannot qualify approval or alter decision counts until synthesis is recomputed and evidence is rebound.",
   },
   {
     slug: "reddit",
@@ -104,6 +133,8 @@ export const SOURCE_CATALOG: readonly SourceCatalogItem[] = [
     provider: "None",
     status: "LEGAL_REVIEW",
     fixtureAvailable: false,
+    engineeringState: "LEGAL_REVIEW",
+    exampleAvailable: false,
     productionVerified: false,
     role: "Not automated in v0.1",
     limitation: "No commercial ingestion before permission and legal review.",
@@ -119,4 +150,15 @@ export function productionStatus(source: SourceCatalogItem): string {
     return source.status;
   }
   return source.productionVerified ? source.status : "READ_BACK_PENDING";
+}
+
+/** Friendly public projection; exact technical truth stays in engineeringState. */
+export function publicSourceLabel(source: SourceCatalogItem): PublicSourceLabel {
+  if (source.engineeringState === "LEGAL_REVIEW") return "Permission required";
+  if (source.engineeringState === "DISABLED" || source.engineeringState === "FAILED") {
+    return "Unavailable";
+  }
+  if (source.engineeringState === "VERIFIED" && source.productionVerified) return "Connected";
+  if (source.engineeringState === "DEGRADED") return "Limited";
+  return "Coming soon";
 }

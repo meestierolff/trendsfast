@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 
 import { createPrefixedId, redactRecord, redactSecrets } from "@trendsfast/core";
 import {
@@ -53,6 +53,16 @@ export class ScanDataRepository {
       .where(eq(projects.id, projectId))
       .limit(1);
     return project ?? null;
+  }
+
+  async listProjects(input: { activeOnly?: boolean; limit?: number } = {}) {
+    const limit = Math.min(Math.max(input.limit ?? 100, 1), 500);
+    return this.db
+      .select()
+      .from(projects)
+      .where(input.activeOnly === false ? undefined : eq(projects.status, "ACTIVE"))
+      .orderBy(desc(projects.updatedAt))
+      .limit(limit);
   }
 
   async upsertProject(input: { url: string; name?: string; publicId?: string }) {
@@ -588,41 +598,52 @@ export class ScanDataRepository {
     reviewerId?: string;
     verified?: boolean;
   }) {
-    const [signal] = await this.db
-      .select()
-      .from(signals)
-      .where(eq(signals.id, input.signalId))
-      .limit(1);
-    if (!signal) throw new Error("Evidence must reference a stored signal");
-    const verified = input.verified ?? false;
-    const [receipt] = await this.db
-      .insert(evidenceReceipts)
-      .values({
-        nextMoveId: input.nextMoveId,
-        signalId: signal.id,
-        source: signal.source,
-        provider: signal.provider,
-        canonicalUrl: signal.canonicalUrl,
-        title: signal.title,
-        publishedAt: signal.publishedAt,
-        observedAt: signal.observedAt,
-        reason: redactSecrets(input.reason),
-        verified,
-        verifiedAt: verified ? new Date() : null,
-        reviewedBy: input.reviewerId ?? null,
-      })
-      .onConflictDoUpdate({
-        target: [evidenceReceipts.nextMoveId, evidenceReceipts.signalId],
-        set: {
+    return this.db.transaction(async (tx) => {
+      const [stored] = await tx
+        .select({ signal: signals, sourceRun: sourceRuns, move: nextMoves })
+        .from(signals)
+        .innerJoin(sourceRuns, eq(signals.sourceRunId, sourceRuns.id))
+        .innerJoin(nextMoves, eq(nextMoves.id, input.nextMoveId))
+        .where(
+          and(
+            eq(signals.id, input.signalId),
+            eq(sourceRuns.scanRunId, nextMoves.scanRunId),
+          ),
+        )
+        .limit(1);
+      if (!stored) {
+        throw new Error("Evidence must reference a stored signal from the same scan run");
+      }
+      const verified = input.verified ?? false;
+      const [receipt] = await tx
+        .insert(evidenceReceipts)
+        .values({
+          nextMoveId: stored.move.id,
+          signalId: stored.signal.id,
+          source: stored.signal.source,
+          provider: stored.signal.provider,
+          canonicalUrl: stored.signal.canonicalUrl,
+          title: stored.signal.title,
+          publishedAt: stored.signal.publishedAt,
+          observedAt: stored.signal.observedAt,
           reason: redactSecrets(input.reason),
           verified,
           verifiedAt: verified ? new Date() : null,
           reviewedBy: input.reviewerId ?? null,
-          availability: "AVAILABLE",
-        },
-      })
-      .returning();
-    if (!receipt) throw new Error("Could not bind evidence");
-    return receipt;
+        })
+        .onConflictDoUpdate({
+          target: [evidenceReceipts.nextMoveId, evidenceReceipts.signalId],
+          set: {
+            reason: redactSecrets(input.reason),
+            verified,
+            verifiedAt: verified ? new Date() : null,
+            reviewedBy: input.reviewerId ?? null,
+            availability: "AVAILABLE",
+          },
+        })
+        .returning();
+      if (!receipt) throw new Error("Could not bind evidence");
+      return receipt;
+    });
   }
 }

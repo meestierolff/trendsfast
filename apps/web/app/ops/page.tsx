@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 
 import { OpsLoginForm } from "../../components/ops-login-form";
 import { OpsQueue, type OpsQueueItemView } from "../../components/ops-queue";
@@ -92,6 +93,11 @@ export default async function OpsPage({
           </button>
         </form>
       </div>
+      <nav className="ops-detail-back" aria-label="Founder operations tools">
+        <Link href="/ops/keys">Project API keys</Link>
+        <span>/</span>
+        <Link href="/ops/sources">Source verification</Link>
+      </nav>
       <OpsQueue
         items={items}
         activeFilter={activeFilter}

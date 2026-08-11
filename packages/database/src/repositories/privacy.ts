@@ -4,6 +4,7 @@ import type { TrendsFastDatabase } from "../client";
 import {
   analyticsEvents,
   apiKeyAuthEvents,
+  apiKeyManagementEvents,
   apiKeys,
   deliveryTokens,
   nextMoves,
@@ -55,6 +56,7 @@ export class PrivacyRepository {
           projectId: null,
           deletedScanRequests: 0,
           deletedApiKeys: 0,
+          deletedApiKeyManagementEvents: 0,
           deletedAnalyticsEvents: 0,
         };
       }
@@ -93,6 +95,10 @@ export class PrivacyRepository {
       if (keyIds.length) {
         await tx.delete(apiKeyAuthEvents).where(inArray(apiKeyAuthEvents.apiKeyId, keyIds));
       }
+      const deletedKeyManagementEvents = await tx
+        .delete(apiKeyManagementEvents)
+        .where(eq(apiKeyManagementEvents.projectId, project.id))
+        .returning({ id: apiKeyManagementEvents.id });
       const deletedKeys = await tx
         .delete(apiKeys)
         .where(eq(apiKeys.projectId, project.id))
@@ -109,6 +115,7 @@ export class PrivacyRepository {
         projectId: project.id,
         deletedScanRequests: deletedRequests.length,
         deletedApiKeys: deletedKeys.length,
+        deletedApiKeyManagementEvents: deletedKeyManagementEvents.length,
         deletedAnalyticsEvents,
       };
     });

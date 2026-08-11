@@ -148,6 +148,7 @@ export class ReviewRepository {
           .where(
             and(
               eq(evidenceReceipts.nextMoveId, move.id),
+              eq(evidenceReceipts.bindingRole, "DECISION_SUPPORT"),
               eq(evidenceReceipts.availability, "AVAILABLE"),
               eq(evidenceReceipts.verified, true),
             ),

@@ -133,6 +133,136 @@ export function OpsEvidenceControls({
   );
 }
 
+export function OpsManualEvidenceControl({
+  scanId,
+  csrfToken,
+  canReview,
+}: {
+  scanId: string;
+  csrfToken: string;
+  canReview: boolean;
+}) {
+  const router = useRouter();
+  const [pending, setPending] = useState(false);
+  const [notice, setNotice] = useState<{ kind: "success" | "error"; message: string } | null>(null);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const publishedAtValue = String(form.get("publishedAt") ?? "").trim();
+    const metrics = Object.fromEntries(
+      ["views", "likes", "comments", "shares", "points", "stars", "forks"].flatMap((key) => {
+        const raw = String(form.get(key) ?? "").trim();
+        return raw ? [[key, Number(raw)]] : [];
+      }),
+    );
+    setPending(true);
+    setNotice(null);
+    try {
+      const response = await fetch(
+        `/api/ops/scans/${encodeURIComponent(scanId)}/manual-evidence`,
+        {
+          method: "POST",
+          credentials: "same-origin",
+          cache: "no-store",
+          headers: { "content-type": "application/json", "x-csrf-token": csrfToken },
+          body: JSON.stringify({
+            url: form.get("url"),
+            sourceLabel: form.get("sourceLabel"),
+            title: form.get("title"),
+            excerpt: String(form.get("excerpt") ?? "").trim() || undefined,
+            ...(publishedAtValue
+              ? { publishedAt: new Date(publishedAtValue).toISOString() }
+              : {}),
+            ...(Object.keys(metrics).length ? { visibleEngagement: metrics } : {}),
+            reason: form.get("reason"),
+          }),
+        },
+      );
+      const payload = (await response.json().catch(() => null)) as {
+        ok?: boolean;
+        error?: string;
+      } | null;
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.error ?? "Manual evidence could not be stored.");
+      }
+      event.currentTarget.reset();
+      setNotice({
+        kind: "success",
+        message:
+          "Manual provider signal stored, bound as supplemental, and audited. It does not qualify approval or alter decision counts.",
+      });
+      router.refresh();
+    } catch (error) {
+      setNotice({
+        kind: "error",
+        message: error instanceof Error ? error.message : "Manual evidence could not be stored.",
+      });
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (!canReview) return null;
+  return (
+    <details className="ops-fail-control">
+      <summary>Add founder-observed public evidence</summary>
+      <form onSubmit={submit}>
+        <p>
+          The manual adapter validates a public URL, stores one canonical signal, and binds the
+          supplemental receipt to this exact draft. It never bypasses the evidence ledger or
+          changes the prior synthesis.
+        </p>
+        <label htmlFor="manual-source-label">Source label</label>
+        <input
+          id="manual-source-label"
+          name="sourceLabel"
+          required
+          maxLength={100}
+          placeholder="Founder-observed launch post"
+        />
+        <label htmlFor="manual-url">Original public URL</label>
+        <input id="manual-url" name="url" type="url" required maxLength={2_048} />
+        <label htmlFor="manual-title">Evidence title</label>
+        <input id="manual-title" name="title" required maxLength={500} />
+        <label htmlFor="manual-excerpt">Optional public excerpt</label>
+        <textarea id="manual-excerpt" name="excerpt" maxLength={2_000} rows={3} />
+        <label htmlFor="manual-published">Optional published timestamp</label>
+        <input id="manual-published" name="publishedAt" type="datetime-local" />
+        <fieldset>
+          <legend>Optional visible engagement (not independently fetched)</legend>
+          <label>
+            Views <input name="views" type="number" min={0} step={1} />
+          </label>
+          <label>
+            Likes <input name="likes" type="number" min={0} step={1} />
+          </label>
+          <label>
+            Comments <input name="comments" type="number" min={0} step={1} />
+          </label>
+        </fieldset>
+        <label htmlFor="manual-reason">Why this original supports the current move</label>
+        <textarea
+          id="manual-reason"
+          name="reason"
+          required
+          minLength={10}
+          maxLength={1_000}
+          rows={4}
+        />
+        <button type="submit" disabled={pending}>
+          {pending ? "Validating and binding…" : "Add exact manual evidence"}
+        </button>
+        {notice ? (
+          <p className="ops-action-notice" data-kind={notice.kind} role="status">
+            {notice.message}
+          </p>
+        ) : null}
+      </form>
+    </details>
+  );
+}
+
 export function OpsActionControls({
   scanId,
   csrfToken,

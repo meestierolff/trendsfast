@@ -92,6 +92,7 @@ async function responseFor(
       observed_at: receipt.observedAt.toISOString(),
       reason: receipt.reason,
       provider: receipt.provider,
+      role: receipt.bindingRole,
       verified: receipt.verified,
       availability: receipt.availability,
     })),

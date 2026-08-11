@@ -149,6 +149,7 @@ describe("project, query, and next-move API contracts", () => {
             observed_at: observedAt,
             reason: "Technical founders are discussing the same pain.",
             provider: "hn_algolia",
+            role: "DECISION_SUPPORT",
             verified: true,
           },
         ],

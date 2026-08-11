@@ -10,4 +10,5 @@ export * from "./website-security";
 export * from "./fixtures";
 export * from "./normalization";
 export * from "./schema-integration";
+export * from "./verification";
 export * from "./live/index";

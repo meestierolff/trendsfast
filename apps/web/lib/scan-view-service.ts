@@ -92,6 +92,7 @@ function readyView(record: ReadyRecord): ReadyScanResultView | null {
       observedAt: receipt.observedAt,
       reason: receipt.reason,
       provider: receipt.provider,
+      role: receipt.bindingRole,
       verified: receipt.verified,
       availability: receipt.availability,
     })),
