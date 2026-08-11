@@ -13,7 +13,7 @@
   "scripts": {
     "dev": "pnpm --filter @trendsfast/web dev",
     "build": "pnpm --filter @trendsfast/web build",
-    "typecheck": "pnpm -r typecheck",
+    "typecheck": "pnpm -r typecheck && tsc --noEmit -p scripts/tsconfig.json",
     "lint": "pnpm -r lint",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -23,7 +23,11 @@
     "db:purge": "tsx packages/database/src/purge.ts",
     "db:seed": "tsx packages/database/src/seed.ts",
     "db:studio": "drizzle-kit studio --config packages/database/drizzle.config.ts",
+    "db:verify-hosted": "tsx scripts/db/verify-hosted-schema.ts",
     "openapi:generate": "tsx packages/schemas/src/write-openapi.ts",
+    "stripe:bootstrap-test": "./scripts/stripe/bootstrap-test.sh",
+    "stripe:verify-test": "./scripts/stripe/verify-test-config.sh",
+    "verify:deployment": "tsx scripts/verify-deployment.ts",
     "verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },
   "devDependencies": {
