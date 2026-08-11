@@ -1,3 +1,4 @@
+import createMDX from "@next/mdx";
 import type { NextConfig } from "next";
 
 const isProduction = process.env.NODE_ENV === "production";
@@ -8,6 +9,7 @@ const contentSecurityPolicy = [
   `script-src 'self' 'unsafe-inline'${isProduction ? "" : " 'unsafe-eval'"} https://challenges.cloudflare.com`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
+  "media-src 'self' https:",
   "font-src 'self'",
   `connect-src 'self' https://challenges.cloudflare.com${isProduction ? "" : " ws: wss:"}`,
   "frame-src https://challenges.cloudflare.com",
@@ -37,6 +39,7 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  pageExtensions: ["js", "jsx", "mdx", "ts", "tsx"],
   allowedDevOrigins: ["127.0.0.1"],
   poweredByHeader: false,
   reactStrictMode: true,
@@ -71,4 +74,6 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+const withMDX = createMDX();
+
+export default withMDX(nextConfig);

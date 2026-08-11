@@ -1,7 +1,13 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { pageMetadata, SITE_GITHUB_URL } from "../../lib/site";
 
-export const metadata: Metadata = { title: "Open source" };
+export const metadata: Metadata = pageMetadata({
+  title: "Open-source trend intelligence engine",
+  description:
+    "Self-host the TrendsFast decision engine with PostgreSQL, example data, evidence binding, source adapters, and your own provider keys.",
+  path: "/open-source",
+});
 
 export default function OpenSourcePage() {
   return (
@@ -56,6 +62,11 @@ pnpm dev`}</code>
           <p>
             See <Link href="/docs">the API contract</Link> and the repository SELF_HOSTING guide for
             the exact environment and verification commands.
+          </p>
+          <p>
+            <a href={SITE_GITHUB_URL} rel="noreferrer" target="_blank">
+              Open the repository on GitHub →
+            </a>
           </p>
         </div>
       </section>

@@ -286,7 +286,7 @@ export function ScanStatusPoller({
           </p>
           <h2 id="scan-review-title">
             {status.founderReview
-              ? "Why a human reviews the alpha."
+              ? "Why a human reviews every first-cohort result."
               : "No founder review is recorded for this request."}
           </h2>
         </div>

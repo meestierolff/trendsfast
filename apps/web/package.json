@@ -12,6 +12,9 @@
   },
   "dependencies": {
     "@hono/zod-openapi": "^1.0.0",
+    "@mdx-js/loader": "^3.1.1",
+    "@mdx-js/react": "^3.1.1",
+    "@next/mdx": "^16.0.0",
     "@trendsfast/analytics": "workspace:*",
     "@trendsfast/billing": "workspace:*",
     "@trendsfast/config": "workspace:*",
@@ -33,6 +36,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.0.0",
+    "@types/mdx": "^2.0.14",
     "@types/node": "^24.0.0",
     "@types/pg": "^8.0.0",
     "@types/react": "^19.0.0",

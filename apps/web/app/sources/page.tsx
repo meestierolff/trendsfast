@@ -1,90 +1,122 @@
 import type { Metadata } from "next";
-import { SOURCE_CATALOG, productionStatus } from "../../lib/source-catalog";
+import { listPublicSourceStatuses } from "../../lib/source-projection-service";
+import { pageMetadata } from "../../lib/site";
 
-export const metadata: Metadata = { title: "Source status" };
+export const metadata: Metadata = pageMetadata({
+  title: "Source status and limitations",
+  description:
+    "See which TrendsFast evidence sources are connected, limited, coming soon, unavailable, or permission-gated, with technical read-back truth preserved.",
+  path: "/sources",
+});
 
-export default function SourcesPage() {
+function formatTimestamp(value: string | null): string {
+  if (!value) return "No deployed read-back recorded";
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? value : date.toISOString();
+}
+
+export default async function SourcesPage() {
+  const sources = await listPublicSourceStatuses();
   return (
     <>
-      <section className="page-hero section-pad">
-        <p className="section-index">SOURCE LEDGER / V0.1</p>
-        <h1>
-          Source status,
-          <br />
-          without theater.
-        </h1>
+      <section className="intent-hero section-pad">
+        <p className="section-index">SOURCE TRUTH / DEPLOYED READ-BACKS ONLY</p>
+        <h1>Every source, honestly labeled.</h1>
         <p>
-          A configured adapter is not the same as a verified production source. This ledger shows
-          the launch role, bounded policy, and current read-back truth separately.
+          A provider adapter, example, or configured key is not production proof. Friendly labels
+          stay tied to a dated deployed read-back, while exact engineering state remains available
+          below.
         </p>
       </section>
-      <section className="content-page section-pad">
-        <p className="source-table-scroll-hint" id="source-table-scroll-hint">
-          Swipe or use the arrow keys to inspect every source column →
-        </p>
-        <table
-          className="source-table"
-          aria-label="Provider source status"
-          aria-describedby="source-table-scroll-hint"
-          tabIndex={0}
-        >
-          <thead>
-            <tr>
-              <th>Source</th>
-              <th>Launch label</th>
-              <th>Verified now</th>
-              <th>Role</th>
-              <th>Provider / limitation</th>
-            </tr>
-          </thead>
-          <tbody>
-            {SOURCE_CATALOG.map((source) => {
-              const effective = productionStatus(source);
-              return (
-                <tr key={source.slug}>
-                  <td>
-                    <strong>{source.name}</strong>
-                  </td>
-                  <td>
-                    <span
-                      className={`status-pill ${source.status === "LEGAL_REVIEW" ? "legal" : ""}`}
-                    >
-                      {source.status}
-                    </span>
-                  </td>
-                  <td>
-                    <span
-                      className={`status-pill ${effective === "READ_BACK_PENDING" ? "pending" : ""}`}
-                    >
-                      {effective}
-                    </span>
-                  </td>
-                  <td>{source.role}</td>
-                  <td>
-                    <strong>{source.provider}</strong>
-                    <br />
-                    <small>{source.limitation}</small>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
 
-        <div className="prose">
-          <h2>What LIVE means</h2>
-          <p>
-            LIVE is the intended v0.1 product status. A source is only production-verified after a
-            successful server-side read-back using the deployed environment. Until then, this page
-            says READ_BACK_PENDING. Fixture coverage never upgrades that claim.
-          </p>
-          <h2>What we will not claim</h2>
-          <p>
-            TrendsFast does not call a recent popular post a trend, compare raw engagement across
-            platforms, infer star velocity from one GitHub snapshot, or present automated Reddit
-            access before commercial permission and legal review.
-          </p>
+      <section className="source-ledger section-pad" aria-label="Evidence source ledger">
+        {sources.map((source) => (
+          <article className="source-card" key={source.slug}>
+            <div className="source-card-heading">
+              <div>
+                <span>{source.provider}</span>
+                <h2>{source.name}</h2>
+              </div>
+              <strong data-status={source.publicLabel.toLowerCase().replaceAll(" ", "-")}>
+                {source.publicLabel}
+              </strong>
+            </div>
+            <p>{source.role}</p>
+            <details>
+              <summary>
+                Technical source state: {source.technicalState}
+                <span aria-hidden="true">+</span>
+              </summary>
+              <dl>
+                <div>
+                  <dt>Engineering state</dt>
+                  <dd>{source.technicalState}</dd>
+                </div>
+                <div>
+                  <dt>Production verified</dt>
+                  <dd>{source.productionVerified ? "Yes" : "No"}</dd>
+                </div>
+                <div>
+                  <dt>Last verified</dt>
+                  <dd>{formatTimestamp(source.lastVerifiedAt)}</dd>
+                </div>
+                <div>
+                  <dt>Example available</dt>
+                  <dd>{source.exampleAvailable ? "Yes" : "No"}</dd>
+                </div>
+                {source.readBackEvidence ? (
+                  <>
+                    <div>
+                      <dt>Credential mode</dt>
+                      <dd>{source.readBackEvidence.credentialMode}</dd>
+                    </div>
+                    <div>
+                      <dt>Health</dt>
+                      <dd>{source.readBackEvidence.healthStatus ?? "Not reported"}</dd>
+                    </div>
+                    <div>
+                      <dt>Latency</dt>
+                      <dd>
+                        {source.readBackEvidence.latencyMs === null
+                          ? "Not reported"
+                          : `${source.readBackEvidence.latencyMs} ms`}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Canonical URLs</dt>
+                      <dd>{source.readBackEvidence.canonicalUrlCount}</dd>
+                    </div>
+                    <div>
+                      <dt>Actual provider cost</dt>
+                      <dd>{source.readBackEvidence.actualCostUsd ?? "Unknown"}</dd>
+                    </div>
+                    <div>
+                      <dt>Quota</dt>
+                      <dd>{source.readBackEvidence.quotaUsed}</dd>
+                    </div>
+                  </>
+                ) : null}
+              </dl>
+              <ul>
+                {source.limitations.map((limitation) => (
+                  <li key={limitation}>{limitation}</li>
+                ))}
+              </ul>
+            </details>
+          </article>
+        ))}
+      </section>
+
+      <section className="usage-truth section-pad">
+        <div>
+          <p className="section-index">WHAT WE WILL NOT CLAIM</p>
+          <h2>A popular post is not automatically a trend.</h2>
         </div>
+        <p>
+          TrendsFast does not compare raw engagement across platforms, infer star velocity from one
+          GitHub snapshot, turn copied coverage into independent corroboration, or present Reddit
+          automation before commercial permission and legal review.
+        </p>
       </section>
     </>
   );

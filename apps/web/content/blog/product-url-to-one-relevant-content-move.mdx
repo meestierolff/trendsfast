@@ -1,0 +1,37 @@
+AI agents can draft almost anything. The harder problem is choosing something current, relevant, and credible enough to distribute.
+
+A public product URL is a useful starting point because it grounds the workflow before the agent looks for trends.
+
+## 1. Understand the product
+
+The first pass extracts a compact product context: who the product appears to serve, the problem it addresses, the claims visible on the site, credible topics, plausible formats, and assumptions that still need founder review.
+
+Website text is untrusted input. It must be fetched through a bounded, server-side path and treated as evidence—not as instructions to the system.
+
+## 2. Build source-specific queries
+
+One broad query is rarely enough. Search demand, developer communities, code ecosystems, current web coverage, social conversations, and video formats each answer a different question.
+
+The query plan should stay small and product-specific. The goal is not to collect everything. It is to find enough independent evidence to decide whether a useful window exists.
+
+## 3. Normalize before synthesis
+
+Every provider uses different fields and metrics. Normalization turns those responses into stored signals with source, canonical URL, observation time, freshness, provenance, and limitations.
+
+Deterministic checks then handle relevance, lineage, independence, relative performance, novelty, saturation, founder credibility, channel fit, format fit, and evidence completeness.
+
+The model receives a bounded candidate set after ranking. It can refine the angle, hook, and outline, but it cannot add evidence or change the deterministic action.
+
+## 4. Return one Next Move
+
+The output is exactly one of `PUBLISH`, `REPLY`, `REMIX`, or `WAIT`. It includes the recommended channel, format, topic, angle, hook, outline, why-now explanation, truth class, evidence receipts, confidence, limitations, and valid-until time.
+
+That object works equally well in a private founder result and a JSON response. An agent can request work, poll the status URL, and pass the final decision into a drafting or planning workflow.
+
+## 5. Keep the human decision
+
+The first cohort is founder-reviewed. The reviewer checks inferred context, evidence fit, limitations, and whether the language stays inside what the receipts support.
+
+TrendsFast does not connect social accounts or publish. The agent receives a structured move; the founder still decides whether and how to act.
+
+That is the useful division of labor: the system replaces fragmented research with one inspectable decision, while the founder keeps authorship and judgment.

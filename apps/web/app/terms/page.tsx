@@ -1,13 +1,19 @@
 import type { Metadata } from "next";
+import { pageMetadata } from "../../lib/site";
 
-export const metadata: Metadata = { title: "Terms" };
+export const metadata: Metadata = pageMetadata({
+  title: "Terms",
+  description:
+    "TrendsFast service limitations, acceptable use, evidence handling, and no-outcome-guarantee terms.",
+  path: "/terms",
+});
 
 export default function TermsPage() {
   return (
     <>
       <section className="page-hero section-pad">
-        <p className="section-index">ALPHA TERMS / FOUNDER REVIEW REQUIRED</p>
-        <h1>An honest alpha contract.</h1>
+        <p className="section-index">SERVICE TERMS / FOUNDER AND COUNSEL REVIEW REQUIRED</p>
+        <h1>Clear limits before you act.</h1>
       </section>
       <section className="content-page section-pad">
         <div className="prose">
@@ -23,7 +29,7 @@ export default function TermsPage() {
           </p>
           <h2>No auto-posting</h2>
           <p>
-            The alpha does not connect social accounts or publish on your behalf. A recommendation
+            TrendsFast does not connect social accounts or publish on your behalf. A recommendation
             may be PUBLISH, REPLY, REMIX, or WAIT.
           </p>
           <h2>Public evidence</h2>

@@ -1,6 +1,6 @@
 import { FeedbackControls } from "./feedback-controls";
+import { NextMoveCard, type NextMoveCardModel } from "./next-move-card";
 import {
-  confidenceLabel,
   dateTimeValue,
   formatCodeLabel,
   formatScanDate,
@@ -48,6 +48,7 @@ export type ReadyScanResultView = {
     observedAt: ScanDate;
     reason: string;
     provider: string;
+    role: "DECISION_SUPPORT" | "SUPPLEMENTAL";
     verified: boolean;
     availability: string;
   }[];
@@ -68,6 +69,7 @@ function safeHttpUrl(value: string): string | null {
 function freshestObservation(evidence: ReadyScanResultView["evidence"]): ScanDate | null {
   let freshest: { value: ScanDate; milliseconds: number } | null = null;
   for (const receipt of evidence) {
+    if (receipt.role !== "DECISION_SUPPORT") continue;
     const date =
       receipt.observedAt instanceof Date ? receipt.observedAt : new Date(receipt.observedAt);
     if (Number.isNaN(date.valueOf())) continue;
@@ -94,6 +96,7 @@ function EvidenceReceipt({
       <div className="scan-receipt-body">
         <div className="scan-receipt-topline">
           <span>{formatCodeLabel(receipt.source)}</span>
+          <span>{formatCodeLabel(receipt.role)}</span>
           <span data-verified={receipt.verified}>
             {receipt.verified ? "Verified at delivery" : "Not verified at delivery"}
           </span>
@@ -152,6 +155,34 @@ function EvidenceReceipt({
 export function ScanResultView({ token, result }: { token: string; result: ReadyScanResultView }) {
   const productUrl = safeHttpUrl(result.product.url);
   const freshest = freshestObservation(result.evidence);
+  const signatureMove: NextMoveCardModel = {
+    action: result.move.action,
+    productName: result.product.name,
+    channel: formatCodeLabel(result.move.channel),
+    format: formatCodeLabel(result.move.format),
+    topic: result.move.topic,
+    hook: result.move.hook,
+    angle: result.move.angle,
+    whyNow: result.whyNow.summary,
+    signalClass: formatCodeLabel(result.whyNow.signalClass),
+    confidence: result.move.confidence,
+    validUntil: formatScanDate(result.move.validUntil),
+    outline: result.move.outline,
+    evidence: result.evidence
+      .filter((receipt) => receipt.role === "DECISION_SUPPORT")
+      .map((receipt) => {
+        const href = safeHttpUrl(receipt.url);
+        return {
+          source: formatCodeLabel(receipt.source),
+          title: receipt.title || "Original source receipt",
+          note: receipt.reason,
+          ...(href ? { href } : {}),
+        };
+      }),
+    limitations: result.limitations,
+    founderReviewed: result.founderReviewed,
+    autoPublish: result.autoPublish,
+  };
 
   return (
     <div className="scan-delivery scan-result-page">
@@ -159,7 +190,7 @@ export function ScanResultView({ token, result }: { token: string; result: Ready
         <div>
           <p className="scan-mono-label">
             Private result <span>·</span>{" "}
-            {result.founderReviewed ? "Founder-reviewed alpha" : "Review unconfirmed"}
+            {result.founderReviewed ? "Founder-reviewed" : "Review unconfirmed"}
           </p>
           <h1 id="scan-result-title">Your next distribution move.</h1>
           <p>
@@ -243,79 +274,7 @@ export function ScanResultView({ token, result }: { token: string; result: Ready
         </div>
       </dl>
 
-      <article className={`scan-decision-card scan-action-${result.move.action.toLowerCase()}`}>
-        <header>
-          <div>
-            <span className="scan-mono-label">Your next distribution move</span>
-            <div className="scan-decision-badges">
-              <strong>{result.move.action}</strong>
-              <span>{formatCodeLabel(result.move.channel)}</span>
-              <span>{formatCodeLabel(result.move.format)}</span>
-            </div>
-          </div>
-          <span className="scan-reviewed-badge" data-reviewed={result.founderReviewed}>
-            ◆ {result.founderReviewed ? "Founder reviewed" : "Review unconfirmed"}
-          </span>
-        </header>
-
-        <h2>{result.move.topic}</h2>
-        <blockquote>“{result.move.hook}”</blockquote>
-
-        <div className="scan-decision-detail-grid">
-          <section>
-            <p className="scan-mono-label">The angle</p>
-            <p>{result.move.angle}</p>
-          </section>
-          <section>
-            <p className="scan-mono-label">Call to action</p>
-            <p>{result.move.cta}</p>
-          </section>
-        </div>
-
-        <section className="scan-outline" aria-labelledby="scan-outline-title">
-          <p className="scan-mono-label" id="scan-outline-title">
-            Suggested outline
-          </p>
-          {result.move.outline.length > 0 ? (
-            <ol>
-              {result.move.outline.map((item, index) => (
-                <li key={`${index}-${item}`}>
-                  <span>{String(index + 1).padStart(2, "0")}</span>
-                  <p>{item}</p>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <p>No outline was supplied for this move.</p>
-          )}
-        </section>
-
-        <dl className="scan-decision-stats">
-          <div>
-            <dt>Priority</dt>
-            <dd>{result.move.priority} / 100</dd>
-          </div>
-          <div>
-            <dt>Confidence</dt>
-            <dd>{confidenceLabel(result.move.confidence)}</dd>
-          </div>
-          <div>
-            <dt>Valid until</dt>
-            <dd>
-              <time dateTime={dateTimeValue(result.move.validUntil)}>
-                {formatScanDate(result.move.validUntil)}
-              </time>
-            </dd>
-          </div>
-          <div>
-            <dt>Publishing</dt>
-            <dd>
-              {result.autoPublish ? "Unexpectedly enabled" : "Manual only"}
-              <code>auto_publish={String(result.autoPublish)}</code>
-            </dd>
-          </div>
-        </dl>
-      </article>
+      <NextMoveCard move={signatureMove} className="result-signature-card" />
 
       <section className="scan-why-now" aria-labelledby="scan-why-now-title">
         <div>
@@ -355,8 +314,10 @@ export function ScanResultView({ token, result }: { token: string; result: Ready
             <h2 id="scan-evidence-title">The proof behind the move.</h2>
           </div>
           <p>
-            {result.evidence.length} bound source{result.evidence.length === 1 ? "" : "s"}.
-            Publication and observation times are shown separately.
+            {result.evidence.filter((receipt) => receipt.role === "DECISION_SUPPORT").length}{" "}
+            decision-bound source(s) ·{" "}
+            {result.evidence.filter((receipt) => receipt.role === "SUPPLEMENTAL").length}{" "}
+            supplemental. Publication and observation times are shown separately.
           </p>
         </div>
         <div className="scan-receipts">

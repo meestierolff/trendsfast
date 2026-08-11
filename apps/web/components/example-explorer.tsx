@@ -10,7 +10,7 @@ export function ExampleExplorer() {
   const [action, setAction] = useState<ExampleMove["action"]>("PUBLISH");
 
   return (
-    <div className="example-explorer">
+    <div className="example-explorer" data-testid="interactive-demo">
       <div className="action-tabs" aria-label="Next Move outcome examples">
         {actions.map((candidate) => (
           <button
@@ -23,7 +23,7 @@ export function ExampleExplorer() {
           </button>
         ))}
       </div>
-      <NextMoveCard move={EXAMPLE_MOVES[action]} fixture />
+      <NextMoveCard move={EXAMPLE_MOVES[action]} />
     </div>
   );
 }

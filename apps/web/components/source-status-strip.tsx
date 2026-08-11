@@ -1,22 +1,25 @@
 import Link from "next/link";
-import { SOURCE_CATALOG, productionStatus } from "../lib/source-catalog";
+import { listPublicSourceStatuses } from "../lib/source-projection-service";
 
-export function SourceStatusStrip() {
+export async function SourceStatusStrip() {
+  const sources = await listPublicSourceStatuses();
   return (
-    <div className="source-strip">
+    <div className="source-strip section-pad">
       <div className="source-strip-label">
         <span className="live-pulse" />
-        LAUNCH PANEL
+        SOURCE COVERAGE
       </div>
-      <div className="source-strip-items" aria-label="Launch source status" tabIndex={0}>
-        {SOURCE_CATALOG.slice(0, 8).map((source) => (
-          <span key={source.slug} title={`${source.name}: ${productionStatus(source)}`}>
+      <div className="source-strip-items" aria-label="Public source status" tabIndex={0}>
+        {sources.slice(0, 8).map((source) => (
+          <span key={source.slug} title={`${source.name}: ${source.publicLabel}`}>
             {source.name}
-            <small>{source.fixtureAvailable ? "FIXTURE" : source.status}</small>
+            <small data-status={source.publicLabel.toLowerCase().replaceAll(" ", "-")}>
+              {source.publicLabel}
+            </small>
           </span>
         ))}
       </div>
-      <Link href="/sources">Full status →</Link>
+      <Link href="/sources">Source truth →</Link>
     </div>
   );
 }

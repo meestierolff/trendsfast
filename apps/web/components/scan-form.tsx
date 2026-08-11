@@ -3,7 +3,15 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 
-export function ScanForm({ compact = false }: { compact?: boolean }) {
+export function ScanForm({
+  compact = false,
+  formId,
+  buttonLabel = "Find my next move",
+}: {
+  compact?: boolean;
+  formId?: string;
+  buttonLabel?: string;
+}) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -37,7 +45,7 @@ export function ScanForm({ compact = false }: { compact?: boolean }) {
   }
 
   return (
-    <form className={compact ? "scan-form compact" : "scan-form"} onSubmit={submit} id="scan">
+    <form className={compact ? "scan-form compact" : "scan-form"} onSubmit={submit} id={formId}>
       <div className="scan-input-row">
         <span className="protocol" aria-hidden="true">
           ↗
@@ -63,7 +71,7 @@ export function ScanForm({ compact = false }: { compact?: boolean }) {
           aria-hidden="true"
         />
         <button type="submit" disabled={pending}>
-          {pending ? "Accepting…" : "Run a free scan"}
+          {pending ? "Accepting…" : buttonLabel}
           <span aria-hidden="true">→</span>
         </button>
       </div>

@@ -18,7 +18,7 @@ test("reviewed fixture result stays private and records customer signals", async
   expect(response?.headers()["cache-control"]).toMatch(/no-store|no-cache/);
   expect(response?.headers()["referrer-policy"]).toBe("no-referrer");
   await expect(page.getByRole("heading", { name: "Your next distribution move." })).toBeVisible();
-  await expect(page.getByText(/Founder reviewed/).first()).toBeVisible();
+  await expect(page.getByText(/Founder-reviewed|Founder reviewed/).first()).toBeVisible();
   await expect(page.getByText("auto_publish=false", { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("heading", { name: "The proof behind the move." })).toBeVisible();
 

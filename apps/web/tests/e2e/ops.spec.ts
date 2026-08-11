@@ -18,7 +18,7 @@ test("founder reviews, approves, and privately delivers a persisted scan", async
   const host = `ops-${testInfo.project.name}-${testInfo.retry}-${Date.now()}.example.com`;
   await page.goto("/");
   await page.getByLabel("Product URL").first().fill(`https://${host}`);
-  await page.getByRole("button", { name: "Run a free scan" }).first().click();
+  await page.getByRole("button", { name: "Find my next move" }).first().click();
   await page.waitForURL(/\/scan\/requested\/scan_[A-Za-z0-9_.-]+$/);
   const scanId = page.url().split("/").at(-1);
   expect(scanId).toMatch(/^scan_[A-Za-z0-9_.-]+$/);

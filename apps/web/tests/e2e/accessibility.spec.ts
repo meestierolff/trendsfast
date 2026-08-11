@@ -10,7 +10,15 @@ type AxeViolation = {
 
 const pages = [
   { name: "landing", path: "/" },
+  { name: "agents", path: "/agents" },
+  { name: "channels", path: "/channels" },
+  { name: "news", path: "/news" },
+  { name: "blog", path: "/blog" },
+  { name: "pricing", path: "/pricing" },
   { name: "source status", path: "/sources" },
+  { name: "social trend API", path: "/social-media-trend-api" },
+  { name: "trend detection API", path: "/trend-detection-api" },
+  { name: "content distribution API", path: "/content-distribution-api" },
   { name: "private fixture result", path: "/scan/scan_fixture_trendsfast" },
   { name: "founder login", path: "/ops" },
 ] as const;

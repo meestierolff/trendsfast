@@ -1,4 +1,26 @@
-import type { ExampleMove } from "../lib/example-moves";
+export type NextMoveCardModel = {
+  action: "PUBLISH" | "REPLY" | "REMIX" | "WAIT";
+  productName?: string;
+  channel: string;
+  format: string;
+  topic: string;
+  hook: string;
+  angle: string;
+  whyNow: string;
+  signalClass: string;
+  confidence: number;
+  validUntil: string;
+  outline: readonly string[];
+  evidence: readonly {
+    source: string;
+    title: string;
+    note: string;
+    href?: string;
+  }[];
+  limitations: readonly string[];
+  founderReviewed: boolean;
+  autoPublish: boolean;
+};
 
 function confidenceLabel(value: number): string {
   if (value >= 0.8) return "High";
@@ -6,15 +28,23 @@ function confidenceLabel(value: number): string {
   return "Low";
 }
 
-export function NextMoveCard({ move, fixture = false }: { move: ExampleMove; fixture?: boolean }) {
+export function NextMoveCard({
+  move,
+  className = "",
+}: {
+  move: NextMoveCardModel;
+  className?: string;
+}) {
   return (
-    <article className={`next-move-card action-${move.action.toLowerCase()}`}>
+    <article className={`next-move-card action-${move.action.toLowerCase()} ${className}`.trim()}>
       <div className="move-topline">
         <div>
           <span className="eyebrow">Your next distribution move</span>
-          {fixture ? <span className="fixture-label">Fixture example</span> : null}
+          {move.productName ? <span className="product-chip">For {move.productName}</span> : null}
         </div>
-        <span className="review-chip">◆ Founder reviewed</span>
+        <span className="review-chip" data-reviewed={move.founderReviewed}>
+          ◆ {move.founderReviewed ? "Founder-reviewed" : "Review unconfirmed"}
+        </span>
       </div>
 
       <div className="move-heading">
@@ -22,6 +52,7 @@ export function NextMoveCard({ move, fixture = false }: { move: ExampleMove; fix
           {move.action}
         </span>
         <span className="channel-badge">{move.channel}</span>
+        <span className="format-badge">{move.format}</span>
       </div>
 
       <h3>{move.topic}</h3>
@@ -40,7 +71,7 @@ export function NextMoveCard({ move, fixture = false }: { move: ExampleMove; fix
 
       <ol className="outline-list">
         {move.outline.map((item, index) => (
-          <li key={item}>
+          <li key={`${index}-${item}`}>
             <span>{String(index + 1).padStart(2, "0")}</span>
             {item}
           </li>
@@ -54,19 +85,29 @@ export function NextMoveCard({ move, fixture = false }: { move: ExampleMove; fix
             {move.evidence.length} bound source{move.evidence.length === 1 ? "" : "s"}
           </span>
         </div>
-        {move.evidence.map((receipt) => (
-          <div className="receipt" key={`${receipt.source}-${receipt.title}`}>
-            <span className="source-dot" />
-            <strong>{receipt.source}</strong>
-            <span>{receipt.title}</span>
-            <small>{receipt.note}</small>
-          </div>
-        ))}
+        {move.evidence.length > 0 ? (
+          move.evidence.map((receipt, index) => (
+            <div className="receipt" key={`${index}-${receipt.source}-${receipt.title}`}>
+              <span className="source-dot" />
+              <strong>{receipt.source}</strong>
+              {receipt.href ? (
+                <a href={receipt.href} rel="noreferrer">
+                  {receipt.title} <span aria-hidden="true">↗</span>
+                </a>
+              ) : (
+                <span>{receipt.title}</span>
+              )}
+              <small>{receipt.note}</small>
+            </div>
+          ))
+        ) : (
+          <p className="empty-receipts">No evidence cleared the quality floor.</p>
+        )}
       </div>
 
       <div className="move-footer">
         <span>
-          <small>Signal</small>
+          <small>Signal truth</small>
           <strong>{move.signalClass}</strong>
         </span>
         <span>
@@ -76,15 +117,23 @@ export function NextMoveCard({ move, fixture = false }: { move: ExampleMove; fix
           </strong>
         </span>
         <span>
-          <small>Window</small>
-          <strong>{move.validFor}</strong>
+          <small>Valid until</small>
+          <strong>{move.validUntil}</strong>
         </span>
         <span>
           <small>Publishing</small>
-          <strong>Manual only</strong>
+          <strong>{move.autoPublish ? "Unexpectedly enabled" : "Manual only"}</strong>
+          <code>auto_publish={String(move.autoPublish)}</code>
         </span>
       </div>
-      <p className="move-limitation">Limit: {move.limitation}</p>
+      <div className="move-limitations">
+        <span>Limitations</span>
+        <ul>
+          {move.limitations.map((limitation, index) => (
+            <li key={`${index}-${limitation}`}>{limitation}</li>
+          ))}
+        </ul>
+      </div>
     </article>
   );
 }

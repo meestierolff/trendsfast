@@ -1,31 +1,28 @@
-export type ExampleMove = {
-  action: "PUBLISH" | "REPLY" | "REMIX" | "WAIT";
-  channel: string;
-  topic: string;
-  hook: string;
-  angle: string;
-  whyNow: string;
-  signalClass: string;
-  confidence: number;
-  validFor: string;
-  outline: string[];
-  evidence: { source: string; title: string; note: string }[];
-  limitation: string;
-};
+import type { NextMoveCardModel } from "../components/next-move-card";
+
+export type ExampleMove = NextMoveCardModel;
+
+const shared = {
+  productName: "SignalKit",
+  founderReviewed: true,
+  autoPublish: false,
+} as const;
 
 export const EXAMPLE_MOVES: Record<ExampleMove["action"], ExampleMove> = {
   PUBLISH: {
+    ...shared,
     action: "PUBLISH",
-    channel: "Founder post · X",
+    channel: "X",
+    format: "Founder text post",
     topic: "Why live signals still fail to tell founders what to do",
     hook: "I spent more time researching distribution than shipping the feature.",
     angle:
-      "Show the gap between a feed of signals and one evidence-bound decision, using a real scan teardown.",
+      "Show the gap between a feed of signals and one evidence-bound decision, using a product-specific scan teardown.",
     whyNow:
-      "Search interest and two independent founder/developer discussions converge on agent-ready research workflows.",
+      "Search interest and two independent founder and developer discussions converge on agent-ready research workflows.",
     signalClass: "CORROBORATED_SIGNAL",
     confidence: 0.82,
-    validFor: "48 hours",
+    validUntil: "48 hours",
     outline: [
       "Open with the weekly research loop you replaced.",
       "Show the evidence receipts and what each one contributes.",
@@ -33,21 +30,23 @@ export const EXAMPLE_MOVES: Record<ExampleMove["action"], ExampleMove> = {
     ],
     evidence: [
       {
-        source: "Google Trends",
-        title: "distribution agent workflows",
-        note: "Measured 30-day direction",
+        source: "Search demand",
+        title: "Distribution agent workflows",
+        note: "Example measured 30-day direction",
       },
       {
-        source: "Hacker News",
+        source: "Developer community",
         title: "Founder discussion on agent research",
-        note: "Independent developer conversation",
+        note: "Example independent conversation",
       },
     ],
-    limitation: "Fixture example. Links and engagement are not represented as live evidence.",
+    limitations: ["Example data does not represent current source coverage or customer traction."],
   },
   REPLY: {
+    ...shared,
     action: "REPLY",
     channel: "Hacker News",
+    format: "Helpful reply",
     topic: "A founder asks how to choose distribution channels",
     hook: "Channel choice gets easier when you separate audience presence from evidence quality.",
     angle:
@@ -56,7 +55,7 @@ export const EXAMPLE_MOVES: Record<ExampleMove["action"], ExampleMove> = {
       "One exceptional, recent conversation matches the product’s core expertise and remains active.",
     signalClass: "EMERGING_SIGNAL",
     confidence: 0.74,
-    validFor: "12 hours",
+    validUntil: "12 hours",
     outline: [
       "Answer the question directly in three criteria.",
       "Share one limitation that prevents overconfidence.",
@@ -64,62 +63,62 @@ export const EXAMPLE_MOVES: Record<ExampleMove["action"], ExampleMove> = {
     ],
     evidence: [
       {
-        source: "Hacker News",
+        source: "Developer community",
         title: "Choosing a launch channel as a small team",
-        note: "Recent, high-fit thread",
+        note: "Example high-fit conversation",
       },
     ],
-    limitation:
-      "Fixture example. A live reply would require an original, verified conversation URL.",
+    limitations: ["A real reply requires a current, original conversation URL."],
   },
   REMIX: {
+    ...shared,
     action: "REMIX",
-    channel: "YouTube short demo",
+    channel: "YouTube",
+    format: "Short screen recording",
     topic: "Turn a product URL into one distribution decision",
     hook: "Here is the 40-second research loop behind one founder post.",
     angle:
-      "Translate a proven screen-recording format into an evidence-first scan, without copying the creator.",
+      "Translate a useful screen-recording pattern into an evidence-first scan without copying the creator.",
     whyNow:
-      "Recent videos using fast workflow teardowns outperform their age baseline in the fixture panel.",
+      "Two example content signals point to concise workflow teardowns as a credible format for this product.",
     signalClass: "CORROBORATED_SIGNAL",
     confidence: 0.77,
-    validFor: "5 days",
+    validUntil: "5 days",
     outline: [
       "Paste a product URL on screen.",
       "Reveal one receipt from each independent source.",
       "Land on the Next Move and its honest limitation.",
     ],
     evidence: [
-      { source: "YouTube", title: "Compact agent workflow demos", note: "Format signal" },
+      { source: "Video", title: "Compact agent workflow demos", note: "Example format signal" },
       {
         source: "Open web",
         title: "Evidence-first agent tutorial",
-        note: "Independent topic confirmation",
+        note: "Example independent confirmation",
       },
     ],
-    limitation:
-      "Fixture example. Relative performance requires real publication age and view snapshots.",
+    limitations: ["Relative content performance requires real age-adjusted observations."],
   },
   WAIT: {
+    ...shared,
     action: "WAIT",
     channel: "No channel",
+    format: "No asset",
     topic: "No move clears the quality floor",
     hook: "Do not force a post from thin evidence.",
     angle:
-      "Save the founder’s credibility and re-check when demand or a conversation creates a defensible window.",
+      "Protect the founder’s credibility and re-check when demand or a conversation creates a defensible window.",
     whyNow:
-      "Available signals share one origin and search demand is flat, so publishing would overstate momentum.",
+      "The example signals share one origin and demand is flat, so publishing would overstate momentum.",
     signalClass: "INSUFFICIENT_SIGNAL",
     confidence: 0.89,
-    validFor: "Re-check in 72 hours",
+    validUntil: "Re-check in 72 hours",
     outline: [
       "Keep the strongest query cluster for the next scan.",
       "Watch for an independent discussion or measured demand change.",
       "Prepare a product-specific example, but do not publish yet.",
     ],
-    evidence: [
-      { source: "Google Trends", title: "Flat search series", note: "Measured external series" },
-    ],
-    limitation: "Fixture example. WAIT is a positive outcome, not a failed scan.",
+    evidence: [],
+    limitations: ["WAIT is a useful outcome, not a failed scan."],
   },
 };

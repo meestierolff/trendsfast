@@ -1,276 +1,418 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { ApiPreview } from "../components/api-preview";
+import { DemoMedia } from "../components/demo-media";
 import { ExampleExplorer } from "../components/example-explorer";
+import { FaqList } from "../components/faq-list";
+import { JsonLd } from "../components/json-ld";
+import { PricingCards } from "../components/pricing-cards";
 import { ScanForm } from "../components/scan-form";
 import { SourceStatusStrip } from "../components/source-status-strip";
+import {
+  AGENT_TOOLS,
+  AUDIENCES,
+  EVIDENCE_SOURCES,
+  FAQS,
+  FEATURES,
+  FOUNDER_STORY,
+  HOW_IT_WORKS,
+  OUTPUT_CHANNELS,
+  PROOF_POINTS,
+} from "../lib/marketing-content";
+import { absoluteUrl, DEFAULT_DESCRIPTION, SITE_GITHUB_URL } from "../lib/site";
 
-const principles = [
-  {
-    number: "01",
-    title: "Understand",
-    text: "Read the product, infer the buyer, pain, credible claims, and the formats this founder can actually make.",
-  },
-  {
-    number: "02",
-    title: "Watch",
-    text: "Query each source for its specific role. Keep original URLs, freshness, costs, and provider failures visible.",
-  },
-  {
-    number: "03",
-    title: "Decide",
-    text: "Rank before synthesis, bind stored evidence, apply the quality floor, and return exactly one move—or WAIT.",
-  },
-];
+export const metadata: Metadata = {
+  alternates: { canonical: absoluteUrl("/") },
+  openGraph: { url: absoluteUrl("/") },
+};
 
-export default function HomePage() {
+function MarketingSchema() {
+  const organization = {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    name: "TrendsFast",
+    url: absoluteUrl("/"),
+    logo: absoluteUrl("/icon"),
+    sameAs: [SITE_GITHUB_URL],
+  };
+  const software = {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    name: "TrendsFast",
+    url: absoluteUrl("/"),
+    applicationCategory: "BusinessApplication",
+    operatingSystem: "Web",
+    description: DEFAULT_DESCRIPTION,
+    offers: [
+      {
+        "@type": "Offer",
+        name: "Free Scan",
+        price: "0",
+        priceCurrency: "USD",
+      },
+      {
+        "@type": "Offer",
+        name: "Open Source",
+        price: "0",
+        priceCurrency: "USD",
+        url: SITE_GITHUB_URL,
+      },
+    ],
+  };
+  const faq = {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: FAQS.map(({ question, answer }) => ({
+      "@type": "Question",
+      name: question,
+      acceptedAnswer: { "@type": "Answer", text: answer },
+    })),
+  };
   return (
     <>
+      <JsonLd value={organization} />
+      <JsonLd value={software} />
+      <JsonLd value={faq} />
+    </>
+  );
+}
+
+export default function HomePage() {
+  const announcementVisible = process.env.NEXT_PUBLIC_ANNOUNCEMENT_ENABLED !== "false";
+  const announcementText =
+    process.env.NEXT_PUBLIC_ANNOUNCEMENT_TEXT?.trim() ||
+    "I’m running free trend and distribution scans for technical founders.";
+  const videoUrl = process.env.NEXT_PUBLIC_DEMO_VIDEO_URL;
+  const captionsUrl = process.env.NEXT_PUBLIC_DEMO_CAPTIONS_URL;
+  const paidHref = process.env.NEXT_PUBLIC_FOUNDER_CHECKOUT_URL;
+  const paidEnabled =
+    process.env.BILLING_ENABLED === "true" && process.env.PAID_MONITORING_ENABLED === "true";
+
+  return (
+    <>
+      <MarketingSchema />
+
+      {announcementVisible ? (
+        <aside className="announcement-bar" aria-label="Free scan announcement">
+          <span>{announcementText}</span>
+          <Link href="/#scan">Run yours →</Link>
+        </aside>
+      ) : null}
+
       <section className="hero section-pad">
-        <div className="hero-radar" aria-hidden="true">
-          <span />
-          <span />
-          <span />
-          <i />
+        <div className="hero-copy-column">
+          <p className="kicker">
+            <span className="kicker-dot" /> Social media and search trend intelligence for AI agents
+          </p>
+          <h1>
+            <span>Spot the trends your users care about.</span>
+            <strong>Know what to distribute next.</strong>
+          </h1>
+          <p className="hero-copy">
+            Paste your product URL. TrendsFast turns live social conversations, search demand,
+            developer adoption, news, and content signals into one evidence-backed topic, angle,
+            format, and channel for every agent in your stack.
+          </p>
+          <p className="hero-support">
+            Reach the right users before the moment passes—without chasing irrelevant hype.
+          </p>
+          <ScanForm formId="scan" />
+          <div className="hero-actions">
+            <a className="text-link" href="#demo">
+              See it in action <span aria-hidden="true">↓</span>
+            </a>
+            <span>One free founder-reviewed scan · No card · Private by default · Open source</span>
+          </div>
         </div>
-        <p className="kicker">
-          <span className="kicker-dot" /> Distribution intelligence for founders + agents
-        </p>
-        <h1>
-          Know what to
-          <br />
-          distribute <em>next.</em>
-        </h1>
-        <p className="hero-copy">
-          Paste your product URL. TrendsFast combines live conversations, search demand, developer
-          adoption, news triggers, and content-performance signals to give you one evidence-backed
-          move.
-        </p>
-        <ScanForm />
-        <div className="trust-row" aria-label="Alpha promises">
-          <span>Founder-reviewed alpha</span>
-          <span>No card</span>
-          <span>No auto-posting</span>
-          <span>Open source</span>
+
+        <div className="signal-visual" aria-hidden="true">
+          <div className="signal-radar">
+            <span />
+            <span />
+            <span />
+            <i />
+          </div>
+          <div className="signal-stream signal-stream-one">
+            <small>SEARCH</small>
+            <strong>+ momentum</strong>
+          </div>
+          <div className="signal-stream signal-stream-two">
+            <small>COMMUNITY</small>
+            <strong>high relevance</strong>
+          </div>
+          <div className="signal-stream signal-stream-three">
+            <small>DECISION</small>
+            <strong>PUBLISH</strong>
+          </div>
         </div>
       </section>
 
-      <SourceStatusStrip />
+      <section className="proof-section" aria-label="Product trust and source coverage">
+        <div className="proof-strip section-pad">
+          {PROOF_POINTS.map((point, index) => (
+            <span key={point}>
+              <i aria-hidden="true">{index === 0 ? "◆" : "◇"}</i>
+              {point}
+            </span>
+          ))}
+        </div>
+        <SourceStatusStrip />
+      </section>
 
-      <section className="section-pad example-section" id="example">
-        <div className="section-intro split-intro">
+      <section className="contrast-section section-pad">
+        <p>Social listening gives you a feed.</p>
+        <p>Trend dashboards give you charts.</p>
+        <p>Raw APIs give you JSON.</p>
+        <strong>TrendsFast gives your agents the next move.</strong>
+      </section>
+
+      <section className="demo-section section-pad" id="demo">
+        <div className="section-heading">
           <div>
-            <p className="section-index">01 / THE PRODUCT</p>
-            <h2>
-              One decision.
-              <br />
-              All the receipts.
-            </h2>
+            <p className="section-index">01 / THE SIGNATURE OBJECT</p>
+            <h2>See what your agent gets.</h2>
           </div>
           <p>
-            No feed to babysit. No generic calendar. The decision card tells you what to say, where
-            to say it, why the window is open, and where every claim came from.
+            Switch between all four honest outcomes. Each decision keeps its context, why-now
+            reasoning, evidence receipts, truth class, confidence, and limitations attached.
           </p>
         </div>
         <ExampleExplorer />
-        <p className="example-disclosure">
-          This interaction uses deterministic fixture data so you can inspect the complete contract
-          without provider credentials. It is an example, not traction proof.
-        </p>
+        <p className="example-disclosure">Product demo using example data.</p>
       </section>
 
-      <section className="process section-pad">
-        <div className="section-intro">
-          <p className="section-index">02 / HOW IT THINKS</p>
-          <h2>From a URL to a defensible move.</h2>
+      <section className="open-proof-section section-pad">
+        <div>
+          <p className="section-index">02 / PROOF YOU CAN INSPECT</p>
+          <h2>Open engine. Visible rules.</h2>
         </div>
-        <div className="process-grid">
-          {principles.map((principle) => (
-            <article key={principle.number}>
-              <span>{principle.number}</span>
-              <div className="process-glyph" aria-hidden="true">
-                <i />
-                <i />
-                <i />
-              </div>
-              <h3>{principle.title}</h3>
-              <p>{principle.text}</p>
+        <div className="open-proof-card">
+          <span>AGPL-3.0</span>
+          <p>
+            Inspect the provider contracts, truth classes, deterministic ranking, evidence binding,
+            WAIT quality floor, API schemas, and PostgreSQL lifecycle yourself.
+          </p>
+          <a href={SITE_GITHUB_URL} rel="noreferrer" target="_blank">
+            View the source on GitHub <span aria-hidden="true">↗</span>
+          </a>
+        </div>
+      </section>
+
+      <section className="audience-section section-pad">
+        <div className="section-heading">
+          <div>
+            <p className="section-index">03 / BUILT FOR THE BUILDER</p>
+            <h2>Who is TrendsFast for?</h2>
+          </div>
+          <p>Technical founders and small teams who build faster than they distribute.</p>
+        </div>
+        <div className="audience-grid">
+          {AUDIENCES.map((audience, index) => (
+            <article key={audience.title}>
+              <span>{String(index + 1).padStart(2, "0")}</span>
+              <h3>{audience.title}</h3>
+              <p>{audience.text}</p>
             </article>
           ))}
         </div>
       </section>
 
-      <section className="truth-section section-pad">
-        <div className="truth-copy">
-          <p className="section-index">03 / TRUST BEFORE VOLUME</p>
-          <h2>Recent is not the same as trending.</h2>
-          <p>
-            TrendsFast separates measured time series, internally observed velocity, cross-source
-            corroboration, early signals, and insufficient evidence. It never invents a velocity
-            number.
-          </p>
-          <Link className="text-link" href="/sources">
-            Inspect every source and limitation <span>→</span>
-          </Link>
+      <section className="process-section section-pad">
+        <div className="section-heading compact-heading">
+          <div>
+            <p className="section-index">04 / HOW IT WORKS</p>
+            <h2>From a URL to one defensible move.</h2>
+          </div>
         </div>
-        <div className="signal-stack" aria-label="Signal truth classes">
-          {[
-            ["MEASURED_EXTERNAL_SERIES", "Provider-supplied time series", "01"],
-            ["MEASURED_INTERNAL_VELOCITY", "Two time-separated snapshots", "02"],
-            ["CORROBORATED_SIGNAL", "Independent sources, same window", "03"],
-            ["EMERGING_SIGNAL", "One strong, recent opportunity", "04"],
-            ["INSUFFICIENT_SIGNAL", "Return WAIT", "05"],
-          ].map(([name, note, number]) => (
-            <div key={name}>
-              <span>{number}</span>
-              <strong>{name}</strong>
-              <small>{note}</small>
-            </div>
+        <div className="process-grid">
+          {HOW_IT_WORKS.map((step) => (
+            <article key={step.number}>
+              <span>{step.number}</span>
+              <div className="process-glyph" aria-hidden="true">
+                <i />
+                <i />
+                <i />
+              </div>
+              <h3>{step.title}</h3>
+              <p>{step.text}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="repeat-scan-section section-pad">
+        <div>
+          <p className="section-index">YOUR URL IS THE ONBOARDING</p>
+          <h2>What trend should your product act on next?</h2>
+        </div>
+        <ScanForm compact formId="scan-repeat" />
+      </section>
+
+      <section className="video-section section-pad">
+        <div className="section-heading">
+          <div>
+            <p className="section-index">05 / SEE IT IN ACTION</p>
+            <h2>From public URL to evidence-backed decision.</h2>
+          </div>
+          <p>
+            The walkthrough follows the real contract: infer context, inspect coverage, reveal the
+            move, open evidence, complete founder review, then call the API.
+          </p>
+        </div>
+        <DemoMedia {...(videoUrl ? { videoUrl } : {})} {...(captionsUrl ? { captionsUrl } : {})} />
+      </section>
+
+      <section className="automation-section section-pad">
+        <div className="section-heading">
+          <div>
+            <p className="section-index">06 / AGENT-READY</p>
+            <h2>Power every agent with live trend intelligence.</h2>
+          </div>
+          <p>Give the tools you already use one structured, evidence-backed distribution move.</p>
+        </div>
+        <div className="agent-grid">
+          {AGENT_TOOLS.map((tool) => (
+            <article key={tool}>
+              <span aria-hidden="true">{tool.slice(0, 2).toUpperCase()}</span>
+              <h3>{tool}</h3>
+              <p>Example HTTP workflow</p>
+            </article>
+          ))}
+        </div>
+        <div className="capability-legend">
+          <span>Available: HTTP API</span>
+          <span>Available: Example workflows</span>
+          <span>Coming soon: Native integrations</span>
+        </div>
+      </section>
+
+      <section className="features-section section-pad">
+        <div className="section-heading compact-heading">
+          <div>
+            <p className="section-index">07 / IMPLEMENTED OUTCOMES</p>
+            <h2>Enough signal to decide. Enough restraint to WAIT.</h2>
+          </div>
+        </div>
+        <div className="feature-grid">
+          {FEATURES.map(([title, text], index) => (
+            <article key={title}>
+              <span>{String(index + 1).padStart(2, "0")}</span>
+              <h3>{title}</h3>
+              <p>{text}</p>
+            </article>
           ))}
         </div>
       </section>
 
       <section className="api-section section-pad">
-        <div className="section-intro split-intro">
+        <div className="section-heading">
           <div>
-            <p className="section-index">04 / ONE CONTRACT</p>
-            <h2>
-              Built for humans.
-              <br />
-              Structured for agents.
-            </h2>
+            <p className="section-index">08 / TRENDSFAST FOR AGENTS</p>
+            <h2>Create once. Poll normally. Receive the same Next Move.</h2>
           </div>
           <div>
             <p>
-              The web result and REST API expose the same Next Move. One TrendsFast key for managed
-              cloud; bring your own provider keys when self-hosting.
+              Approved users receive a unique project-scoped key. Scan creation is bounded by rate
+              and cost limits; normal result polling does not create a research run. Nothing
+              auto-publishes.
             </p>
-            <Link className="text-link" href="/docs">
-              Read the API contract <span>→</span>
-            </Link>
+            <div className="inline-actions">
+              <Link className="button button-primary" href="/docs">
+                Read the dev docs <span aria-hidden="true">→</span>
+              </Link>
+              <Link className="button button-secondary" href="/#scan">
+                Request API access
+              </Link>
+            </div>
           </div>
         </div>
         <ApiPreview />
       </section>
 
-      <section className="model-section section-pad">
-        <div className="section-intro">
-          <p className="section-index">05 / OPEN ENGINE, MANAGED OPERATIONS</p>
-          <h2>
-            Same decision engine.
-            <br />
-            Different operational burden.
-          </h2>
+      <section className="channels-section section-pad">
+        <div className="section-heading">
+          <div>
+            <p className="section-index">09 / SOURCES ARE NOT DESTINATIONS</p>
+            <h2>Evidence in. Recommended channel out.</h2>
+          </div>
+          <p>Evidence and recommended channel do not have to be the same.</p>
         </div>
-        <div className="model-grid">
+        <div className="channel-contrast">
           <article>
-            <span className="model-label">SELF-HOSTED</span>
-            <h3>Bring your own keys.</h3>
-            <p>
-              The real engine, provider interfaces, scoring, evidence rules, and fixture demo under
-              AGPL-3.0.
-            </p>
+            <span>Evidence sources</span>
             <ul>
-              <li>Standard PostgreSQL</li>
-              <li>Environment-based provider keys</li>
-              <li>One-command fixture path</li>
-              <li>Your hosting and operations</li>
+              {EVIDENCE_SOURCES.map((source) => (
+                <li key={source}>{source}</li>
+              ))}
             </ul>
-            <Link href="/open-source">Explore self-hosting →</Link>
           </article>
-          <article className="cloud-card">
-            <span className="model-label">FOUNDER CLOUD BETA · HYPOTHESIS</span>
-            <h3>
-              $39 <small>/ month</small>
-            </h3>
-            <p>
-              One monitored product. Provider accounts, daily checks, retries, history, and support
-              managed.
-            </p>
+          <div className="channel-arrow" aria-hidden="true">
+            <span>ONE NEXT MOVE</span>
+            <i>→</i>
+          </div>
+          <article>
+            <span>Output channels</span>
             <ul>
-              <li>Billing is disabled during alpha</li>
-              <li>No card for the first reviewed scan</li>
-              <li>Next Moves only above the quality floor</li>
-              <li>30-day history and API access later</li>
+              {OUTPUT_CHANNELS.map((channel) => (
+                <li key={channel}>{channel}</li>
+              ))}
             </ul>
-            <span className="disabled-cta">Not for sale yet</span>
           </article>
         </div>
+        <Link className="text-link" href="/channels">
+          Explore channel guidance <span aria-hidden="true">→</span>
+        </Link>
       </section>
 
-      <section className="metrics-band">
+      <section className="founder-section section-pad">
+        <div className="founder-mark" aria-hidden="true">
+          TF
+        </div>
         <div>
-          <p className="section-index">06 / OPEN PROOF</p>
-          <h2>
-            Measured publicly,
-            <br />
-            once there is data.
-          </h2>
+          <p className="section-index">10 / WHY I BUILT IT</p>
+          <h2>Building got fast. Choosing what to say did not.</h2>
+          <p>{FOUNDER_STORY}</p>
+          <Link className="text-link" href="/blog/recent-is-not-the-same-as-trending">
+            Read the thinking <span aria-hidden="true">→</span>
+          </Link>
         </div>
-        <div className="empty-metrics">
-          {["Useful-move rate", "Moves actually used", "Evidence validity", "Median scan cost"].map(
-            (metric) => (
-              <span key={metric}>
-                <small>{metric}</small>
-                <strong>Not enough verified data yet</strong>
-              </span>
-            ),
-          )}
-        </div>
-        <Link href="/open">See the denominator-backed ledger →</Link>
       </section>
 
-      <section className="faq section-pad">
-        <div className="section-intro">
-          <p className="section-index">07 / STRAIGHT ANSWERS</p>
-          <h2>Before you paste a URL.</h2>
+      <section className="pricing-section section-pad" id="pricing">
+        <div className="section-heading">
+          <div>
+            <p className="section-index">11 / PRICING</p>
+            <h2>Start with the decision. Pay only for managed repetition.</h2>
+          </div>
+          <p>
+            The free scan proves the product object. Open source gives you control. Managed
+            monitoring stays bounded by real research and provider cost.
+          </p>
         </div>
-        <div className="faq-list">
-          {[
-            [
-              "Will it post for me?",
-              "No. auto_publish is always false in the alpha. You choose, edit, and publish.",
-            ],
-            [
-              "Is every source live?",
-              "No. Status and real read-back state are separate. Missing keys degrade coverage and remain visible.",
-            ],
-            [
-              "Why founder review?",
-              "The first cohort is for learning. A human checks context, evidence fit, limitations, and the final decision before delivery.",
-            ],
-            [
-              "What happens to my scan?",
-              "It is private by default, addressed by an unguessable token, minimized, and retained according to the documented policy.",
-            ],
-            [
-              "Why might I receive WAIT?",
-              "Because a trustworthy non-action is better than a thin trend claim or generic post idea.",
-            ],
-            [
-              "Can I self-host it?",
-              "Yes. Fixture mode needs no paid credentials; live self-hosting uses your provider keys and ordinary PostgreSQL.",
-            ],
-          ].map(([question, answer]) => (
-            <details key={question}>
-              <summary>
-                {question}
-                <span>+</span>
-              </summary>
-              <p>{answer}</p>
-            </details>
-          ))}
+        <PricingCards paidEnabled={paidEnabled} {...(paidHref ? { paidHref } : {})} />
+      </section>
+
+      <section className="faq-section section-pad">
+        <div className="section-heading compact-heading">
+          <div>
+            <p className="section-index">12 / STRAIGHT ANSWERS</p>
+            <h2>Before you paste a URL.</h2>
+          </div>
         </div>
+        <FaqList />
       </section>
 
       <section className="final-cta section-pad">
-        <span className="orbit" aria-hidden="true" />
-        <p className="section-index">YOUR PRODUCT URL IS THE ONBOARDING</p>
+        <div className="final-orbit" aria-hidden="true">
+          <span />
+          <span />
+        </div>
+        <p className="section-index">ONE URL. ONE DECISION.</p>
         <h2>
-          Stop researching.
-          <br />
-          <em>Choose the move.</em>
+          Stop researching every platform.
+          <strong>Spot the trend your users care about now.</strong>
         </h2>
-        <ScanForm compact />
+        <ScanForm compact formId="scan-final" />
         <p>One free founder-reviewed scan · Private by default · No card</p>
       </section>
     </>

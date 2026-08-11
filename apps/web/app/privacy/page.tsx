@@ -1,19 +1,25 @@
 import type { Metadata } from "next";
+import { pageMetadata } from "../../lib/site";
 
-export const metadata: Metadata = { title: "Privacy" };
+export const metadata: Metadata = pageMetadata({
+  title: "Privacy",
+  description:
+    "How TrendsFast handles submitted product URLs, private results, provider data, analytics, retention, and sharing consent.",
+  path: "/privacy",
+});
 
 export default function PrivacyPage() {
   return (
     <>
       <section className="page-hero section-pad">
-        <p className="section-index">ALPHA POLICY / FOUNDER REVIEW REQUIRED</p>
+        <p className="section-index">POLICY DRAFT / FOUNDER AND COUNSEL REVIEW REQUIRED</p>
         <h1>Privacy, in plain language.</h1>
       </section>
       <section className="content-page section-pad">
         <div className="prose">
           <p>
-            This is an operational alpha summary, not a substitute for founder and legal review
-            before public launch.
+            This is an operational summary, not a substitute for founder and legal review before
+            public launch.
           </p>
           <h2>What we need</h2>
           <p>
@@ -29,7 +35,7 @@ export default function PrivacyPage() {
           </p>
           <h2>Retention and deletion</h2>
           <p>
-            The alpha configuration defaults to a 90-day retention target, but no automated purge
+            The current configuration defaults to a 90-day retention target, but no automated purge
             scheduler or self-service deletion endpoint is enabled yet. A reviewed operator can
             invoke the repository&apos;s exact-project deletion or expiry-purge procedure;
             completion and lawful retention exceptions must be verified manually. Public launch

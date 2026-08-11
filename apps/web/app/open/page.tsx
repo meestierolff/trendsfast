@@ -1,6 +1,12 @@
 import type { Metadata } from "next";
+import { pageMetadata } from "../../lib/site";
 
-export const metadata: Metadata = { title: "Open metrics" };
+export const metadata: Metadata = pageMetadata({
+  title: "Open product metrics",
+  description:
+    "TrendsFast publishes denominator-backed usefulness, usage, evidence validity, cost, review-time, WAIT, and repeat-scan metrics only when verified.",
+  path: "/open",
+});
 
 const metrics = [
   "Products scanned",
@@ -18,7 +24,7 @@ export default function OpenMetricsPage() {
   return (
     <>
       <section className="page-hero section-pad">
-        <p className="section-index">OPEN PROOF / ALPHA</p>
+        <p className="section-index">OPEN PROOF / VERIFIED DENOMINATORS</p>
         <h1>
           Denominators
           <br />
