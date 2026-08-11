@@ -1,0 +1,13 @@
+{
+  "name": "@trendsfast/observability",
+  "version": "0.1.0-alpha.0",
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src tests"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  }
+}

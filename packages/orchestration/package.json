@@ -1,0 +1,22 @@
+{
+  "name": "@trendsfast/orchestration",
+  "version": "0.1.0-alpha.0",
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src tests"
+  },
+  "dependencies": {
+    "@trendsfast/core": "workspace:*",
+    "@trendsfast/database": "workspace:*",
+    "@trendsfast/evidence": "workspace:*",
+    "@trendsfast/providers": "workspace:*",
+    "@trendsfast/schemas": "workspace:*",
+    "@trendsfast/scoring": "workspace:*",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  }
+}
