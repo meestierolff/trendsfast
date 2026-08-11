@@ -1,25 +1,29 @@
 # Product constitution
 
-Status: accepted for the v0.1 founder-reviewed alpha. Product changes that
+Status: accepted for the founder-reviewed first cohort. Product changes that
 contradict this document require an explicit architecture/product decision.
 
 ## Category
 
-> **TrendsFast is the distribution intelligence API for founders and their
-> agents.**
+> **TrendsFast is the social and search trend intelligence API for founders and
+> their AI agents.**
 
 It is not primarily a trend dashboard, scraper, scheduler, auto-poster, social
 listening suite, or generic content generator.
 
 ## Promise
 
-**Know what to distribute next.** Paste a product URL. TrendsFast combines
+**Spot the trends your users care about. Know what to distribute next.** Paste a
+product URL. TrendsFast combines
 bounded evidence about conversations, search demand, developer adoption, news
 triggers, and content performance to return one move: what to say, where to say
 it, why now, and the receipts behind it.
 
-The alpha is founder-reviewed. It requires no card before value and never
+The first cohort is founder-reviewed. It requires no card before value and never
 auto-publishes.
+
+The primary outcome is to replace hours of manual distribution research with
+one relevant, evidence-backed action a founder can actually take.
 
 ## Initial customer
 
@@ -28,7 +32,7 @@ B2B SaaS, or developer tools. They have a live product URL, ship faster than
 they distribute, lack a full-time distribution team, and value evidence and
 speed over a large dashboard.
 
-Do not optimize the alpha for enterprise surveillance, agencies and content
+Do not optimize the first cohort for enterprise surveillance, agencies and content
 calendars, consumer creator trends, bulk data resale, every social network,
 auto-posting, or guaranteed virality.
 
@@ -123,7 +127,7 @@ results.
 
 ## Scope guardrail
 
-The alpha deliberately excludes automated Reddit ingestion, broad social
+The first cohort deliberately excludes automated Reddit ingestion, broad social
 coverage, posting/scheduling, social OAuth, content calendars, teams, raw data
 resale, credit billing, enterprise controls, MCP/CLI/mobile clients, and complex
 queue infrastructure. New work must improve the unknown-founder north-star:

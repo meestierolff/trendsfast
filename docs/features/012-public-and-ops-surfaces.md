@@ -1,7 +1,9 @@
 # 012 — Public and founder-ops product surfaces
 
-Status: routes/UI and the local candidate artifact are verified at `072d5fc`;
-remote CI and external/manual verification remain required.
+Status: Phase 1 public design/structure and Phase 2 founder-operations code paths
+are present in the active development tree; integrated release-SHA CI,
+deployment, visual/manual accessibility, and external verification remain
+required before either phase is a release claim.
 
 ## User problem
 
@@ -10,8 +12,10 @@ needs a focused review queue without vanity dashboards.
 
 ## Scope
 
-`/`, requested/result routes, `/sources`, `/docs`, `/open`, `/open-source`, and
-protected `/ops`, with mobile/accessibility/reduced-motion behavior.
+`/`, requested/result routes, `/agents`, `/docs`, `/channels`, `/news`, `/blog`,
+`/pricing`, `/sources`, `/open`, `/open-source`, the three high-intent API pages,
+and protected `/ops`, `/ops/keys`, and `/ops/sources`, with
+mobile/accessibility/reduced-motion behavior.
 
 ## Non-goals
 
@@ -20,7 +24,7 @@ area, auto-posting, social calendar, or denominator-free metrics.
 
 ## Product contract
 
-Homepage begins URL -> result and a realistic fixture example. Source strip and
+Homepage begins URL -> result and a realistic example-data demo. Source strip and
 open metrics are honest. Result centers the recognizable Next Move card.
 
 ## API contract
@@ -47,7 +51,7 @@ analytics/referrers, accessible generic errors, secure ops boundary.
 ## Tests written first
 
 - Result-first content and no fake proof.
-- Four-action fixture example.
+- Four-action example-data demo.
 - Requested state without fake percentage.
 - Private/public consent and source status truth.
 - `Not enough verified data yet` for small denominator.
@@ -55,19 +59,23 @@ analytics/referrers, accessible generic errors, secure ops boundary.
 
 ## Implementation
 
-Use original graphite/off-white/signal-accent design, editorial type, evidence
-monospace, crisp borders, restrained motion, and no copied visual identity.
+Use the original energetic dark system: deep navy backgrounds, bright lime,
+cyan, violet, coral, and amber action colors, crisp borders, generous spacing,
+controlled signal glow, restrained motion, and a reduced-motion fallback. The
+Next Move card is the signature object. Avoid copied layouts, generic
+full-screen AI gradients, and glassmorphism overload.
 
 ### Current implementation truth
 
-The repository mounts the listed public pages, bearer status/result routes, a
+The repository mounts the listed public pages, high-intent SEO pages, local
+Markdown news/blog feeds, `llms.txt`, bearer status/result routes, a
 same-origin public submission route with atomic pseudonymous
 count/duplicate/insert admission, same-origin feedback/share-consent mutations,
 and the protected ops queue/detail surfaces. Public scan capabilities use 256
-random bits. Every mutation body is stream-counted before parsing. Turnstile is
-optional and disabled by default. Status responses do not invent percentages;
-private route responses are non-cacheable and pages are marked
-`noindex`/`nofollow`.
+random bits. Submission replays still consume the durable daily cap. Every
+mutation body is stream-counted before parsing. Turnstile is optional and
+disabled by default. Status responses do not invent percentages; private route
+responses are non-cacheable and pages are marked `noindex`/`nofollow`.
 
 The public capability lookup routes do not yet have an independent durable
 throttle. Their 256-bit entropy prevents practical guessing, but deployed edge
@@ -80,17 +88,25 @@ fingerprint and 100 globally per five minutes by default). `/v1` uses the same
 durable admission store with one-minute defaults of 12 per fingerprint and 120
 globally. Deployed proxy/fingerprint behavior still requires verification.
 
-The `072d5fc` optimized local artifact passed all 28 serialized browser checks:
-14 desktop and 14 mobile, with no skips/failures. That includes the public
-surface, ops auth and persisted review/approval/delivery, private
-result/feedback, unknown request/result privacy, narrow viewport, and eight axe
-checks. Manual direct requests to that same candidate artifact passed known/unknown HTML/status
-behavior, private no-store/noindex/no-referrer protections, the configured CSP
-and isolation headers, and the distinct public five-minute OpenAPI cache. A
-manual rejection probe also observed cross-origin ops login/private feedback
-`403`, same-origin invalid ops token `401`, and keyless v1 creation `401`. A
-Remote CI, manual keyboard/screen-reader review, a public lookup edge throttle,
-and external security-header verification remain gates.
+The current working tree's actual `next start` production artifact ran 60
+browser checks: 58 passed and two mobile checks were intentionally skipped. The
+run included 24 desktop/mobile axe checks and a complete API submit →
+`REVIEW_REQUIRED` → founder verify/approve/deliver → `READY` → idempotent
+replay/conflict journey. Its final optimized webpack production build passed;
+the standard Turbopack build was locally blocked by sandbox port restrictions.
+A local HTTP verifier also passed 26 public route/status/content-type checks,
+the expected security-header/secret-marker matrix, private ops, and two
+unknown-capability privacy probes. A separate manual curl exercise confirmed
+the intended cache/content-type matrix, private/noindex ops and unknown scan,
+unauthenticated API `401`, and `/api/sources` with all automated sources and
+manual evidence at **Coming soon**/`UNVERIFIED` and Reddit at **Permission
+required**/`LEGAL_REVIEW`. This is integrated `LOCAL_PASS` evidence, not
+release-SHA or deployment proof. Final remote CI, manual keyboard/screen-reader
+review, a public lookup edge throttle, and external security-header verification
+remain gates.
+
+The complete current working-tree evidence and its limitations are in the
+[integrated local record](../operations/LOCAL_VERIFICATION_2026-08-11.md).
 
 ## Verification
 
@@ -99,7 +115,7 @@ spot check, visual status audit, and analytics payload inspection.
 
 ## Limitations
 
-Fixture example is illustrative and must stay labeled; alpha ops auth is
+Example data is illustrative and must stay labeled; founder-token ops auth is
 temporary.
 
 ## Rollout

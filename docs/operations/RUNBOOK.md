@@ -1,8 +1,8 @@
 # Founder operations runbook
 
-This runbook assumes one alpha application, standard PostgreSQL, bounded scan
-execution, and billing disabled. Replace placeholder contacts and dashboards in
-the private deployment record before launch.
+This runbook assumes one application, standard PostgreSQL, bounded scan
+execution, and billing/paid monitoring disabled. Replace placeholder contacts
+and dashboards in the private deployment record before launch.
 
 ## Principles
 
@@ -67,10 +67,11 @@ affected users if the recommendation materially changes.
 ## Provider cost ceiling or quota incident
 
 1. Stop admission of new external steps; preserve fixture mode and result access.
-2. Compare atomic reservations, actual/unknown costs, retries, price-version
-   metadata, and provider invoice/usage console. Model entries labeled
-   `conservative_pre_call_reservation`/`unknown_not_settled` are ceilings, not
-   provider-reported usage.
+2. Compare durable pre-I/O reservations, settled/unknown costs, retries,
+   price-version metadata, and provider invoice/usage console. A valid
+   provider-reported usage record may settle a reservation; entries still
+   labeled `conservative_pre_call_reservation`/`unknown_not_settled` are ceilings,
+   not provider-reported usage.
 3. Revoke a leaked key and rotate through the secret manager if abuse is
    suspected. Do not print the old/new key.
 4. Lower per-scan/provider limits or disable the adapter; do not raise the
@@ -93,8 +94,11 @@ clear it merely to admit work.
 3. Determine exposure window and misuse from provider/audit metadata.
 4. Rotate dependent sessions/peppers only when scoped evidence requires it;
    pepper rotation needs an API-key reissue plan.
-5. Notify affected parties and authorities as counsel determines.
-6. Add a regression check and sanitized post-incident record.
+
+Current blocker: a Stripe test key appeared in local CLI output. Revoke/rotate
+it before further Stripe work, inspect the provider audit trail for misuse, and
+retain only redacted rotation/verifier evidence. Do not reproduce the key in the
+incident record. 5. Notify affected parties and authorities as counsel determines. 6. Add a regression check and sanitized post-incident record.
 
 ## Private result or tenant access incident
 
@@ -117,8 +121,10 @@ represents the work's real maximum cost.
 
 ## Billing incident
 
-Billing should be off in alpha. If later enabled, set `BILLING_ENABLED=false` to
-stop new checkout while retaining subscriptions and webhook reconciliation.
+Billing and paid monitoring should be off until their live gate passes. If later
+enabled, set `BILLING_ENABLED=false` and `PAID_MONITORING_ENABLED=false` to stop
+new checkout/scheduled claims while retaining subscriptions and webhook
+reconciliation.
 Never delete Stripe/local records to make them “match.” Verify signed events,
 event order, and customer identity; coordinate refunds and notifications through
 approved policy.

@@ -4,11 +4,18 @@ Use manually, personalize, and follow each community's rules. Never collect a
 private/admin URL, secret, or sensitive data. Move product details to a private
 channel when the thread should not contain them.
 
+Canonical campaign message:
+
+> I was spending hours searching social media and search demand for something
+> relevant to distribute. TrendsFast now gives my agents one evidence-backed
+> Next Move from a product URL.
+
 ## Public invitation reply
 
-Happy to run one. Please share only the public product URL. The current free form
-accepts that URL and infers context from public content; it does not collect
-private context or channel preferences. I’ll return one founder-reviewed
+Drop your product URL. I’ll run a free founder-reviewed trend and distribution
+scan. Please share only the public product URL. The current free form accepts
+that URL and infers context from public content; it does not collect private
+context or channel preferences. I’ll return one founder-reviewed
 `PUBLISH`, `REPLY`, `REMIX`, or `WAIT` with original evidence links and
 limitations. Nothing becomes a public case study without your explicit
 permission.

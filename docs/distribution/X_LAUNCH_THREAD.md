@@ -6,9 +6,9 @@
 
 1. I can build products faster than I can distribute them.
 
-   The bottleneck became the same research loop every week: conversations,
-   search demand, developer activity, videos, launches, news—then still deciding
-   what was worth saying.
+   I was spending hours searching social media and search demand for something
+   relevant to distribute. The result was still a pile of links and a decision
+   I had to make myself.
 
 2. More data did not solve it. A feed of 100 “trending” posts just moved the
    work.
@@ -34,24 +34,30 @@
 
 6. It’s open source under AGPL: `[VERIFIED REPO LINK]`.
 
-   Fixture mode runs without paid keys. Self-hosters bring provider accounts;
+   Example mode runs without paid keys. Self-hosters bring provider accounts;
    the planned cloud manages providers and operations behind one TrendsFast key.
 
-7. Honest alpha status at `[SHA/DATE]`: `[VERIFIED STATUS]`.
+7. Current release status at `[SHA/DATE]`: `[VERIFIED DEPLOYMENT AND SOURCE
+STATUS]`.
 
-   Founder-reviewed. No auto-posting. No card for the free scan. Billing off.
-   Reddit automation remains under legal review.
+   Founder-reviewed. No auto-posting. No card for the free scan. Private by
+   default. Paid availability is shown only after its separate gate. Reddit
+   automation remains permission-gated.
 
-8. I’m offering `[NUMBER MATCHING CAPACITY]` free founder-reviewed scans.
+8. I was spending hours searching social media and search demand for something
+   relevant to distribute. TrendsFast now gives my agents one evidence-backed
+   Next Move from a product URL.
 
-   Use `[TRACKED PRODUCT LINK]` to submit only your public product URL. The
-   current form infers context from public content. I’ll return one move—or
+9. **Drop your product URL. I’ll run a free founder-reviewed trend and
+   distribution scan.** `[TRACKED PRODUCT LINK]`
+
+   I’m offering `[NUMBER MATCHING VERIFIED REVIEW CAPACITY]` scans. One move—or
    `WAIT`—with the evidence.
 
-   Do not send credentials, private URLs, or customer data.
+   Public URLs only—no credentials, private URLs, or customer data.
 
 ## Media
 
 Use an actual product GIF/screenshot captured from the release SHA. The frame
-must show “Fixture example” when it uses fixture data; do not composite fake
-source coverage or results.
+must show “Product demo using example data” when it uses fixture data; do not
+composite fake source coverage or results.

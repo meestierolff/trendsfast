@@ -2,8 +2,12 @@
 
 Target canonical origin: `https://trendsfast.com`.
 
+Observed state on 2026-08-12: `trendsfast.com` returns `NXDOMAIN`, and no
+TrendsFast Vercel project exists. Every item below remains unexecuted.
+
 - [ ] `trendsfast.com` ownership is confirmed by the founder.
-- [ ] The existing Vercel `trendsfast` project is linked; no duplicate exists.
+- [ ] A founder-owned Vercel `trendsfast` project is created, linked, and checked
+      for duplicates.
 - [ ] Add both hosts:
 
   ```bash

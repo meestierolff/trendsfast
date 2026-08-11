@@ -1,8 +1,9 @@
 # 001 — Fixture vertical slice
 
-Status: implemented; database/suite/build/browser/HTTP replay passed at local
-commit `072d5fc`. Remote CI and external/manual acceptance remain required.
-Passing fixtures prove local behavior only.
+Status: implemented; integrated database/suite/build/browser/HTTP verification
+passed on the current local working tree. Final release-SHA CI and
+external/manual acceptance remain required. Passing fixtures prove local
+behavior only.
 
 ## User problem
 
@@ -22,7 +23,8 @@ claims, posting, scheduling, and billing.
 ## Product contract
 
 Fixture mode follows real contracts and returns one of `PUBLISH`, `REPLY`,
-`REMIX`, or `WAIT`, visibly labeled “Fixture.” It includes limitations,
+`REMIX`, or `WAIT`. Public surfaces label it **Product demo** / **example data**;
+engineering records retain the exact `FIXTURE` state. It includes limitations,
 provenance, review state, and `auto_publish=false`.
 
 ## API contract
@@ -65,18 +67,24 @@ database path. Do not branch around evidence/scoring/review contracts in the UI.
 Run clean install, database migrate/seed, `pnpm test`, production build, and
 critical browser path with `PROVIDER_CREDENTIAL_MODE=fixture` and empty keys.
 
-On 2026-08-11, the current hardened local replay completed a frozen install, all
-eight PostgreSQL migrations (`0000`–`0007`), two deterministic fixture seeds,
-and `pnpm db:purge` with zero eligible rows. The integration-enabled full suite
-passed 277 tests in 55 files with no skips or failures; repository-wide lint,
-all 12 typechecks, and the Drizzle schema check also passed. See the
-[local verification record](../operations/LOCAL_VERIFICATION_2026-08-11.md).
-The candidate's optimized Next.js production build completed, and all 28 serialized
-desktop/mobile browser checks passed with no skips/failures, including eight axe
-checks and the persisted ops/private journeys. Manual direct requests passed the
-known/unknown route and private-cache/security-header matrix. These results all
-target local commit `072d5fc`; the remote-CI/manual/external matrix remains
-required.
+On 2026-08-12, the integrated current working tree replayed all 15 migration
+files through `0016` on isolated PostgreSQL 16, matched all 15 migration hashes,
+seeded the fixture twice, and matched 34/34 public tables plus exact
+enums/indexes/constraints and effective/default ACL denial for `PUBLIC`, `anon`,
+and `authenticated`. With database integration enabled, 85 files/449 tests
+passed; workspace typecheck, lint, Drizzle check, and the final optimized webpack
+production build also passed. The standard Turbopack build was locally blocked
+by sandbox port restrictions. The actual `next start` artifact ran 60 browser
+checks: 58 passed and two mobile checks were intentionally skipped, including 24
+desktop/mobile axe checks and the complete API review/delivery/idempotency
+journey. A local HTTP verifier passed 26 public route/status/content-type checks,
+security-header/secret-marker checks, ops privacy, and two unknown-capability
+privacy probes. A separate manual curl exercise confirmed source projection kept
+all automated sources and manual evidence at **Coming soon**/`UNVERIFIED`, with
+Reddit **Permission required**/`LEGAL_REVIEW`. See the
+[integrated local record](../operations/LOCAL_VERIFICATION_2026-08-11.md).
+These results are `LOCAL_PASS`, not immutable release-SHA, remote-CI, deployed,
+or provider-read-back evidence.
 
 ## Limitations
 

@@ -5,16 +5,29 @@
 
 Live billing remains disabled until the founder explicitly approves the exact
 deployment, catalog, policies, and rollback after reviewing this evidence.
-The current application does not expose Checkout, Portal, success/cancel, or a
-webhook route, so this gate cannot yet advance beyond design review.
+The active development tree contains test-mode billing and monitoring work, but
+no final application test-mode journey, live catalog, deployment, or approval
+is recorded. A redacted test catalog verifier passed for product
+`prod_V3SAWlzw4po9Vw`, recurring price
+`price_1U3LGBDzHjCqsazv1xkoxKhA`, coupon
+`trendsfast_founding_100_12_months`, and disabled promotion
+`promo_1U3LHgDzHjCqsazvf4vgUGB9`; that does not advance this gate. A Stripe test
+key exposed in local CLI output must be revoked/rotated before further work.
+This gate therefore cannot advance beyond implementation review.
+
+`FOUNDING_100_ENABLED` and `CLOUD_TRIAL_ENABLED` remain false through this gate;
+neither promotion nor trial is implied by general billing approval.
 
 ## Product and customer promise
 
 - [ ] Founder approves product name, `$39/month` price, currency, interval,
       included monitored product, checks, history, API access, support, and what
       “daily” means operationally.
+- [ ] Founder resolves the disabled Founding 100 test catalog's 50% / `$19.50`
+      amount against the product brief's `$19` language before any promotion is
+      activated or described publicly.
 - [ ] Product can actually provide every paid promise; `WAIT`, provider outages,
-      review delays, limits, and beta status are disclosed.
+      review delays, limits, and source availability are disclosed.
 - [ ] Checkout, success, cancel, portal, downgrade/cancel, failed payment, and
       deletion journeys have been manually verified in a production-like test.
 - [ ] No credit/token/provider-unit or guaranteed-volume language appears.
@@ -37,6 +50,8 @@ webhook route, so this gate cannot yet advance beyond design review.
 
 - [ ] Production secrets are in the correct scoped secret manager and differ
       from test; MFA and least-privilege team access are enabled.
+- [ ] The Stripe test key exposed in local CLI output is revoked/rotated and the
+      redacted post-rotation verifier passes without printing credentials.
 - [ ] Exact canonical webhook URL and raw-body signature verification pass in
       production with a harmless test event.
 - [ ] Event-ID idempotency, out-of-order convergence, entitlement revocation,
@@ -78,9 +93,10 @@ Known limitations accepted:
 
 Only after approval, set reviewed production secrets, deploy with
 `STRIPE_MODE=live`, perform the harmless signed webhook health check, and then
-set `BILLING_ENABLED=true` through a controlled deployment. Monitor the first
-checkout and entitlement projection. Do not create a live product, price, or
-charge automatically from CI.
+set both `BILLING_ENABLED=true` and `PAID_MONITORING_ENABLED=true` through a
+controlled deployment. Monitor the first checkout, entitlement projection, and
+scheduled run. Do not create a live product, price, or charge automatically from
+CI.
 
 If any evidence becomes stale or an incident occurs, disable new checkout first
 and preserve provider/audit state for reconciliation.

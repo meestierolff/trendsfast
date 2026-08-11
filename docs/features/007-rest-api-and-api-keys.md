@@ -1,7 +1,8 @@
 # 007 — REST API and API keys
 
-Status: creation, status, and runtime OpenAPI routes are implemented; external
-availability and the remaining contract gaps below are unverified.
+Status: creation, status, runtime OpenAPI, and protected founder key-management
+routes are implemented; deployed availability and release-SHA acceptance remain
+unverified.
 
 ## User problem
 
@@ -11,12 +12,13 @@ generic raw-provider API or exposure of cloud credentials.
 ## Scope
 
 `POST /v1/next-move`, `GET /v1/next-moves/{id}`, async status, idempotency,
-design-partner API keys, scopes, project/rate/cost controls, and OpenAPI.
+approved-user API keys, scopes, project/rate/cost controls, founder issuance,
+rotation/revocation, audit, and OpenAPI.
 
 ## Non-goals
 
-MCP, CLI, SDK, raw source resale, bulk endpoints, OAuth, self-service key
-management, or customer organization/team auth.
+MCP, CLI, SDK, raw source resale, bulk endpoints, OAuth, customer self-service
+key management, or organization/team auth.
 
 ## Product contract
 
@@ -63,10 +65,8 @@ URLs/browser storage.
 
 ## Implementation
 
-Define Zod schemas once and generate OpenAPI. Before any partner issuance, add a
-reviewed server-only administrative procedure around the issuance repository and
-record the event; no issuance UI/CLI is currently provided. The public free scan
-uses no reusable key.
+Define Zod schemas once and generate OpenAPI. Founder operations owns the
+server-side administrative boundary; the public free scan uses no reusable key.
 
 ### Current implementation truth
 
@@ -79,8 +79,9 @@ uses no reusable key.
   expensive secret verification. Defaults are 12 per fingerprint and 120
   globally per one-minute window, in addition to the process-local in-flight
   bound. The deployment must verify the trusted-proxy/fingerprint boundary.
-- A raw key is returned only by the server-side issuance repository. There is no
-  self-service issuance/revocation UI or documented public issuance route.
+- Protected `/ops/keys` and CSRF-bound ops routes list, issue, rotate, reissue,
+  and revoke project-scoped keys with a management audit. A raw secret appears
+  once; customers still have no self-service issuance route.
 - Keys support optional expiry plus active/revoked state, and expired
   authentication attempts are rejected and audited. There is no automated
   rotation or self-service lifecycle.
@@ -104,28 +105,29 @@ uses no reusable key.
 - The creation body is stream-counted before JSON parsing, so missing or false
   `Content-Length` does not bypass the bound.
 
-The OpenAPI document describes the mounted paths and reuses runtime Zod schemas,
-but it does not yet enumerate the runtime's full 400/401/403/409/413/422/429/500
-response matrix. Spec/runtime parity and a production-hosted read-back remain
-release gates.
+The OpenAPI document describes the mounted paths and reuses runtime Zod schemas.
+Spec/runtime parity and a production-hosted read-back remain release gates and
+must be checked against the exact release SHA.
 
 ## Verification
 
 Run unit/integration/concurrency tests, inspect generated spec diff, and exercise
 only implemented routes in a production-like environment.
 
-A 2026-08-11 manual local HTTP exercise fetched `/v1/openapi.json`, created a
-fixture request, replayed the same idempotency key, received the same resource
-ID, and read its scoped `REVIEW_REQUIRED` status. This is local pre-release
-evidence only; see the
-[dated record](../operations/LOCAL_VERIFICATION_2026-08-11.md).
-Post-`0007` real-PostgreSQL race and web/orchestration tests cover the atomic
-cost-admission boundary; immutable-SHA and deployed checks remain open.
+The current database-enabled 449-test integrated suite covers the API's unit,
+repository, race, and orchestration boundaries. The actual `next start`
+production artifact completed an authenticated submit → `REVIEW_REQUIRED` →
+founder verify/approve/deliver → `READY` → exact idempotent replay/conflicting
+replay journey, and the local production HTTP verifier includes the public
+OpenAPI route. This is working-tree `LOCAL_PASS`; see the
+[integrated record](../operations/LOCAL_VERIFICATION_2026-08-11.md). A final
+spec/runtime diff, immutable-SHA remote CI, and authenticated deployed read-back
+remain open.
 
 ## Limitations
 
-Temporary founder ops is not general customer identity. Contract may evolve
-during alpha with explicit changelog/versioning. Durable admission is an abuse
+Temporary founder ops is not general customer identity. Contract changes require
+an explicit changelog/versioning decision. Durable admission is an abuse
 bound, not proof of deployed proxy correctness or customer-grade identity. A
 crash can conservatively consume the key allowance for the rest of the hour;
 that false rejection is intentional fail-safe behavior. One lower-priority

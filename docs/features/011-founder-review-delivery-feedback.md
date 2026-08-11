@@ -1,7 +1,7 @@
 # 011 — Founder review, private delivery, and feedback
 
-Status: core alpha trust boundary implemented; hardened local/release evidence
-and the workflow gaps below remain open.
+Status: core first-cohort trust boundary implemented; hardened local/release
+evidence and the workflow gaps below remain open.
 
 ## User problem
 
@@ -76,8 +76,14 @@ requester, the original unguessable scan capability after delivery. It exposes
 feedback and a separate explicit public-share consent mutation; consent records
 permission but does not itself publish a case study.
 
-Move-copy editing, manual evidence entry, source-only/synthesis-only rerun,
-public consent withdrawal, and customer identity are not implemented. Ops login
+Founder operations can add one bounded public manual-evidence record through the
+manual adapter while a scan is a draft awaiting review. The record is audited,
+labeled `MANUAL_FOUNDER_EVIDENCE`, and bound as supplemental evidence. It cannot
+qualify approval or alter deterministic source counts/action until synthesis is
+recomputed and evidence is rebound; no such rerun action exists yet.
+
+Move-copy editing, source-only/synthesis-only rerun, public consent withdrawal,
+and customer identity are not implemented. Ops login
 uses constant-time token comparison and a signed `HttpOnly`/`SameSite=Strict`
 session. Syntactically valid login attempts enter PostgreSQL-backed admission
 before token comparison, defaulting to 5 per fingerprint and 100 globally per
@@ -105,13 +111,19 @@ workflow exists.
 Browser tests for queue/review/result/feedback/mobile plus concurrent/replay
 integration tests and manual audit inspection.
 
+Against the actual local `next start` artifact, the current Playwright run
+completed the authenticated API submit → `REVIEW_REQUIRED` → founder
+verify/approve/deliver → `READY` → idempotent replay/conflict journey. This is
+working-tree evidence on implementation commit `a8b09b1`, not remote CI or a
+deployed workflow.
+
 ## Limitations
 
 Token-based ops is not scalable customer identity; private links are bearer
 capabilities and can be forwarded. The public scan capability becomes able to
 read the reviewed result only after the separate delivery transition. Missing
-manual entry/editing/fine-grained retry/consent-withdrawal surfaces remain
-workflow limitations.
+move editing/fine-grained retry/consent-withdrawal surfaces remain workflow
+limitations. Manual evidence is supplemental until a recompute path exists.
 
 ## Rollout
 

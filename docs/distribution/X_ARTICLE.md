@@ -6,9 +6,9 @@
 ## Building products got faster. Choosing what to say did not.
 
 AI coding tools shortened my build loop, but distribution kept reopening the
-same tabs. I would search live conversations, demand, developer activity,
-competitor launches, news, and video formats. Each source had a different metric
-and time horizon. By the end I had collected data, not made a decision.
+same tabs. I was spending hours searching social media and search demand for
+something relevant to distribute. Each source had a different metric and time
+horizon. By the end I had collected data, not made a decision.
 
 The tempting shortcut was “put it all in an LLM.” It generated polished ideas,
 but polish was not the scarce input. Current, product-specific evidence was.
@@ -47,14 +47,14 @@ The model can propose words. It cannot add an evidence URL or metric. The system
 binds those from stored records and rejects unsupported claims before founder
 review.
 
-## Why fixture-first matters
+## Why example-first matters
 
-Fixture mode is not a screenshot mock. It uses the same adapter contracts,
+Example mode is not a screenshot mock. It uses the same adapter contracts,
 PostgreSQL lifecycle, scoring, evidence, review, delivery, and feedback path,
 including provider failure, stale/dependent evidence, and `WAIT`. This makes the
 repository useful without asking contributors to buy six accounts.
 
-It also forces an honest distinction: passing fixtures are not production
+It also forces an honest distinction: passing examples are not production
 provider read-backs.
 
 ## Open source and managed convenience
@@ -64,8 +64,9 @@ use standard PostgreSQL and their own provider keys. Planned cloud value is
 provider management, history/baselines, schedules, bounded retries, cost control,
 operations, and support—not a secret better engine.
 
-Current verified status: `[PASTE RELEASE STATUS, INCLUDING UNVERIFIED SOURCES]`.
-Billing is disabled, and automated Reddit ingestion remains `LEGAL_REVIEW`.
+Current verified status: `[PASTE RELEASE SHA, DEPLOYMENT, AND PUBLIC
+CONNECTED/COMING SOON SOURCE STATUS]`. Paid availability is not claimed without
+its separate gate, and automated Reddit ingestion remains permission-gated.
 
 ## What I want to learn
 
@@ -74,8 +75,15 @@ move is less generic than a raw prompt, whether the receipts create trust,
 whether the founder actually uses it, what signal is missing, and what the real
 provider/review cost is.
 
-If you build an AI tool, B2B SaaS product, or developer tool and want a free
-founder-reviewed scan, submit your public product URL at `[TRACKED LINK]`. The
-current free form accepts only the URL and infers context from public content.
+I was spending hours searching social media and search demand for something
+relevant to distribute. TrendsFast now gives my agents one evidence-backed Next
+Move from a product URL. If you build an AI tool, B2B SaaS product, or developer
+tool:
+
+> **Drop your product URL. I’ll run a free founder-reviewed trend and
+> distribution scan.** `[TRACKED LINK]`
+
+The current free form accepts only the URL and infers context from public
+content.
 
 I may return `WAIT`. That is part of the promise.

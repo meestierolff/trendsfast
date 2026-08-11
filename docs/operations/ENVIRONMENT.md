@@ -12,7 +12,7 @@ commit values or paste them into support, issues, logs, or screenshots.
 | `APP_URL`                        | `http://localhost:3000` | Exact canonical origin; managed mode requires HTTPS.       |
 | `DATABASE_URL`                   | local PostgreSQL URL    | Server-side standard PostgreSQL 15+ connection.            |
 | `PROVIDER_CREDENTIAL_MODE`       | `fixture`               | `fixture`, `managed`, or `byok`.                           |
-| `PUBLIC_SCAN_PROCESSING`         | `inline`                | Alpha executor policy (`inline` or `manual`).              |
+| `PUBLIC_SCAN_PROCESSING`         | `inline`                | Scan executor policy (`inline` or `manual`).               |
 | `PUBLIC_SCAN_DAILY_LIMIT`        | `20`                    | Abuse-bound submissions per fingerprint/day.               |
 | `SCAN_RETENTION_DAYS`            | `90` in template        | Cutoff used by `pnpm db:purge`; no scheduler is included.  |
 | `MAX_SCAN_DURATION_SECONDS`      | `240`                   | Hard scan duration budget.                                 |
@@ -48,6 +48,9 @@ values. A reservation remains in the rolling window for one hour even if the
 worker crashes. These are database contracts, not additional environment
 variables.
 
+Public form admission is also durable: duplicate/replay attempts consume the
+configured `PUBLIC_SCAN_DAILY_LIMIT` instead of bypassing the daily cap.
+
 ## Evidence/model providers
 
 | Variable                                   | Rule                                                                      |
@@ -56,7 +59,7 @@ variables.
 | `XAI_MODEL`                                | Explicit approved xAI model; required for configured X where applicable.  |
 | `XAI_MAX_TOOL_CALLS_PER_SCAN`              | Integer 0–2; default 2.                                                   |
 | `DATAFORSEO_LOGIN` / `DATAFORSEO_PASSWORD` | Server credential pair; configure both or neither.                        |
-| `DATAFORSEO_GOOGLE_TRENDS_MODE`            | `live` for on-demand alpha; `standard` only for reviewed scheduled use.   |
+| `DATAFORSEO_GOOGLE_TRENDS_MODE`            | `live` for on-demand scans; `standard` only for reviewed scheduled use.   |
 | `TAVILY_API_KEY`                           | Server secret.                                                            |
 | `TAVILY_MAX_CREDITS_PER_SCAN`              | Integer 0–2; default 2.                                                   |
 | `YOUTUBE_API_KEY`                          | Restricted server API key.                                                |
@@ -74,25 +77,48 @@ still not a production read-back.
 
 The model client bounds input at 65,536 bytes, response bytes at 262,144,
 configured output at no more than 8,192 tokens, and calls at one initial attempt
-plus at most one repair. Before a non-fixture call, the database atomically
-reserves a conservative upper-bound cost from the operator-supplied input/output
-prices. Duplicate reservation refuses a replay. Current accounting records that
-reservation as `conservative_pre_call_reservation` and usage as
-`unknown_not_settled`; its model actual-cost numeric field remains `$0`, but that
-zero is not verified actual/free usage. It does not yet replace the estimate
-with provider-reported token usage. Review the price source/effective date
-privately for every release and never describe these variables as trusted
-billing facts.
+plus at most one repair. Provider and model attempts durably reserve their
+conservative cost before I/O; duplicate reservation refuses a replay. When the
+provider supplies valid usage, accounting settles the reservation with that
+provider-reported usage. Missing or invalid usage remains conservative and
+`unknown_not_settled`; a zero numeric actual field must never be described as
+verified free usage. Review the operator price source/effective date privately
+for every release and never describe these variables or a local settlement as
+independently trusted billing facts.
 
-## Billing
+## Billing and paid monitoring
 
-| Variable                        | Alpha rule                                                |
-| ------------------------------- | --------------------------------------------------------- |
-| `BILLING_ENABLED`               | Must remain `false` until the explicit live gate.         |
-| `STRIPE_MODE`                   | `test` during alpha.                                      |
-| `STRIPE_SECRET_KEY`             | Server secret; required only when billing is enabled.     |
-| `STRIPE_WEBHOOK_SECRET`         | Server secret; paired with Stripe secret.                 |
-| `STRIPE_FOUNDER_CLOUD_PRICE_ID` | Server-side allowlisted price ID; never browser-selected. |
+These variables describe active development work, not a verified paid journey.
+Keep both enablement flags false until the frozen release passes the complete
+billing/monitoring gate.
+
+| Variable                        | Current gate                                                                                              |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `BILLING_ENABLED`               | Must remain `false` until the explicit live gate.                                                         |
+| `PAID_MONITORING_ENABLED`       | Must remain `false` until durable scheduled runs pass deployment checks.                                  |
+| `FOUNDING_100_ENABLED`          | Must remain `false`; the prepared promotion is not a launch offer.                                        |
+| `CLOUD_TRIAL_ENABLED`           | Must remain `false` until monitoring and ownership are self-service.                                      |
+| `STRIPE_MODE`                   | `test` until live approval.                                                                               |
+| `STRIPE_SECRET_KEY`             | Server secret; required only when billing is enabled.                                                     |
+| `STRIPE_WEBHOOK_SECRET`         | Server secret; paired with Stripe secret.                                                                 |
+| `STRIPE_FOUNDER_CLOUD_PRICE_ID` | Server-side allowlisted price ID; never browser-selected.                                                 |
+| `CRON_SECRET`                   | 32+ character server secret required for paid monitoring.                                                 |
+| `MONITORING_CRON_BATCH_SIZE`    | Sequential due-work batch; default 1, schema maximum 10, and constrained by the 300s route formula below. |
+| `MONITORING_LEASE_SECONDS`      | Durable claim lease; must be at least `MAX_SCAN_DURATION_SECONDS + 30`.                                   |
+
+When paid monitoring is enabled, configuration fails closed unless both
+constraints hold:
+
+```text
+MONITORING_LEASE_SECONDS >= MAX_SCAN_DURATION_SECONDS + 30
+MAX_SCAN_DURATION_SECONDS * MONITORING_CRON_BATCH_SIZE + 30 <= 300
+```
+
+The defaults satisfy the second constraint (`240 * 1 + 30 = 270`). Increasing
+the sequential batch requires lowering the per-scan deadline; the schema's
+standalone maximum of 10 is not an independently valid production setting.
+These checks encode the current cron-route budget but do not prove that a
+scheduler is deployed, configured, or completing within that budget.
 
 ## Optional analytics
 
