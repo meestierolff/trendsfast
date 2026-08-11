@@ -1,10 +1,15 @@
+"use client";
+
+import { useEffect, useRef } from "react";
+
+import { sendFirstPartyAnalytics } from "../lib/analytics-client";
 import { ExampleExplorer } from "./example-explorer";
 
 function safeMediaUrl(value: string | undefined): string | null {
   if (!value) return null;
   try {
     const url = new URL(value);
-    return url.protocol === "https:" ? url.toString() : null;
+    return url.protocol === "https:" && !url.username && !url.password ? url.toString() : null;
   } catch {
     return value.startsWith("/") && !value.startsWith("//") ? value : null;
   }
@@ -23,6 +28,26 @@ const transcript = [
 export function DemoMedia({ videoUrl, captionsUrl }: { videoUrl?: string; captionsUrl?: string }) {
   const safeVideo = safeMediaUrl(videoUrl);
   const safeCaptions = safeMediaUrl(captionsUrl);
+  const videoLayoutRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const node = videoLayoutRef.current;
+    if (!node || !safeVideo || !safeCaptions) return;
+    if (typeof IntersectionObserver === "undefined") {
+      sendFirstPartyAnalytics({ event: "demo_viewed", placement: "homepage_demo" });
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        sendFirstPartyAnalytics({ event: "demo_viewed", placement: "homepage_demo" });
+        observer.disconnect();
+      },
+      { threshold: 0.25 },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [safeCaptions, safeVideo]);
 
   if (!safeVideo || !safeCaptions) {
     return (
@@ -34,7 +59,7 @@ export function DemoMedia({ videoUrl, captionsUrl }: { videoUrl?: string; captio
   }
 
   return (
-    <div className="demo-video-layout">
+    <div ref={videoLayoutRef} className="demo-video-layout">
       <video controls playsInline preload="metadata">
         <source src={safeVideo} />
         <track kind="captions" src={safeCaptions} srcLang="en" label="English" default />

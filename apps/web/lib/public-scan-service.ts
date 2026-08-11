@@ -15,6 +15,7 @@ export type PublicScanRepository = {
     submittedUrl: string;
     normalizedUrl: string;
     requesterFingerprintHash: string;
+    anonymousSessionHash?: string;
     since: Date;
     dailyLimit: number;
     now: Date;
@@ -28,6 +29,33 @@ export type TurnstileVerifier = {
   verify(token: string | undefined, address: string): Promise<boolean>;
 };
 
+/**
+ * Fixture decisions are safe product examples, not answers for a real founder
+ * URL. Permit them only on an explicit loopback origin so a hosted
+ * misconfiguration fails closed before accepting a scan.
+ */
+export function publicScanCredentialModeAvailable(
+  credentialMode: "fixture" | "managed" | "byok",
+  appUrl: string,
+  deploymentEnvironment?: string,
+  hostedPlatform = false,
+): boolean {
+  if (credentialMode !== "fixture") return true;
+  if (
+    hostedPlatform ||
+    deploymentEnvironment === "production" ||
+    deploymentEnvironment === "preview"
+  ) {
+    return false;
+  }
+  try {
+    const hostname = new URL(appUrl).hostname.toLowerCase();
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+  } catch {
+    return false;
+  }
+}
+
 export async function acceptPublicScan(
   input: {
     productUrl: unknown;
@@ -40,6 +68,7 @@ export async function acceptPublicScan(
     fingerprintPepper: string;
     dailyLimit: number;
     turnstile?: TurnstileVerifier;
+    anonymousSessionHash?: string;
     now?: Date;
   },
 ): Promise<{ scanRequestId: string; token: string; reused: boolean }> {
@@ -68,6 +97,9 @@ export async function acceptPublicScan(
     submittedUrl: normalizedUrl,
     normalizedUrl,
     requesterFingerprintHash: fingerprintHash,
+    ...(dependencies.anonymousSessionHash
+      ? { anonymousSessionHash: dependencies.anonymousSessionHash }
+      : {}),
     since,
     dailyLimit: dependencies.dailyLimit,
     now,

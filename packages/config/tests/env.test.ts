@@ -91,6 +91,36 @@ describe("environment validation", () => {
     ).toBe(false);
   });
 
+  it("requires executable X Search or Tavily coverage in every live mode", () => {
+    const xaiSynthesisOnly = {
+      PROVIDER_CREDENTIAL_MODE: "byok",
+      DATAFORSEO_LOGIN: "founder@example.com",
+      DATAFORSEO_PASSWORD: "provider-password",
+      XAI_API_KEY: "xai-key",
+      LLM_PROVIDER: "xai",
+      LLM_MODEL: "synthesis-model",
+      LLM_INPUT_PRICE_USD_PER_MILLION_TOKENS: "0.25",
+      LLM_OUTPUT_PRICE_USD_PER_MILLION_TOKENS: "2",
+    };
+
+    expect(tryParseEnv(xaiSynthesisOnly).success).toBe(false);
+    expect(
+      tryParseEnv({
+        ...xaiSynthesisOnly,
+        XAI_MODEL: "x-search-model",
+      }).success,
+    ).toBe(true);
+    expect(
+      tryParseEnv({
+        ...xaiSynthesisOnly,
+        XAI_MODEL: "x-search-model",
+        XAI_MAX_TOOL_CALLS_PER_SCAN: "0",
+        TAVILY_API_KEY: "tvly-key",
+        TAVILY_MAX_CREDITS_PER_SCAN: "0",
+      }).success,
+    ).toBe(false);
+  });
+
   it("accepts a fully configured managed cloud environment", () => {
     expect(
       tryParseEnv({
@@ -207,6 +237,31 @@ describe("environment validation", () => {
         CRON_SECRET: "c".repeat(32),
         MAX_SCAN_DURATION_SECONDS: "300",
         MONITORING_LEASE_SECONDS: "330",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("keeps the worst-case sequential monitoring batch inside the cron route", () => {
+    const billing = {
+      BILLING_ENABLED: "true",
+      PAID_MONITORING_ENABLED: "true",
+      STRIPE_SECRET_KEY: "sk_test_configured",
+      STRIPE_WEBHOOK_SECRET: "whsec_configured",
+      STRIPE_FOUNDER_CLOUD_PRICE_ID: "price_founder",
+      CRON_SECRET: "c".repeat(32),
+    };
+    expect(
+      tryParseEnv({
+        ...billing,
+        MONITORING_CRON_BATCH_SIZE: "2",
+      }).success,
+    ).toBe(false);
+    expect(
+      tryParseEnv({
+        ...billing,
+        MAX_SCAN_DURATION_SECONDS: "120",
+        MONITORING_CRON_BATCH_SIZE: "2",
+        MONITORING_LEASE_SECONDS: "150",
       }).success,
     ).toBe(true);
   });

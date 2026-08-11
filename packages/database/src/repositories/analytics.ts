@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import {
   AnalyticsEventNameSchema,
   sanitizeAnalyticsDimension,
@@ -22,6 +24,21 @@ const ATTRIBUTION_KEYS = new Set([
   "first_landing",
   "landing_path",
 ]);
+
+/** Stable, non-secret identifier for a server-derived event committed beside
+ * its canonical business mutation. Inputs must be internal durable IDs only. */
+export function durableAnalyticsDedupeKey(
+  event: AnalyticsEventName,
+  ...entityIds: string[]
+): string {
+  AnalyticsEventNameSchema.parse(event);
+  if (entityIds.length === 0 || entityIds.some((value) => !/^[A-Za-z0-9:_-]{1,255}$/.test(value))) {
+    throw new Error("Durable analytics dedupe identity is invalid");
+  }
+  return createHash("sha256")
+    .update(["durable-analytics-v1", event, ...entityIds].join("\u0000"))
+    .digest("hex");
+}
 
 const safeAttributionText = (
   value: string | undefined,

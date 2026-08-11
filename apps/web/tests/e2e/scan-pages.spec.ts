@@ -26,7 +26,7 @@ test("reviewed fixture result stays private and records customer signals", async
     (candidate) => candidate.url().includes("/feedback") && candidate.request().method() === "POST",
   );
   await page.getByRole("button", { name: "I would use this" }).click();
-  expect((await feedbackResponse).status()).toBe(201);
+  expect([200, 201]).toContain((await feedbackResponse).status());
   await expect(page.getByText("Feedback recorded. Thank you.")).toBeVisible();
 
   await page.getByLabel("I explicitly consent to public sharing").check();

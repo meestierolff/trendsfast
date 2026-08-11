@@ -1,7 +1,8 @@
 import { asc, desc, eq, gt, inArray, lte } from "drizzle-orm";
 
 import type { TrendsFastDatabase } from "../client";
-import { founderLaunchInterestEvents, founderLaunchInterests } from "../schema";
+import { analyticsEvents, founderLaunchInterestEvents, founderLaunchInterests } from "../schema";
+import { durableAnalyticsDedupeKey } from "./analytics";
 
 export type FounderLaunchInterestSource = "homepage" | "pricing";
 export type FounderLaunchInterestAction = "JOINED" | "RECONSENTED" | "DELETED" | "PURGED";
@@ -63,6 +64,7 @@ export class FounderLaunchInterestRepository {
     consentedAt: Date;
     source: FounderLaunchInterestSource;
     expiresAt: Date;
+    anonymousSessionHash: string;
   }): Promise<{ id: string; created: boolean }> {
     const email = validEmail(input.normalizedEmail);
     const emailHash = validEmailHash(input.emailHash);
@@ -76,6 +78,9 @@ export class FounderLaunchInterestRepository {
     const expiresAt = validDate(input.expiresAt, "Founder launch-interest expiry");
     if (expiresAt <= consentedAt) {
       throw new Error("Founder launch-interest expiry must follow consent");
+    }
+    if (!/^[0-9a-f]{64}$/.test(input.anonymousSessionHash)) {
+      throw new Error("Founder launch-interest session hash is invalid");
     }
 
     return this.db.transaction(async (tx) => {
@@ -119,6 +124,18 @@ export class FounderLaunchInterestRepository {
         actorId: "public:self-service",
         occurredAt: consentedAt,
       });
+      if (created) {
+        await tx
+          .insert(analyticsEvents)
+          .values({
+            name: "beta_waitlist_joined",
+            anonymousSessionHash: input.anonymousSessionHash,
+            dedupeKey: durableAnalyticsDedupeKey("beta_waitlist_joined", "interest", interest.id),
+            properties: { source: input.source },
+            occurredAt: consentedAt,
+          })
+          .onConflictDoNothing();
+      }
       return { id: interest.id, created };
     });
   }

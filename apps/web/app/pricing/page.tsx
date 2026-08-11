@@ -12,10 +12,6 @@ export const metadata: Metadata = pageMetadata({
 });
 
 export default function PricingPage() {
-  const paidHref = process.env.NEXT_PUBLIC_FOUNDER_CHECKOUT_URL;
-  const paidEnabled =
-    process.env.BILLING_ENABLED === "true" && process.env.PAID_MONITORING_ENABLED === "true";
-
   return (
     <>
       <AnalyticsPageView event={{ event: "pricing_viewed", placement: "pricing" }} />
@@ -28,7 +24,7 @@ export default function PricingPage() {
         </p>
       </section>
       <section className="pricing-section section-pad">
-        <PricingCards paidEnabled={paidEnabled} {...(paidHref ? { paidHref } : {})} />
+        <PricingCards launchInterestSource="pricing" />
       </section>
       <section className="usage-truth section-pad" id="api-access">
         <div>

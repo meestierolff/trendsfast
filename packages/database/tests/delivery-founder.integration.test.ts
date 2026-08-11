@@ -4,8 +4,10 @@ import { and, eq } from "drizzle-orm";
 import { afterAll, describe, expect, it } from "vitest";
 
 import {
+  analyticsEvents,
   createDatabaseFromEnv,
   createRepositories,
+  deliveryTokens,
   founderUsageEvents,
   nextMoves,
   projectContextVersions,
@@ -22,8 +24,12 @@ databaseDescribe("Founder delivery limits", () => {
   const client = createDatabaseFromEnv();
   const repositories = createRepositories(client.db);
   const projectIds: string[] = [];
+  const moveIds: string[] = [];
 
   afterAll(async () => {
+    for (const moveId of moveIds) {
+      await client.db.delete(analyticsEvents).where(eq(analyticsEvents.nextMoveId, moveId));
+    }
     for (const projectId of projectIds) {
       await client.db.delete(scanRequests).where(eq(scanRequests.projectId, projectId));
       await client.db.delete(projects).where(eq(projects.id, projectId));
@@ -100,7 +106,8 @@ databaseDescribe("Founder delivery limits", () => {
       })
       .returning();
     if (!move) throw new Error("delivery move setup failed");
-    return { request, move };
+    moveIds.push(move.id);
+    return { request, run, move };
   }
 
   it("keeps free founder-reviewed delivery unchanged", async () => {
@@ -123,11 +130,28 @@ databaseDescribe("Founder delivery limits", () => {
         expiresAt: new Date(Date.now() + 86_400_000),
       }),
     ).resolves.toMatchObject({ created: true });
+    await expect(
+      repositories.delivery.deliver({
+        nextMoveId: move.id,
+        reviewerId: "founder:integration",
+        expiresAt: new Date(Date.now() + 86_400_000),
+      }),
+    ).resolves.toMatchObject({ created: false });
     const usage = await client.db
       .select()
       .from(founderUsageEvents)
       .where(eq(founderUsageEvents.scanRequestId, request.id));
     expect(usage).toEqual([]);
+    const deliveryEvents = await client.db
+      .select()
+      .from(analyticsEvents)
+      .where(eq(analyticsEvents.nextMoveId, move.id));
+    expect(deliveryEvents).toHaveLength(1);
+    expect(deliveryEvents[0]).toMatchObject({
+      name: "scan_delivered",
+      scanRequestId: request.id,
+      properties: { created: true },
+    });
   });
 
   it("records one paid delivery and rejects a second delivery that UTC day", async () => {
@@ -227,5 +251,95 @@ databaseDescribe("Founder delivery limits", () => {
         ),
       );
     expect(deliveredUsage).toHaveLength(1);
+  });
+
+  it("serializes delivery against a concurrent failure without resurrecting stale state", async () => {
+    const projectHost = `delivery-race-${randomUUID()}.example`;
+    const [project] = await client.db
+      .insert(projects)
+      .values({
+        publicId: `project_delivery_race_${randomUUID()}`,
+        url: `https://${projectHost}`,
+        normalizedUrl: `https://${projectHost}/`,
+      })
+      .returning();
+    if (!project) throw new Error("delivery race project setup failed");
+    projectIds.push(project.id);
+    const { request, run, move } = await createApprovedMove(project.id, "race1");
+
+    const outcomes = await Promise.allSettled([
+      repositories.delivery.deliver({
+        nextMoveId: move.id,
+        reviewerId: "founder:delivery-race",
+        expiresAt: new Date(Date.now() + 86_400_000),
+      }),
+      repositories.reviews.markFailed({
+        scanRequestId: request.id,
+        scanRunId: run.id,
+        reviewerId: "founder:failure-race",
+        failureCode: "MANUAL_RACE_TEST",
+        failureMessage: "The failure path won the serialized state transition.",
+      }),
+    ]);
+    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+    expect(outcomes.filter((outcome) => outcome.status === "rejected")).toHaveLength(1);
+
+    const [storedRequest] = await client.db
+      .select()
+      .from(scanRequests)
+      .where(eq(scanRequests.id, request.id));
+    const [storedRun] = await client.db.select().from(scanRuns).where(eq(scanRuns.id, run.id));
+    const [storedMove] = await client.db.select().from(nextMoves).where(eq(nextMoves.id, move.id));
+    const tokens = await client.db
+      .select()
+      .from(deliveryTokens)
+      .where(eq(deliveryTokens.nextMoveId, move.id));
+    if (storedRequest?.state === "READY") {
+      expect(storedRun?.state).toBe("READY");
+      expect(storedMove?.state).toBe("READY");
+      expect(tokens).toHaveLength(1);
+    } else {
+      expect(storedRequest?.state).toBe("FAILED");
+      expect(storedRun?.state).toBe("FAILED");
+      expect(storedMove?.state).toBe("REJECTED");
+      expect(tokens).toHaveLength(0);
+    }
+  });
+
+  it("rejects a failure transition whose request and run belong to different scans", async () => {
+    const projectHost = `failure-identity-${randomUUID()}.example`;
+    const [project] = await client.db
+      .insert(projects)
+      .values({
+        publicId: `project_failure_identity_${randomUUID()}`,
+        url: `https://${projectHost}`,
+        normalizedUrl: `https://${projectHost}/`,
+      })
+      .returning();
+    if (!project) throw new Error("failure identity project setup failed");
+    projectIds.push(project.id);
+    const first = await createApprovedMove(project.id, "identity2");
+    const second = await createApprovedMove(project.id, "identity3");
+
+    await expect(
+      repositories.reviews.markFailed({
+        scanRequestId: first.request.id,
+        scanRunId: second.run.id,
+        reviewerId: "founder:identity-test",
+        failureCode: "MISMATCHED_SCAN_IDENTITY",
+        failureMessage: "A mismatched request and run must not transition.",
+      }),
+    ).rejects.toThrow(/run cannot be marked failed/i);
+
+    const [storedFirstRequest] = await client.db
+      .select({ state: scanRequests.state })
+      .from(scanRequests)
+      .where(eq(scanRequests.id, first.request.id));
+    const [storedSecondRun] = await client.db
+      .select({ state: scanRuns.state })
+      .from(scanRuns)
+      .where(eq(scanRuns.id, second.run.id));
+    expect(storedFirstRequest?.state).toBe("REVIEW_REQUIRED");
+    expect(storedSecondRun?.state).toBe("REVIEW_REQUIRED");
   });
 });

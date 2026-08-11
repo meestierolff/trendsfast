@@ -6,6 +6,7 @@ import {
   deriveOpportunityScoreComponents,
   enforceActionQualityFloor,
   scoreOpportunityV1,
+  sourceIndependenceKey,
   type NextMoveAction,
   type ScoringSignal,
   type SignalCluster,
@@ -97,6 +98,27 @@ function coverageLimitations(coverage: Record<string, string>): string[] {
   return Object.entries(coverage)
     .filter(([, status]) => !["SUCCESS", "SUCCEEDED"].includes(status))
     .map(([source, status]) => `${source} coverage was ${status.toLowerCase()}.`);
+}
+
+function selectEvidenceSignals(cluster: SignalCluster | undefined, maximum = 4): ScoringSignal[] {
+  if (!cluster) return [];
+  const selected: ScoringSignal[] = [];
+  const selectedIds = new Set<string>();
+  const independenceKeys = new Set<string>();
+  for (const signal of cluster.signals) {
+    const key = sourceIndependenceKey(signal);
+    if (independenceKeys.has(key)) continue;
+    selected.push(signal);
+    selectedIds.add(signal.id);
+    independenceKeys.add(key);
+    if (selected.length === maximum) return selected;
+  }
+  for (const signal of cluster.signals) {
+    if (selectedIds.has(signal.id)) continue;
+    selected.push(signal);
+    if (selected.length === maximum) break;
+  }
+  return selected;
 }
 
 export async function decideDeterministically(input: {
@@ -198,10 +220,11 @@ export async function decideDeterministically(input: {
       : []),
   ];
   const windowHours = effectiveAction === "REPLY" ? 12 : effectiveAction === "WAIT" ? 72 : 48;
-  const evidenceSignalIds =
-    effectiveAction === "WAIT"
-      ? (chosen?.cluster.memberIds.slice(0, 4) ?? [])
-      : (winner?.cluster.memberIds.slice(0, 4) ?? []);
+  const evidenceSignals = selectEvidenceSignals(
+    effectiveAction === "WAIT" ? chosen?.cluster : winner?.cluster,
+  );
+  const evidenceSignalIds = evidenceSignals.map((signal) => signal.id);
+  const evidenceIndependentSourceCount = new Set(evidenceSignals.map(sourceIndependenceKey)).size;
   const score = chosen?.score;
   return {
     move: {
@@ -238,7 +261,7 @@ export async function decideDeterministically(input: {
     },
     whyNow: truth.reason,
     signalClass: truth.signalClass,
-    independentSourceCount: truth.independentSourceCount,
+    independentSourceCount: evidenceIndependentSourceCount,
     saturation: saturationLabel(chosen?.components.saturation ?? 0),
     limitations: [...new Set(limitations)],
     evidenceSignalIds,

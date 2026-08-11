@@ -47,12 +47,11 @@ describe("founder launch interest", () => {
     expect(() => normalizeLaunchInterestEmail("not-an-email")).toThrow();
   });
 
-  it("returns no email and records analytics only for a newly persisted interest", async () => {
+  it("returns no email and passes the privacy-safe session identity to the atomic writer", async () => {
     const create = vi.fn().mockResolvedValue({
       id: "00000000-0000-4000-8000-000000000014",
       created: true,
     });
-    const appendOnce = vi.fn().mockResolvedValue({ created: true });
     const result = await acceptFounderLaunchInterest(
       {
         email: "Founder@Example.com",
@@ -62,7 +61,6 @@ describe("founder launch interest", () => {
       {
         secret,
         interests: { create },
-        analytics: { appendOnce },
         now: new Date("2026-08-11T12:00:00.000Z"),
       },
     );
@@ -75,16 +73,16 @@ describe("founder launch interest", () => {
         emailHash: expect.stringMatching(/^[a-f0-9]{64}$/),
         consentVersion: "founder-launch-v1",
         expiresAt: new Date("2027-02-07T12:00:00.000Z"),
+        anonymousSessionHash: "a".repeat(64),
       }),
-    );
-    expect(JSON.stringify(appendOnce.mock.calls)).not.toContain("founder@example.com");
-    expect(appendOnce).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "beta_waitlist_joined", properties: { source: "pricing" } }),
     );
   });
 
-  it("does not inflate join analytics for a duplicate address", async () => {
-    const appendOnce = vi.fn();
+  it("returns the same safe response when the atomic writer reconsents an address", async () => {
+    const create = vi.fn().mockResolvedValue({
+      id: "00000000-0000-4000-8000-000000000014",
+      created: false,
+    });
     const result = await acceptFounderLaunchInterest(
       {
         email: "founder@example.com",
@@ -93,18 +91,14 @@ describe("founder launch interest", () => {
       },
       {
         secret,
-        interests: {
-          create: vi.fn().mockResolvedValue({
-            id: "00000000-0000-4000-8000-000000000014",
-            created: false,
-          }),
-        },
-        analytics: { appendOnce },
+        interests: { create },
         now: new Date("2026-08-11T12:00:00.000Z"),
       },
     );
 
     expect(result).toEqual({ joined: true });
-    expect(appendOnce).not.toHaveBeenCalled();
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ anonymousSessionHash: "b".repeat(64) }),
+    );
   });
 });

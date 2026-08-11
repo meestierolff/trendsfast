@@ -7,9 +7,14 @@ import {
   ScanDeadlineError,
   StaleProcessingClaimError,
   type DecisionDraft,
+  type ProviderRunner,
   type ProcessingStore,
 } from "../src/state-machine";
-import type { ModelCostReservation } from "../src/synthesis";
+import {
+  ModelCostSettlementError,
+  type ModelCostReservation,
+  type ModelCostSettlement,
+} from "../src/synthesis";
 
 const project: ProjectContext = {
   name: "Example",
@@ -58,6 +63,7 @@ function result(provider: ProviderSlug, cost = 0, actualCost = cost): ProviderRu
     signals: [],
     measurements: [],
     calls: 1,
+    attempts: 1,
     quota: { used: 1 },
     cost: { estimatedUsd: cost, actualUsd: actualCost },
     startedAt: "2026-08-11T12:00:00.000Z",
@@ -65,6 +71,32 @@ function result(provider: ProviderSlug, cost = 0, actualCost = cost): ProviderRu
     limitations: [],
     errors: [],
   };
+}
+
+async function accountedResult(
+  provider: ProviderSlug,
+  budget: Parameters<ProviderRunner["execute"]>[2],
+  value = result(provider),
+): Promise<ProviderRunResult> {
+  await budget.reserveAttempt({
+    provider,
+    attempt: 1,
+    estimatedCostUsd: value.cost.estimatedUsd,
+    calls: value.calls,
+    quotaUnits: value.quota.used,
+  });
+  await budget.settleAttempt({
+    provider,
+    attempt: 1,
+    estimatedCostUsd: value.cost.estimatedUsd,
+    calls: value.calls,
+    quotaUnits: value.quota.used,
+    ...(value.cost.actualUsd === undefined ? {} : { actualCostUsd: value.cost.actualUsd }),
+    actualQuotaUnits: value.quota.used,
+    status: value.status,
+    finishedAt: value.finishedAt,
+  });
+  return value;
 }
 
 function waitDraft(topic = "Wait for stronger evidence"): DecisionDraft {
@@ -112,8 +144,24 @@ function modelReservation(
   };
 }
 
+function modelSettlement(operation: "context" | "synthesis"): ModelCostSettlement {
+  return {
+    ledgerKey: `model:${operation}:attempt:1`,
+    provider: "openai",
+    model: "priced-model",
+    operation,
+    attempt: 1,
+    inputTokens: 100,
+    outputTokens: 20,
+    actualCostUsd: 0.00014,
+    finishedAt: "2026-08-11T12:00:01.000Z",
+  };
+}
+
 function store(sourceStates: Partial<Record<ProviderSlug, string>> = {}) {
   const events: string[] = [];
+  let committedProviderCostUsd = 0;
+  const providerEstimates = new Map<string, number>();
   const fixture: ProcessingStore = {
     load: vi.fn(async () => ({
       requestId: "request_1",
@@ -144,7 +192,22 @@ function store(sourceStates: Partial<Record<ProviderSlug, string>> = {}) {
     failProvider: vi.fn(async (provider) => {
       events.push(`fail:${provider}`);
     }),
+    reserveProviderAttempt: vi.fn(async (_claim, reservation) => {
+      const key = `${reservation.provider}:${reservation.attempt}`;
+      if (providerEstimates.has(key)) {
+        return { created: false, projectedCostUsd: committedProviderCostUsd };
+      }
+      providerEstimates.set(key, reservation.estimatedCostUsd);
+      committedProviderCostUsd += reservation.estimatedCostUsd;
+      return { created: true, projectedCostUsd: committedProviderCostUsd };
+    }),
+    settleProviderAttempt: vi.fn(async (_claim, settlement) => {
+      const estimate = providerEstimates.get(`${settlement.provider}:${settlement.attempt}`) ?? 0;
+      committedProviderCostUsd += Math.max(0, (settlement.actualCostUsd ?? 0) - estimate);
+      return { committedCostUsd: committedProviderCostUsd };
+    }),
     reserveModelCost: vi.fn(async () => ({ created: true, projectedCostUsd: 0 })),
+    settleModelCost: vi.fn(async () => ({ committedCostUsd: 0 })),
     loadCollectedData: vi.fn(async () => ({ signals: [], measurements: [], coverage: {} })),
     saveDraft: vi.fn(async () => {
       events.push("draft");
@@ -170,7 +233,7 @@ describe("resumable scan state machine", () => {
       providers: {
         order: ["hacker_news", "github"],
         estimate: vi.fn(() => 0),
-        execute: vi.fn(async (provider) => result(provider)),
+        execute: vi.fn(async (provider, _work, budget) => accountedResult(provider, budget)),
       },
       decide: vi.fn(async () => waitDraft()),
       maxCostUsd: 0.25,
@@ -213,7 +276,7 @@ describe("resumable scan state machine", () => {
       providers: {
         order: [],
         estimate: vi.fn(() => 0),
-        execute: vi.fn(async (provider) => result(provider)),
+        execute: vi.fn(async (provider, _work, budget) => accountedResult(provider, budget)),
       },
       decide: vi.fn(async (input) => {
         await input.reserveModelCost(modelReservation("synthesis", 0.03));
@@ -265,7 +328,9 @@ describe("resumable scan state machine", () => {
       providers: {
         order: ["hacker_news", "github"],
         estimate: vi.fn(() => 0.2),
-        execute: vi.fn(async (provider) => result(provider, 0.2)),
+        execute: vi.fn(async (provider, _work, budget) =>
+          accountedResult(provider, budget, result(provider, 0.2)),
+        ),
       },
       decide: vi.fn(async () => waitDraft("Budget-limited wait")),
       maxCostUsd: 0.25,
@@ -287,8 +352,12 @@ describe("resumable scan state machine", () => {
         estimate: vi.fn((provider) =>
           provider === "hacker_news" ? 0.2 : provider === "github" ? 0.1 : 0,
         ),
-        execute: vi.fn(async (provider) =>
-          provider === "hacker_news" ? result(provider, 0.2, 0.01) : result(provider),
+        execute: vi.fn(async (provider, _work, budget) =>
+          accountedResult(
+            provider,
+            budget,
+            provider === "hacker_news" ? result(provider, 0.2, 0.01) : result(provider),
+          ),
         ),
       },
       decide: vi.fn(async () => waitDraft("Conservative budget wait")),
@@ -461,7 +530,7 @@ describe("resumable scan state machine", () => {
       providers: {
         order: ["hacker_news"],
         estimate: vi.fn(() => 0),
-        execute: vi.fn(async (provider) => result(provider)),
+        execute: vi.fn(async (provider, _work, budget) => accountedResult(provider, budget)),
       },
       decide: vi.fn(async () => waitDraft()),
       maxCostUsd: 0.25,
@@ -470,7 +539,73 @@ describe("resumable scan state machine", () => {
     });
 
     expect(output.state).toBe("RUNNING");
-    expect(fixture.failProvider).toHaveBeenCalledTimes(1);
+    expect(fixture.failProvider).not.toHaveBeenCalled();
     expect(fixture.failScan).not.toHaveBeenCalled();
+  });
+
+  it("fails the scan as outcome-unknown when post-effect cost settlement cannot commit", async () => {
+    const { fixture } = store();
+    vi.mocked(fixture.settleProviderAttempt).mockImplementation(async (_claim, settlement) => {
+      if (settlement.provider === "hacker_news") {
+        throw new Error("database write unavailable after provider response");
+      }
+      return { committedCostUsd: 0 };
+    });
+    const execute = vi.fn(async (provider: ProviderSlug, _work, budget) =>
+      accountedResult(provider, budget, result(provider, 0.02, 0.01)),
+    );
+
+    await expect(
+      processScan("scan_1", {
+        store: fixture,
+        inferContext: vi.fn(async () => project),
+        planQueries: vi.fn(() => plan),
+        providers: { order: ["hacker_news", "github"], estimate: vi.fn(() => 0.02), execute },
+        decide: vi.fn(async () => waitDraft()),
+        maxCostUsd: 0.25,
+        maxDurationMs: 60_000,
+        now: () => new Date("2026-08-11T12:00:00.000Z"),
+      }),
+    ).rejects.toBeInstanceOf(ProviderOutcomeUnknownError);
+
+    expect(execute).toHaveBeenCalledTimes(2); // website context, then the first planned provider
+    expect(fixture.completeProvider).toHaveBeenCalledTimes(1); // website only
+    expect(fixture.failProvider).not.toHaveBeenCalled();
+    expect(fixture.failScan).toHaveBeenCalledWith(
+      expect.anything(),
+      "PROVIDER_OUTCOME_UNKNOWN",
+      expect.stringMatching(/cost outcome could not be durably settled/i),
+    );
+  });
+
+  it("fails model work as outcome-unknown when reported usage cannot settle", async () => {
+    const { fixture } = store({ website: "SUCCEEDED" });
+    vi.mocked(fixture.settleModelCost).mockRejectedValue(
+      new Error("database write unavailable after model response"),
+    );
+
+    await expect(
+      processScan("scan_1", {
+        store: fixture,
+        inferContext: vi.fn(async (_url, _signals, controls) => {
+          await controls.reserveModelCost(modelReservation("context", 0.04));
+          await controls.settleModelCost(modelSettlement("context"));
+          return project;
+        }),
+        planQueries: vi.fn(() => plan),
+        providers: { order: [], estimate: vi.fn(() => 0), execute: vi.fn() },
+        decide: vi.fn(async () => waitDraft()),
+        maxCostUsd: 0.25,
+        maxDurationMs: 60_000,
+        now: () => new Date("2026-08-11T12:00:00.000Z"),
+      }),
+    ).rejects.toBeInstanceOf(ModelCostSettlementError);
+
+    expect(fixture.saveContext).not.toHaveBeenCalled();
+    expect(fixture.failScan).toHaveBeenCalledWith(
+      expect.anything(),
+      "MODEL_OUTCOME_UNKNOWN",
+      expect.stringMatching(/cost outcome could not be durably settled/i),
+    );
   });
 });

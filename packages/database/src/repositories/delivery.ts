@@ -4,6 +4,7 @@ import { createDeliveryToken, parseDeliveryToken, verifyOpaqueToken } from "@tre
 
 import type { TrendsFastDatabase } from "../client";
 import {
+  analyticsEvents,
   deliveryTokens,
   evidenceReceipts,
   founderUsageEvents,
@@ -15,7 +16,9 @@ import {
   scanRequests,
   scanRuns,
 } from "../schema";
+import { durableAnalyticsDedupeKey } from "./analytics";
 import { admitFounderUsage } from "./founder-usage";
+import { requireDecisionEvidenceQuality } from "./review-evidence";
 
 export class FounderDeliveryAdmissionError extends Error {
   constructor(readonly reason: "ENTITLEMENT_INACTIVE" | "DELIVERY_DAILY_LIMIT") {
@@ -51,15 +54,47 @@ export class DeliveryRepository {
     expiresAt: Date;
   }): Promise<DeliveryIssueResult> {
     return this.db.transaction(async (tx) => {
-      await tx.execute(sql`SELECT id FROM next_moves WHERE id = ${input.nextMoveId} FOR UPDATE`);
-      const [move] = await tx
+      const [identity] = await tx
         .select()
         .from(nextMoves)
         .where(eq(nextMoves.id, input.nextMoveId))
         .limit(1);
-      if (!move) throw new Error("Next Move was not found");
-      if (!move.founderReviewed || (move.state !== "APPROVED" && move.state !== "READY")) {
-        throw new Error("Only a founder-reviewed Next Move can be delivered");
+      if (!identity) throw new Error("Next Move was not found");
+      await tx.execute(
+        sql`SELECT id FROM scan_requests WHERE id = ${identity.scanRequestId} FOR UPDATE`,
+      );
+      await tx.execute(sql`SELECT id FROM scan_runs WHERE id = ${identity.scanRunId} FOR UPDATE`);
+      await tx.execute(sql`SELECT id FROM next_moves WHERE id = ${identity.id} FOR UPDATE`);
+      const [locked] = await tx
+        .select({ move: nextMoves, requestState: scanRequests.state, runState: scanRuns.state })
+        .from(nextMoves)
+        .innerJoin(scanRequests, eq(scanRequests.id, nextMoves.scanRequestId))
+        .innerJoin(scanRuns, eq(scanRuns.id, nextMoves.scanRunId))
+        .where(eq(nextMoves.id, identity.id))
+        .limit(1);
+      if (!locked) throw new Error("Next Move was not found");
+      const move = locked.move;
+
+      const receipts = await tx
+        .select({
+          bindingRole: evidenceReceipts.bindingRole,
+          availability: evidenceReceipts.availability,
+          verified: evidenceReceipts.verified,
+          source: evidenceReceipts.source,
+          canonicalUrl: evidenceReceipts.canonicalUrl,
+        })
+        .from(evidenceReceipts)
+        .where(eq(evidenceReceipts.nextMoveId, move.id));
+      const evidenceQuality = requireDecisionEvidenceQuality({
+        action: move.action,
+        signalClass: move.signalClass,
+        receipts,
+      });
+      if (
+        move.action !== "WAIT" &&
+        move.independentSourceCount !== evidenceQuality.independentSourceCount
+      ) {
+        throw new Error("The reviewed move no longer matches its exact evidence source count");
       }
 
       const [existing] = await tx
@@ -73,12 +108,41 @@ export class DeliveryRepository {
         )
         .limit(1);
       if (existing) {
+        if (
+          !move.founderReviewed ||
+          move.autoPublish ||
+          move.state !== "READY" ||
+          locked.requestState !== "READY" ||
+          locked.runState !== "READY"
+        ) {
+          throw new Error("The existing delivery is not in a consistent READY state");
+        }
+        await tx
+          .insert(analyticsEvents)
+          .values({
+            name: "scan_delivered",
+            scanRequestId: move.scanRequestId,
+            nextMoveId: move.id,
+            dedupeKey: durableAnalyticsDedupeKey("scan_delivered", "move", move.id),
+            properties: { created: true },
+            occurredAt: existing.deliveredAt ?? existing.createdAt,
+          })
+          .onConflictDoNothing();
         return {
           created: false,
           rawToken: null,
           tokenPrefix: existing.tokenPrefix,
           expiresAt: existing.expiresAt,
         };
+      }
+      if (
+        !move.founderReviewed ||
+        move.autoPublish ||
+        move.state !== "APPROVED" ||
+        locked.requestState !== "REVIEW_REQUIRED" ||
+        locked.runState !== "REVIEW_REQUIRED"
+      ) {
+        throw new Error("Only a founder-reviewed move in review can be delivered");
       }
 
       const now = new Date();
@@ -118,18 +182,26 @@ export class DeliveryRepository {
         expiresAt: input.expiresAt,
         deliveredAt: now,
       });
-      await tx
+      const [readyMove] = await tx
         .update(nextMoves)
         .set({ state: "READY", deliveredAt: now, updatedAt: now })
-        .where(eq(nextMoves.id, move.id));
-      await tx
+        .where(and(eq(nextMoves.id, move.id), eq(nextMoves.state, "APPROVED")))
+        .returning({ id: nextMoves.id });
+      const [readyRequest] = await tx
         .update(scanRequests)
         .set({ state: "READY", completedAt: now, updatedAt: now })
-        .where(eq(scanRequests.id, move.scanRequestId));
-      await tx
+        .where(
+          and(eq(scanRequests.id, move.scanRequestId), eq(scanRequests.state, "REVIEW_REQUIRED")),
+        )
+        .returning({ id: scanRequests.id });
+      const [readyRun] = await tx
         .update(scanRuns)
         .set({ state: "READY", completedAt: now, updatedAt: now })
-        .where(eq(scanRuns.id, move.scanRunId));
+        .where(and(eq(scanRuns.id, move.scanRunId), eq(scanRuns.state, "REVIEW_REQUIRED")))
+        .returning({ id: scanRuns.id });
+      if (!readyMove || !readyRequest || !readyRun) {
+        throw new Error("The reviewed scan changed before delivery could commit");
+      }
       await tx
         .update(monitoringRuns)
         .set({ state: "COMPLETED", completedAt: now, updatedAt: now })
@@ -148,6 +220,17 @@ export class DeliveryRepository {
         before: { state: move.state },
         after: { state: "READY" },
       });
+      await tx
+        .insert(analyticsEvents)
+        .values({
+          name: "scan_delivered",
+          scanRequestId: move.scanRequestId,
+          nextMoveId: move.id,
+          dedupeKey: durableAnalyticsDedupeKey("scan_delivered", "move", move.id),
+          properties: { created: true },
+          occurredAt: now,
+        })
+        .onConflictDoNothing();
 
       return {
         created: true,

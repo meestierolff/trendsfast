@@ -79,7 +79,7 @@ export function FeedbackControls({ token }: { token: string }) {
         method="post"
         onSubmit={submitFeedback}
       >
-        <fieldset disabled={feedbackState === "pending"}>
+        <fieldset disabled={feedbackState === "pending" || feedbackState === "success"}>
           <legend className="sr-only">Choose feedback for this Next Move</legend>
           {feedbackOptions.map((option, index) => (
             <button

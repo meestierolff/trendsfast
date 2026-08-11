@@ -3,6 +3,7 @@ import {
   conservativeModelCost,
   createOpenAiCompatibleModelClient,
   createStructuredSynthesizer,
+  reportedModelCost,
   SynthesisProposalSchema,
   type ModelClient,
 } from "../src/synthesis";
@@ -34,6 +35,7 @@ describe("bounded structured synthesis", () => {
         .mockResolvedValueOnce(JSON.stringify(valid)),
     };
     const reserveModelCost = vi.fn(async () => ({ created: true, projectedCostUsd: 0.01 }));
+    const settleModelCost = vi.fn(async () => ({ committedCostUsd: 0.01 }));
     const proposal = await createStructuredSynthesizer(client).synthesize({
       project: { name: "Example", audience: "developers", credibleTopics: ["distribution"] },
       compactClusters: [
@@ -43,6 +45,7 @@ describe("bounded structured synthesis", () => {
       now: new Date("2026-08-11T12:00:00.000Z"),
       deadline: new Date("2026-08-11T12:01:00.000Z"),
       reserveModelCost,
+      settleModelCost,
     });
     expect(proposal).toEqual(valid);
     expect(client.generate).toHaveBeenCalledTimes(2);
@@ -162,6 +165,17 @@ describe("bounded structured synthesis", () => {
     });
   });
 
+  it("prices provider-reported input and output tokens from configured rates", () => {
+    expect(
+      reportedModelCost({
+        inputTokens: 100,
+        outputTokens: 20,
+        inputUsdPerMillionTokens: 1,
+        outputUsdPerMillionTokens: 2,
+      }),
+    ).toBe(0.00014);
+  });
+
   it("requires a persisted reservation for every priced model request", async () => {
     const fetcher = vi.fn<typeof fetch>();
     const client = createOpenAiCompatibleModelClient({
@@ -191,6 +205,7 @@ describe("bounded structured synthesis", () => {
   it("does not replay network work for an already-reserved attempt", async () => {
     const fetcher = vi.fn<typeof fetch>();
     const reserve = vi.fn(async () => ({ created: false, projectedCostUsd: 0.01 }));
+    const settle = vi.fn(async () => ({ committedCostUsd: 0.01 }));
     const client = createOpenAiCompatibleModelClient({
       apiKey: "fixture-key",
       model: "priced-model",
@@ -215,6 +230,7 @@ describe("bounded structured synthesis", () => {
           operation: "context",
           attempt: 1,
           reserve,
+          settle,
         },
       }),
     ).rejects.toThrow(/cannot be replayed safely/i);
@@ -232,6 +248,7 @@ describe("bounded structured synthesis", () => {
         vi.setSystemTime(new Date(startedAt.getTime() + 1_001));
         return { created: true, projectedCostUsd: 0.01 };
       });
+      const settle = vi.fn(async () => ({ committedCostUsd: 0.01 }));
       const client = createOpenAiCompatibleModelClient({
         apiKey: "fixture-key",
         model: "priced-model",
@@ -257,6 +274,7 @@ describe("bounded structured synthesis", () => {
             operation: "context",
             attempt: 1,
             reserve,
+            settle,
           },
         }),
       ).rejects.toThrow(/deadline after cost reservation/i);
@@ -264,6 +282,151 @@ describe("bounded structured synthesis", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("settles the exact reservation from provider-reported token usage", async () => {
+    const events: string[] = [];
+    const fetcher = vi.fn<typeof fetch>(async () => {
+      events.push("network");
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: JSON.stringify(valid) } }],
+          usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    const reserve = vi.fn(async () => {
+      events.push("reserve");
+      return { created: true, projectedCostUsd: 0.002 };
+    });
+    const settle = vi.fn(async () => {
+      events.push("settle");
+      return { committedCostUsd: 0.002 };
+    });
+    const client = createOpenAiCompatibleModelClient({
+      apiKey: "fixture-key",
+      model: "priced-model",
+      baseUrl: "https://model.example/v1",
+      fetch: fetcher,
+      maxOutputTokens: 512,
+      pricing: {
+        provider: "openai",
+        inputUsdPerMillionTokens: 1,
+        outputUsdPerMillionTokens: 2,
+      },
+    });
+
+    await expect(
+      client.generate({
+        system: "system",
+        user: "user",
+        temperature: 0,
+        responseFormat: "json",
+        schemaName: "test",
+        cost: {
+          ledgerKey: "model:synthesis:attempt:1",
+          operation: "synthesis",
+          attempt: 1,
+          reserve,
+          settle,
+        },
+      }),
+    ).resolves.toBe(JSON.stringify(valid));
+
+    expect(events).toEqual(["reserve", "network", "settle"]);
+    expect(settle).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ledgerKey: "model:synthesis:attempt:1",
+        provider: "openai",
+        model: "priced-model",
+        operation: "synthesis",
+        attempt: 1,
+        inputTokens: 100,
+        outputTokens: 20,
+        actualCostUsd: 0.00014,
+      }),
+    );
+  });
+
+  it("leaves the reservation unsettled when response usage is absent", async () => {
+    const fetcher = vi.fn<typeof fetch>(
+      async () =>
+        new Response(
+          JSON.stringify({ choices: [{ message: { content: JSON.stringify(valid) } }] }),
+          {
+            status: 200,
+          },
+        ),
+    );
+    const reserve = vi.fn(async () => ({ created: true, projectedCostUsd: 0.002 }));
+    const settle = vi.fn(async () => ({ committedCostUsd: 0.002 }));
+    const client = createOpenAiCompatibleModelClient({
+      apiKey: "fixture-key",
+      model: "priced-model",
+      baseUrl: "https://model.example/v1",
+      fetch: fetcher,
+      pricing: {
+        provider: "openai",
+        inputUsdPerMillionTokens: 1,
+        outputUsdPerMillionTokens: 2,
+      },
+    });
+
+    await client.generate({
+      system: "system",
+      user: "user",
+      temperature: 0,
+      responseFormat: "json",
+      schemaName: "test",
+      cost: {
+        ledgerKey: "model:context:attempt:1",
+        operation: "context",
+        attempt: 1,
+        reserve,
+        settle,
+      },
+    });
+
+    expect(reserve).toHaveBeenCalledOnce();
+    expect(settle).not.toHaveBeenCalled();
+  });
+
+  it("leaves the reservation unsettled when the response envelope cannot be parsed", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => new Response("not-json", { status: 200 }));
+    const reserve = vi.fn(async () => ({ created: true, projectedCostUsd: 0.002 }));
+    const settle = vi.fn(async () => ({ committedCostUsd: 0.002 }));
+    const client = createOpenAiCompatibleModelClient({
+      apiKey: "fixture-key",
+      model: "priced-model",
+      baseUrl: "https://model.example/v1",
+      fetch: fetcher,
+      pricing: {
+        provider: "openai",
+        inputUsdPerMillionTokens: 1,
+        outputUsdPerMillionTokens: 2,
+      },
+    });
+
+    await expect(
+      client.generate({
+        system: "system",
+        user: "user",
+        temperature: 0,
+        responseFormat: "json",
+        schemaName: "test",
+        cost: {
+          ledgerKey: "model:context:attempt:1",
+          operation: "context",
+          attempt: 1,
+          reserve,
+          settle,
+        },
+      }),
+    ).rejects.toThrow(/malformed json/i);
+
+    expect(reserve).toHaveBeenCalledOnce();
+    expect(settle).not.toHaveBeenCalled();
   });
 
   it("sends an explicit output-token cap and accepts a bounded response", async () => {

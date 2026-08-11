@@ -12,7 +12,10 @@ describe("live model cost wiring", () => {
     const fetcher = vi.fn<typeof fetch>(async () => {
       events.push("network");
       return new Response(
-        JSON.stringify({ choices: [{ message: { content: '{"name":"Example"}' } }] }),
+        JSON.stringify({
+          choices: [{ message: { content: '{"name":"Example"}' } }],
+          usage: { prompt_tokens: 40, completion_tokens: 10 },
+        }),
         { status: 200, headers: { "content-type": "application/json" } },
       );
     });
@@ -34,6 +37,10 @@ describe("live model cost wiring", () => {
       events.push("reserve");
       return { created: true, projectedCostUsd: 0.01 };
     });
+    const settle = vi.fn(async () => {
+      events.push("settle");
+      return { committedCostUsd: 0.01 };
+    });
 
     await expect(
       client.generate({
@@ -47,11 +54,12 @@ describe("live model cost wiring", () => {
           operation: "context",
           attempt: 1,
           reserve,
+          settle,
         },
       }),
     ).resolves.toBe('{"name":"Example"}');
 
-    expect(events).toEqual(["reserve", "network"]);
+    expect(events).toEqual(["reserve", "network", "settle"]);
     expect(reserve).toHaveBeenCalledWith(
       expect.objectContaining({
         ledgerKey: "model:context:attempt:1",
@@ -62,6 +70,14 @@ describe("live model cost wiring", () => {
         inputUsdPerMillionTokens: 0.25,
         outputUsdPerMillionTokens: 2,
         outputTokenUpperBound: 2_048,
+      }),
+    );
+    expect(settle).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "openai",
+        inputTokens: 40,
+        outputTokens: 10,
+        actualCostUsd: 0.00003,
       }),
     );
   });

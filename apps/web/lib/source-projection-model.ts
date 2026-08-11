@@ -57,6 +57,13 @@ export type PublicSourceStatusView = {
   } | null;
 };
 
+export type CurrentProductionDeployment = {
+  deploymentEnvironment: "local" | "preview" | "production";
+  releaseSha: string | null;
+  deploymentHost: string | null;
+  deploymentId: string | null;
+};
+
 const catalogToSource: Readonly<Record<string, string>> = {
   website: "website",
   x: "x",
@@ -74,11 +81,16 @@ function applyVerification(
   verification: SourceVerificationView | undefined,
 ): SourceCatalogItem {
   if (!verification || verification.state === "RUNNING") return source;
+  const effectiveState =
+    verification.state === "VERIFIED" && verification.healthStatus !== "HEALTHY"
+      ? "DEGRADED"
+      : verification.state;
   return {
     ...source,
-    engineeringState: verification.state,
+    engineeringState: effectiveState,
     productionVerified:
-      verification.state === "VERIFIED" &&
+      effectiveState === "VERIFIED" &&
+      verification.healthStatus === "HEALTHY" &&
       verification.readbackVerified === true &&
       verification.deploymentEnvironment === "production" &&
       Boolean(verification.releaseSha && verification.deploymentHost),
@@ -91,10 +103,22 @@ function applyVerification(
  */
 export function projectPublicSourceStatuses(
   latestVerifications: readonly SourceVerificationView[] = [],
+  currentDeployment?: CurrentProductionDeployment,
 ): PublicSourceStatusView[] {
   const bySource = new Map<string, SourceVerificationView>();
   for (const record of latestVerifications) {
-    if (record.deploymentEnvironment !== "production") continue;
+    if (
+      currentDeployment?.deploymentEnvironment !== "production" ||
+      !currentDeployment.releaseSha ||
+      !currentDeployment.deploymentHost ||
+      record.deploymentEnvironment !== "production" ||
+      record.releaseSha !== currentDeployment.releaseSha ||
+      record.deploymentHost !== currentDeployment.deploymentHost ||
+      (currentDeployment.deploymentId !== null &&
+        record.deploymentId !== currentDeployment.deploymentId)
+    ) {
+      continue;
+    }
     const existing = bySource.get(record.source);
     const completedAt = record.completedAt?.getTime() ?? 0;
     if (!existing || completedAt > (existing.completedAt?.getTime() ?? 0)) {

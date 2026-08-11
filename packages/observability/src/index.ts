@@ -14,6 +14,20 @@ export function redact(value: unknown, seen = new WeakSet<object>()): unknown {
   if (seen.has(value)) return "[CIRCULAR]";
   seen.add(value);
   if (Array.isArray(value)) return value.map((item) => redact(item, seen));
+  if (value instanceof Error) {
+    return {
+      name: redactString(value.name),
+      message: redactString(value.message),
+      ...(value.stack ? { stack: redactString(value.stack) } : {}),
+      ...(value.cause === undefined ? {} : { cause: redact(value.cause, seen) }),
+      ...Object.fromEntries(
+        Object.entries(value).map(([key, child]) => [
+          key,
+          SENSITIVE_KEY.test(key) ? "[REDACTED]" : redact(child, seen),
+        ]),
+      ),
+    };
+  }
   return Object.fromEntries(
     Object.entries(value).map(([key, child]) => [
       key,
@@ -39,15 +53,17 @@ export function createLogger(input: {
       sink.warn(JSON.stringify({ level: "warn", message, ...(redact(context) as object) }));
     },
     error(message: string, error: unknown, context: Record<string, unknown> = {}) {
+      const safeError = redact(error);
+      const safeContext = redact(context) as Record<string, unknown>;
       sink.error(
         JSON.stringify({
           level: "error",
           message,
-          error: redact(error),
-          ...(redact(context) as object),
+          error: safeError,
+          ...safeContext,
         }),
       );
-      input.reporter?.captureException(error, redact(context) as Record<string, unknown>);
+      input.reporter?.captureException(safeError, safeContext);
     },
   };
 }

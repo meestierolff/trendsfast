@@ -12,12 +12,12 @@ import type { NextMoveRequest, QueryPlan, ScanState, SignalClass } from "@trends
 
 import type { TrendsFastDatabase } from "../client";
 import {
+  analyticsEvents,
   apiKeys,
   deliveryTokens,
   evidenceReceipts,
   founderUsageEvents,
   nextMoves,
-  projectEntitlements,
   projectContextVersions,
   projects,
   scanRequests,
@@ -351,6 +351,8 @@ export class ScanRepository {
       const [apiKey] = await tx
         .select({
           id: apiKeys.id,
+          environment: apiKeys.environment,
+          projectId: apiKeys.projectId,
           providerCostLimitUsd: apiKeys.providerCostLimitUsd,
         })
         .from(apiKeys)
@@ -358,6 +360,12 @@ export class ScanRepository {
         .limit(1)
         .for("update");
       if (!apiKey) throw new Error("API scan admission requires an existing API key");
+      if ((apiKey.projectId ?? undefined) !== input.projectId) {
+        throw new Error("API scan admission project does not match the API key");
+      }
+      if (apiKey.environment === "live" && !apiKey.projectId) {
+        return { status: "USAGE_LIMITED" as const, reason: "ENTITLEMENT_INACTIVE" as const };
+      }
 
       const [existing] = await tx
         .select()
@@ -439,30 +447,23 @@ export class ScanRepository {
       }
 
       let founderUsageEventId: string | null = null;
-      if (input.projectId) {
-        const [founderEntitlement] = await tx
-          .select({ projectId: projectEntitlements.projectId })
-          .from(projectEntitlements)
-          .where(eq(projectEntitlements.projectId, input.projectId))
-          .limit(1);
-        if (founderEntitlement) {
-          const usage = await admitFounderUsage(tx as unknown as TrendsFastDatabase, {
-            projectId: input.projectId,
-            kind: "ON_DEMAND_RUN_ACCEPTED",
-            idempotencyKey: `api:${input.apiKeyId}:${idempotencyKeyHash}`,
-            occurredAt: input.now,
-          });
-          if (usage.status === "LIMITED") {
-            return {
-              status: "USAGE_LIMITED" as const,
-              reason:
-                usage.reason === "ON_DEMAND_MONTHLY_LIMIT"
-                  ? "ON_DEMAND_MONTHLY_LIMIT"
-                  : "ENTITLEMENT_INACTIVE",
-            };
-          }
-          founderUsageEventId = usage.event.id;
+      if (apiKey.environment === "live" && apiKey.projectId) {
+        const usage = await admitFounderUsage(tx as unknown as TrendsFastDatabase, {
+          projectId: apiKey.projectId,
+          kind: "ON_DEMAND_RUN_ACCEPTED",
+          idempotencyKey: `api:${input.apiKeyId}:${idempotencyKeyHash}`,
+          occurredAt: input.now,
+        });
+        if (usage.status === "LIMITED") {
+          return {
+            status: "USAGE_LIMITED" as const,
+            reason:
+              usage.reason === "ON_DEMAND_MONTHLY_LIMIT"
+                ? "ON_DEMAND_MONTHLY_LIMIT"
+                : "ENTITLEMENT_INACTIVE",
+          };
         }
+        founderUsageEventId = usage.event.id;
       }
 
       const [created] = await tx
@@ -554,6 +555,7 @@ export class ScanRepository {
     submittedUrl: string;
     normalizedUrl: string;
     requesterFingerprintHash: string;
+    anonymousSessionHash?: string;
     since: Date;
     dailyLimit: number;
     now: Date;
@@ -578,16 +580,27 @@ export class ScanRepository {
     const dailyLimit = input.dailyLimit;
 
     return this.db.transaction(async (tx) => {
+      const recordSubmission = async (scanRequestId: string, reused: boolean) => {
+        await tx.insert(analyticsEvents).values({
+          name: "free_scan_submitted",
+          anonymousSessionHash: input.anonymousSessionHash ?? null,
+          scanRequestId,
+          properties: { reused },
+          occurredAt: input.now,
+        });
+      };
       await tx.execute(
         sql`SELECT pg_advisory_xact_lock(hashtextextended(${input.requesterFingerprintHash}, 0))`,
       );
       const [recent] = await tx
         .select({ value: count() })
-        .from(scanRequests)
+        .from(analyticsEvents)
+        .innerJoin(scanRequests, eq(analyticsEvents.scanRequestId, scanRequests.id))
         .where(
           and(
+            eq(analyticsEvents.name, "free_scan_submitted"),
+            gte(analyticsEvents.occurredAt, input.since),
             eq(scanRequests.requesterFingerprintHash, input.requesterFingerprintHash),
-            gte(scanRequests.submittedAt, input.since),
           ),
         );
       if ((recent?.value ?? 0) >= dailyLimit) return { status: "RATE_LIMITED" as const };
@@ -605,6 +618,7 @@ export class ScanRepository {
         .orderBy(desc(scanRequests.submittedAt))
         .limit(1);
       if (duplicate) {
+        await recordSubmission(duplicate.id, true);
         return {
           status: "REUSED" as const,
           scanRequestId: duplicate.id,
@@ -626,6 +640,7 @@ export class ScanRepository {
         })
         .returning();
       if (!created) throw new Error("Could not create public scan request");
+      await recordSubmission(created.id, false);
       return {
         status: "CREATED" as const,
         scanRequestId: created.id,

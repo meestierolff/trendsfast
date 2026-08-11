@@ -36,6 +36,7 @@ export type SynthesisInput = {
   now: Date;
   deadline?: Date;
   reserveModelCost?: ReserveModelCost;
+  settleModelCost?: SettleModelCost;
 };
 
 export type ModelPricingMetadata = {
@@ -64,11 +65,30 @@ export type ReserveModelCost = (
   reservation: ModelCostReservation,
 ) => Promise<ModelCostReservationResult>;
 
+export type ModelCostSettlement = Pick<
+  ModelCostReservation,
+  "ledgerKey" | "provider" | "model" | "operation" | "attempt"
+> & {
+  inputTokens: number;
+  outputTokens: number;
+  actualCostUsd: number;
+  finishedAt: string;
+};
+
+export type ModelCostSettlementResult = {
+  committedCostUsd: number;
+};
+
+export type SettleModelCost = (
+  settlement: ModelCostSettlement,
+) => Promise<ModelCostSettlementResult>;
+
 export type ModelRequestCostControl = {
   ledgerKey: string;
   operation: ModelCostReservation["operation"];
   attempt: number;
   reserve: ReserveModelCost;
+  settle: SettleModelCost;
 };
 
 export type ModelRequest = {
@@ -82,6 +102,13 @@ export type ModelRequest = {
 };
 
 export type ModelClient = { generate(request: ModelRequest): Promise<string> };
+
+export class ModelCostSettlementError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "ModelCostSettlementError";
+  }
+}
 
 const DEFAULT_MODEL_OUTPUT_TOKENS = 2_048;
 const MAX_MODEL_OUTPUT_TOKENS = 8_192;
@@ -121,6 +148,82 @@ export function conservativeModelCost(input: {
     outputTokenUpperBound: input.maxOutputTokens,
     estimatedCostUsd: Math.ceil(rawCostUsd * USD_MICROS) / USD_MICROS,
   };
+}
+
+export function reportedModelCost(input: {
+  inputTokens: number;
+  outputTokens: number;
+  inputUsdPerMillionTokens: number;
+  outputUsdPerMillionTokens: number;
+}) {
+  if (
+    !Number.isSafeInteger(input.inputTokens) ||
+    input.inputTokens < 0 ||
+    !Number.isSafeInteger(input.outputTokens) ||
+    input.outputTokens < 0 ||
+    !Number.isFinite(input.inputUsdPerMillionTokens) ||
+    input.inputUsdPerMillionTokens < 0 ||
+    !Number.isFinite(input.outputUsdPerMillionTokens) ||
+    input.outputUsdPerMillionTokens < 0
+  ) {
+    throw new Error("Reported model usage and price metadata must be finite and non-negative");
+  }
+  const actualCostUsd =
+    (input.inputTokens * input.inputUsdPerMillionTokens +
+      input.outputTokens * input.outputUsdPerMillionTokens) /
+    USD_MICROS;
+  if (!Number.isFinite(actualCostUsd)) {
+    throw new Error("Reported model cost exceeded the supported numeric range");
+  }
+  return actualCostUsd;
+}
+
+const TokenCountSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const OpenAiCompatibleUsageSchema = z
+  .object({
+    prompt_tokens: TokenCountSchema.optional(),
+    completion_tokens: TokenCountSchema.optional(),
+    input_tokens: TokenCountSchema.optional(),
+    output_tokens: TokenCountSchema.optional(),
+  })
+  .passthrough();
+
+const OpenAiCompatibleResponseSchema = z
+  .object({
+    choices: z
+      .array(
+        z
+          .object({
+            message: z.object({ content: z.string().optional() }).passthrough().optional(),
+          })
+          .passthrough(),
+      )
+      .optional(),
+    usage: z.unknown().optional(),
+  })
+  .passthrough();
+
+function reportedUsage(value: unknown): { inputTokens: number; outputTokens: number } | undefined {
+  const parsed = OpenAiCompatibleUsageSchema.safeParse(value);
+  if (!parsed.success) return undefined;
+  if (
+    parsed.data.prompt_tokens !== undefined &&
+    parsed.data.input_tokens !== undefined &&
+    parsed.data.prompt_tokens !== parsed.data.input_tokens
+  ) {
+    return undefined;
+  }
+  if (
+    parsed.data.completion_tokens !== undefined &&
+    parsed.data.output_tokens !== undefined &&
+    parsed.data.completion_tokens !== parsed.data.output_tokens
+  ) {
+    return undefined;
+  }
+  const inputTokens = parsed.data.prompt_tokens ?? parsed.data.input_tokens;
+  const outputTokens = parsed.data.completion_tokens ?? parsed.data.output_tokens;
+  if (inputTokens === undefined || outputTokens === undefined) return undefined;
+  return { inputTokens, outputTokens };
 }
 
 const SYSTEM = `You are the bounded TrendsFast synthesis step.
@@ -185,13 +288,14 @@ export function createStructuredSynthesizer(client: ModelClient) {
           responseFormat: "json",
           schemaName: "trendsfast_next_move_v1",
           ...(input.deadline ? { deadline: input.deadline } : {}),
-          ...(input.reserveModelCost
+          ...(input.reserveModelCost && input.settleModelCost
             ? {
                 cost: {
                   ledgerKey: `model:synthesis:attempt:${attempt + 1}`,
                   operation: "synthesis" as const,
                   attempt: attempt + 1,
                   reserve: input.reserveModelCost,
+                  settle: input.settleModelCost,
                 },
               }
             : {}),
@@ -247,6 +351,7 @@ export function createOpenAiCompatibleModelClient(input: {
       if (Boolean(input.pricing) !== Boolean(request.cost)) {
         throw new Error("Priced model calls require a persisted pre-call cost reservation");
       }
+      let reservation: ModelCostReservation | undefined;
       if (input.pricing && request.cost) {
         const estimate = conservativeModelCost({
           inputBytes,
@@ -254,7 +359,7 @@ export function createOpenAiCompatibleModelClient(input: {
           inputUsdPerMillionTokens: input.pricing.inputUsdPerMillionTokens,
           outputUsdPerMillionTokens: input.pricing.outputUsdPerMillionTokens,
         });
-        const reserved = await request.cost.reserve({
+        reservation = {
           ledgerKey: request.cost.ledgerKey,
           provider: input.pricing.provider,
           model: input.model,
@@ -264,9 +369,12 @@ export function createOpenAiCompatibleModelClient(input: {
           ...estimate,
           inputUsdPerMillionTokens: input.pricing.inputUsdPerMillionTokens,
           outputUsdPerMillionTokens: input.pricing.outputUsdPerMillionTokens,
-        });
+        };
+        const reserved = await request.cost.reserve(reservation);
         if (!reserved.created) {
-          throw new Error("A previously reserved model call cannot be replayed safely");
+          throw new ModelCostSettlementError(
+            "A previously reserved model call cannot be replayed safely",
+          );
         }
         if (request.deadline) {
           remainingMs = request.deadline.getTime() - Date.now();
@@ -317,16 +425,43 @@ export function createOpenAiCompatibleModelClient(input: {
           bytes.set(chunk, offset);
           offset += chunk.byteLength;
         }
-        let body: {
-          choices?: Array<{ message?: { content?: string } }>;
-        };
+        let body: z.infer<typeof OpenAiCompatibleResponseSchema>;
         try {
-          body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as typeof body;
+          const decoded: unknown = JSON.parse(
+            new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+          );
+          body = OpenAiCompatibleResponseSchema.parse(decoded);
         } catch {
           throw new Error("Synthesis provider returned malformed JSON");
         }
         const content = body.choices?.[0]?.message?.content;
         if (!content) throw new Error("Synthesis provider returned no structured content");
+        const usage = reportedUsage(body.usage);
+        if (input.pricing && request.cost && reservation && usage) {
+          if (
+            usage.inputTokens > reservation.inputTokenUpperBound ||
+            usage.outputTokens > reservation.outputTokenUpperBound
+          ) {
+            throw new ModelCostSettlementError(
+              "Provider-reported model usage exceeded its reserved token bounds",
+            );
+          }
+          await request.cost.settle({
+            ledgerKey: reservation.ledgerKey,
+            provider: reservation.provider,
+            model: reservation.model,
+            operation: reservation.operation,
+            attempt: reservation.attempt,
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            actualCostUsd: reportedModelCost({
+              ...usage,
+              inputUsdPerMillionTokens: reservation.inputUsdPerMillionTokens,
+              outputUsdPerMillionTokens: reservation.outputUsdPerMillionTokens,
+            }),
+            finishedAt: new Date().toISOString(),
+          });
+        }
         return content;
       } finally {
         clearTimeout(timeout);

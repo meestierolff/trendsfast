@@ -1,10 +1,19 @@
 import type { NextMove, ProjectContext, ScanState, Signal, SignalClass } from "@trendsfast/schemas";
-import type { ProviderRunResult, ProviderSlug, QueryPlan } from "@trendsfast/providers";
-
 import type {
-  ModelCostReservation,
-  ModelCostReservationResult,
-  ReserveModelCost,
+  ProviderAttemptReservation,
+  ProviderAttemptSettlement,
+  ProviderRunResult,
+  ProviderSlug,
+  QueryPlan,
+} from "@trendsfast/providers";
+
+import {
+  ModelCostSettlementError,
+  type ModelCostReservation,
+  type ModelCostSettlement,
+  type ModelCostReservationResult,
+  type ReserveModelCost,
+  type SettleModelCost,
 } from "./synthesis";
 
 export type ProcessingSnapshot = {
@@ -68,11 +77,24 @@ export type ProcessingStore = {
     claim: ProcessingClaimIdentity,
     input: { code: string; message: string; skipped?: boolean },
   ): Promise<void>;
+  reserveProviderAttempt(
+    claim: ProcessingClaimIdentity,
+    reservation: ProviderAttemptReservation,
+    maximumCostUsd: number,
+  ): Promise<ModelCostReservationResult>;
+  settleProviderAttempt(
+    claim: ProcessingClaimIdentity,
+    settlement: ProviderAttemptSettlement,
+  ): Promise<{ committedCostUsd: number }>;
   reserveModelCost(
     claim: ProcessingClaimIdentity,
     reservation: ModelCostReservation,
     maximumCostUsd: number,
   ): Promise<ModelCostReservationResult>;
+  settleModelCost(
+    claim: ProcessingClaimIdentity,
+    settlement: ModelCostSettlement,
+  ): Promise<{ committedCostUsd: number }>;
   loadCollectedData(runId: string): Promise<{
     signals: Signal[];
     measurements: ProviderRunResult["measurements"];
@@ -96,7 +118,12 @@ export type ProviderRunner = {
   execute(
     provider: ProviderSlug,
     request: { scanId: string; productUrl: string; queries: QueryPlan["entries"] },
-    budget: { remainingUsd: number; deadline: Date },
+    budget: {
+      remainingUsd: number;
+      deadline: Date;
+      reserveAttempt(reservation: ProviderAttemptReservation): Promise<void>;
+      settleAttempt(settlement: ProviderAttemptSettlement): Promise<void>;
+    },
   ): Promise<ProviderRunResult>;
 };
 
@@ -120,7 +147,11 @@ export async function processScan(
     inferContext(
       url: string,
       websiteSignals: Signal[],
-      controls: { deadline: Date; reserveModelCost: ReserveModelCost },
+      controls: {
+        deadline: Date;
+        reserveModelCost: ReserveModelCost;
+        settleModelCost: SettleModelCost;
+      },
     ): Promise<ProjectContext>;
     planQueries(
       context: ProjectContext,
@@ -140,6 +171,7 @@ export async function processScan(
       now: Date;
       deadline: Date;
       reserveModelCost: ReserveModelCost;
+      settleModelCost: SettleModelCost;
     }): Promise<DecisionDraft>;
     maxCostUsd: number;
     maxDurationMs: number;
@@ -194,6 +226,43 @@ export async function processScan(
       spent = Math.max(spent, result.projectedCostUsd);
       return result;
     };
+    const settleModelCost: SettleModelCost = async (settlement) => {
+      try {
+        const result = await dependencies.store.settleModelCost(ids, settlement);
+        spent = Math.max(spent, result.committedCostUsd);
+        return result;
+      } catch (error) {
+        if (error instanceof StaleProcessingClaimError) throw error;
+        throw new ModelCostSettlementError(
+          `${settlement.operation} model attempt ${settlement.attempt} returned, but its cost outcome could not be durably settled: ${safeMessage(error)}`,
+          { cause: error },
+        );
+      }
+    };
+    const reserveProviderAttempt = async (reservation: ProviderAttemptReservation) => {
+      const result = await dependencies.store.reserveProviderAttempt(
+        ids,
+        reservation,
+        dependencies.maxCostUsd,
+      );
+      if (!result.created) {
+        throw new ProviderOutcomeUnknownError(
+          `${reservation.provider} attempt ${reservation.attempt} already has a durable reservation. Automatic replay is disabled.`,
+        );
+      }
+      spent = Math.max(spent, result.projectedCostUsd);
+    };
+    const settleProviderAttempt = async (settlement: ProviderAttemptSettlement) => {
+      try {
+        const result = await dependencies.store.settleProviderAttempt(ids, settlement);
+        spent = Math.max(spent, result.committedCostUsd);
+      } catch (error) {
+        if (error instanceof StaleProcessingClaimError) throw error;
+        throw new ProviderOutcomeUnknownError(
+          `${settlement.provider} attempt ${settlement.attempt} returned, but its cost outcome could not be durably settled: ${safeMessage(error)}`,
+        );
+      }
+    };
     let context = claim.context;
     let contextVersionId = claim.contextVersionId;
     if (!context || !contextVersionId) {
@@ -221,13 +290,30 @@ export async function processScan(
           const websiteResult = await dependencies.providers.execute(
             "website",
             { scanId: claim.runId, productUrl: snapshot.url, queries: websiteQueries },
-            { remainingUsd: Math.max(0, dependencies.maxCostUsd - spent), deadline },
+            {
+              remainingUsd: Math.max(0, dependencies.maxCostUsd - spent),
+              deadline,
+              reserveAttempt: reserveProviderAttempt,
+              settleAttempt: settleProviderAttempt,
+            },
           );
-          spent += Math.max(0, websiteResult.cost.estimatedUsd, websiteResult.cost.actualUsd ?? 0);
-          await dependencies.store.completeProvider("website", ids, websiteResult);
+          try {
+            await dependencies.store.completeProvider("website", ids, websiteResult);
+          } catch (error) {
+            if (error instanceof StaleProcessingClaimError) throw error;
+            throw new ProviderOutcomeUnknownError(
+              `website returned, but its external outcome could not be durably completed: ${safeMessage(error)}`,
+            );
+          }
           claim.sourceStates.website =
             websiteResult.status === "SUCCESS" ? "SUCCEEDED" : "DEGRADED";
         } catch (error) {
+          if (
+            error instanceof ProviderOutcomeUnknownError ||
+            error instanceof StaleProcessingClaimError
+          ) {
+            throw error;
+          }
           await dependencies.store.failProvider("website", ids, {
             code: "WEBSITE_CONTEXT_FAILED",
             message: safeMessage(error),
@@ -241,7 +327,7 @@ export async function processScan(
       context = await dependencies.inferContext(
         snapshot.url,
         websiteData.signals.filter((signal) => signal.source === "website"),
-        { deadline, reserveModelCost },
+        { deadline, reserveModelCost, settleModelCost },
       );
       if (now() >= deadline)
         throw new ScanDeadlineError("The scan exceeded its hard duration ceiling.");
@@ -281,12 +367,29 @@ export async function processScan(
         const result = await dependencies.providers.execute(
           provider,
           { scanId: claim.runId, productUrl: snapshot.url, queries },
-          { remainingUsd: Math.max(0, dependencies.maxCostUsd - spent), deadline },
+          {
+            remainingUsd: Math.max(0, dependencies.maxCostUsd - spent),
+            deadline,
+            reserveAttempt: reserveProviderAttempt,
+            settleAttempt: settleProviderAttempt,
+          },
         );
-        spent += Math.max(0, result.cost.estimatedUsd, result.cost.actualUsd ?? 0);
-        await dependencies.store.completeProvider(provider, ids, result);
+        try {
+          await dependencies.store.completeProvider(provider, ids, result);
+        } catch (error) {
+          if (error instanceof StaleProcessingClaimError) throw error;
+          throw new ProviderOutcomeUnknownError(
+            `${provider} returned, but its external outcome could not be durably completed: ${safeMessage(error)}`,
+          );
+        }
         claim.sourceStates[provider] = result.status === "SUCCESS" ? "SUCCEEDED" : "DEGRADED";
       } catch (error) {
+        if (
+          error instanceof ProviderOutcomeUnknownError ||
+          error instanceof StaleProcessingClaimError
+        ) {
+          throw error;
+        }
         await dependencies.store.failProvider(provider, ids, {
           code: "PROVIDER_RUN_FAILED",
           message: safeMessage(error),
@@ -304,6 +407,7 @@ export async function processScan(
       now: now(),
       deadline,
       reserveModelCost,
+      settleModelCost,
     });
     if (now() >= deadline)
       throw new ScanDeadlineError("The scan exceeded its hard duration ceiling.");
@@ -323,9 +427,11 @@ export async function processScan(
     const code =
       error instanceof ScanDeadlineError
         ? "SCAN_DEADLINE_EXCEEDED"
-        : error instanceof ProviderOutcomeUnknownError
-          ? "PROVIDER_OUTCOME_UNKNOWN"
-          : "SCAN_PROCESSING_FAILED";
+        : error instanceof ModelCostSettlementError
+          ? "MODEL_OUTCOME_UNKNOWN"
+          : error instanceof ProviderOutcomeUnknownError
+            ? "PROVIDER_OUTCOME_UNKNOWN"
+            : "SCAN_PROCESSING_FAILED";
     await dependencies.store.failScan(
       claim
         ? {

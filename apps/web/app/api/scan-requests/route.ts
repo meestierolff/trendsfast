@@ -6,7 +6,12 @@ import {
   analyticsSessionForRequest,
 } from "../../../lib/first-party-analytics";
 import { getRepositories } from "../../../lib/server-database";
-import { acceptPublicScan, isSameOrigin, PublicScanError } from "../../../lib/public-scan-service";
+import {
+  acceptPublicScan,
+  isSameOrigin,
+  publicScanCredentialModeAvailable,
+  PublicScanError,
+} from "../../../lib/public-scan-service";
 import { clientAddress } from "../../../lib/request-security";
 import { runPersistedScan } from "../../../lib/scan-processing";
 import { createTurnstileVerifier } from "../../../lib/turnstile";
@@ -20,6 +25,19 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { error: "Cross-site scan requests are not accepted." },
       { status: 403 },
+    );
+  }
+  if (
+    !publicScanCredentialModeAvailable(
+      env.PROVIDER_CREDENTIAL_MODE,
+      env.APP_URL,
+      process.env.VERCEL_ENV ?? process.env.TRENDSFAST_DEPLOYMENT_ENV,
+      process.env.VERCEL === "1",
+    )
+  ) {
+    return NextResponse.json(
+      { error: "Public scans are temporarily unavailable." },
+      { status: 503, headers: { "cache-control": "no-store" } },
     );
   }
   const parsedBody = await readBoundedJsonBody(request, 8_192);
@@ -44,6 +62,10 @@ export async function POST(request: Request) {
   }
   const repositories = getRepositories();
   const address = clientAddress(request.headers);
+  const analyticsSession =
+    env.SESSION_SECRET && env.SESSION_SECRET.length >= 32
+      ? analyticsSessionForRequest(request, env.SESSION_SECRET)
+      : null;
   try {
     const accepted = await acceptPublicScan(
       {
@@ -58,25 +80,14 @@ export async function POST(request: Request) {
         repository: repositories.scans,
         fingerprintPepper,
         dailyLimit: env.PUBLIC_SCAN_DAILY_LIMIT,
+        ...(analyticsSession
+          ? { anonymousSessionHash: analyticsSession.anonymousSessionHash }
+          : {}),
         ...(env.TURNSTILE_ENABLED && env.TURNSTILE_SECRET_KEY
           ? { turnstile: createTurnstileVerifier(env.TURNSTILE_SECRET_KEY) }
           : {}),
       },
     );
-    const analyticsSession =
-      env.SESSION_SECRET && env.SESSION_SECRET.length >= 32
-        ? analyticsSessionForRequest(request, env.SESSION_SECRET)
-        : null;
-    await repositories.analytics
-      .append({
-        name: "free_scan_submitted",
-        ...(analyticsSession
-          ? { anonymousSessionHash: analyticsSession.anonymousSessionHash }
-          : {}),
-        scanRequestId: accepted.scanRequestId,
-        properties: { reused: accepted.reused },
-      })
-      .catch(() => undefined);
     if (!accepted.reused && env.PUBLIC_SCAN_PROCESSING === "inline") {
       after(async () => {
         await runPersistedScan(accepted.token).catch(() => undefined);

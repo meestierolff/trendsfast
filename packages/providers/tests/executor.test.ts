@@ -50,6 +50,73 @@ function testAdapter(collect: ProviderAdapter["collect"]): ProviderAdapter {
 }
 
 describe("provider execution guardrails", () => {
+  it("durably reserves and settles each attempt around the external effect", async () => {
+    const order: string[] = [];
+    const collect = vi
+      .fn<ProviderAdapter["collect"]>()
+      .mockImplementationOnce(async () => {
+        order.push("collect:1");
+        throw new ProviderError("temporary", { retryable: true, code: "UPSTREAM_503" });
+      })
+      .mockImplementationOnce(async () => {
+        order.push("collect:2");
+        return {
+          provider: "hacker_news",
+          status: "SUCCESS",
+          signals: [],
+          measurements: [],
+          calls: 1,
+          quota: { used: 1 },
+          cost: { estimatedUsd: 0.02, actualUsd: 0.01 },
+          startedAt: "2026-08-11T08:00:00.000Z",
+          finishedAt: "2026-08-11T08:00:01.000Z",
+          limitations: [],
+          errors: [],
+        };
+      });
+    const beforeAttempt = vi.fn(async ({ attempt }: { attempt: number }) => {
+      order.push(`reserve:${attempt}`);
+    });
+    const afterAttempt = vi.fn(async ({ attempt }: { attempt: number }) => {
+      order.push(`settle:${attempt}`);
+    });
+
+    await executeProvider(testAdapter(collect), request, {
+      context: createProviderContext({ credentialMode: "fixture", sleep: async () => undefined }),
+      budget: new ProviderBudget(0.25),
+      circuitBreaker: new ProviderCircuitBreaker(),
+      beforeAttempt,
+      afterAttempt,
+    });
+
+    expect(order).toEqual(["reserve:1", "collect:1", "reserve:2", "collect:2", "settle:2"]);
+    expect(beforeAttempt).toHaveBeenCalledTimes(2);
+    expect(afterAttempt).toHaveBeenCalledTimes(1);
+    expect(afterAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "hacker_news",
+        attempt: 2,
+        actualCostUsd: 0.01,
+        actualQuotaUnits: 1,
+      }),
+    );
+  });
+
+  it("never calls the provider when durable attempt reservation fails", async () => {
+    const collect = vi.fn<ProviderAdapter["collect"]>();
+    await expect(
+      executeProvider(testAdapter(collect), request, {
+        context: createProviderContext({ credentialMode: "fixture" }),
+        budget: new ProviderBudget(0.25),
+        circuitBreaker: new ProviderCircuitBreaker(),
+        beforeAttempt: async () => {
+          throw new Error("durable reservation unavailable");
+        },
+      }),
+    ).rejects.toThrow(/durable reservation unavailable/i);
+    expect(collect).not.toHaveBeenCalled();
+  });
+
   it("retries retryable errors with a bounded attempt count", async () => {
     const collect = vi
       .fn<ProviderAdapter["collect"]>()
@@ -84,7 +151,9 @@ describe("provider execution guardrails", () => {
     expect(result.status).toBe("SUCCESS");
     expect(result.attempts).toBe(2);
     expect(result.calls).toBe(2);
-    expect(result.cost).toEqual({ estimatedUsd: 0.04, actualUsd: 0.03 });
+    expect(result.quota.used).toBe(1);
+    expect(result.cost).toEqual({ estimatedUsd: 0.04 });
+    expect(result.limitations).toContainEqual(expect.stringMatching(/usage.*unknown/i));
     expect(collect).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledTimes(1);
   });
@@ -107,9 +176,35 @@ describe("provider execution guardrails", () => {
     expect(result.status).toBe("BUDGET_EXCEEDED");
     expect(result.errors[0]?.code).toBe("PROVIDER_RETRY_COST_LIMIT");
     expect(result.attempts).toBe(1);
-    expect(result.cost).toEqual({ estimatedUsd: 0.02, actualUsd: 0.02 });
+    expect(result.quota.used).toBe(0);
+    expect(result.cost).toEqual({ estimatedUsd: 0.02 });
+    expect(result.limitations).toContainEqual(expect.stringMatching(/usage.*unknown/i));
     expect(collect).toHaveBeenCalledTimes(1);
     expect(budget.usedUsd).toBe(0.02);
+  });
+
+  it("never starts a retry that would cross the provider call ceiling", async () => {
+    const collect = vi
+      .fn<ProviderAdapter["collect"]>()
+      .mockRejectedValue(new ProviderError("temporary", { retryable: true, code: "UPSTREAM_503" }));
+    const adapter = testAdapter(collect);
+    adapter.metadata.maxCallsPerScan = 1;
+
+    const result = await executeProvider(adapter, request, {
+      context: createProviderContext({
+        credentialMode: "fixture",
+        sleep: async () => undefined,
+      }),
+      budget: new ProviderBudget(0.25),
+      circuitBreaker: new ProviderCircuitBreaker(),
+    });
+
+    expect(result.status).toBe("QUOTA_EXCEEDED");
+    expect(result.errors[0]?.code).toBe("PROVIDER_RETRY_CALL_LIMIT");
+    expect(result.calls).toBe(1);
+    expect(result.attempts).toBe(1);
+    expect(result.cost).toEqual({ estimatedUsd: 0.02 });
+    expect(collect).toHaveBeenCalledTimes(1);
   });
 
   it("returns a visible budget result without calling the provider", async () => {

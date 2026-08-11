@@ -318,6 +318,54 @@ export function createDatabaseProcessingStore(repositories: Repositories): Proce
       });
     },
 
+    async reserveProviderAttempt(ids, reservation, maximumCostUsd) {
+      if (!Number.isInteger(reservation.attempt) || reservation.attempt < 1) {
+        throw new Error("Provider attempt reservations require a positive attempt number");
+      }
+      return fencedMutation(repositories, ids, async (fenced) => {
+        const run = await sourceRunFor(fenced, reservation.provider, ids.runId);
+        return fenced.costs.reserveEstimatedCost({
+          scanRunId: ids.runId,
+          sourceRunId: run.id,
+          ledgerKey: `provider:${reservation.provider}:${run.id}:collect:attempt:${reservation.attempt}`,
+          provider: reservation.provider,
+          operation: `collect:attempt:${reservation.attempt}`,
+          estimatedCostUsd: reservation.estimatedCostUsd,
+          maximumCostUsd,
+          unitMetadata: {
+            accounting: "conservative_pre_call_reservation",
+            usage_status: "unknown_not_settled",
+            attempt: reservation.attempt,
+            estimated_calls: reservation.calls,
+            estimated_quota_units: reservation.quotaUnits,
+          },
+        });
+      });
+    },
+
+    async settleProviderAttempt(ids, settlement) {
+      if (!Number.isInteger(settlement.attempt) || settlement.attempt < 1) {
+        throw new Error("Provider attempt settlements require a positive attempt number");
+      }
+      return fencedMutation(repositories, ids, async (fenced) => {
+        const run = await sourceRunFor(fenced, settlement.provider, ids.runId);
+        return fenced.costs.settleEstimatedCost({
+          scanRunId: ids.runId,
+          sourceRunId: run.id,
+          ledgerKey: `provider:${settlement.provider}:${run.id}:collect:attempt:${settlement.attempt}`,
+          provider: settlement.provider,
+          expectedOperation: `collect:attempt:${settlement.attempt}`,
+          expectedUnitMetadata: { attempt: settlement.attempt },
+          ...(settlement.actualCostUsd === undefined
+            ? {}
+            : { actualCostUsd: settlement.actualCostUsd }),
+          quotaUnits: settlement.actualQuotaUnits,
+          resultStatus: settlement.status,
+          occurredAt: new Date(settlement.finishedAt),
+        });
+      });
+    },
+
     async completeProvider(provider, ids, result) {
       if (result.provider !== provider) {
         throw new Error("A provider result cannot be persisted under a different source");
@@ -327,17 +375,6 @@ export function createDatabaseProcessingStore(repositories: Repositories): Proce
         for (const signal of result.signals) {
           await fenced.scanData.upsertSignal(run.id, SignalSchema.parse(signal));
         }
-        await fenced.costs.record({
-          scanRunId: ids.runId,
-          sourceRunId: run.id,
-          ledgerKey: `${provider}:collect`,
-          provider,
-          operation: "collect",
-          estimatedCostUsd: result.cost.estimatedUsd,
-          actualCostUsd: result.cost.actualUsd ?? result.cost.estimatedUsd,
-          quotaUnits: result.quota.used,
-          occurredAt: new Date(result.finishedAt),
-        });
         await fenced.scanData.updateSourceRun({
           sourceRunId: run.id,
           state: sourceState(result),
@@ -371,6 +408,10 @@ export function createDatabaseProcessingStore(repositories: Repositories): Proce
     },
 
     async reserveModelCost(ids, reservation, maximumCostUsd) {
+      const expectedLedgerKey = `model:${reservation.operation}:attempt:${reservation.attempt}`;
+      if (reservation.ledgerKey !== expectedLedgerKey) {
+        throw new Error("A model cost reservation requires its exact operation-attempt ledger key");
+      }
       return fencedMutation(repositories, ids, (fenced) =>
         fenced.costs.reserveEstimatedCost({
           scanRunId: ids.runId,
@@ -389,6 +430,44 @@ export function createDatabaseProcessingStore(repositories: Repositories): Proce
             input_price_usd_per_million_tokens: reservation.inputUsdPerMillionTokens,
             output_price_usd_per_million_tokens: reservation.outputUsdPerMillionTokens,
           },
+        }),
+      );
+    },
+
+    async settleModelCost(ids, settlement) {
+      const expectedLedgerKey = `model:${settlement.operation}:attempt:${settlement.attempt}`;
+      if (settlement.ledgerKey !== expectedLedgerKey) {
+        throw new Error("A model cost settlement requires its exact operation-attempt ledger key");
+      }
+      if (
+        !Number.isSafeInteger(settlement.inputTokens) ||
+        settlement.inputTokens < 0 ||
+        !Number.isSafeInteger(settlement.outputTokens) ||
+        settlement.outputTokens < 0
+      ) {
+        throw new Error("A model cost settlement requires non-negative integer token usage");
+      }
+      const finishedAt = new Date(settlement.finishedAt);
+      if (!Number.isFinite(finishedAt.getTime())) {
+        throw new Error("A model cost settlement requires a valid completion time");
+      }
+      return fencedMutation(repositories, ids, (fenced) =>
+        fenced.costs.settleEstimatedCost({
+          scanRunId: ids.runId,
+          ledgerKey: settlement.ledgerKey,
+          provider: settlement.provider,
+          expectedOperation: `model:${settlement.operation}:attempt:${settlement.attempt}`,
+          expectedUnitMetadata: { model: settlement.model },
+          actualCostUsd: settlement.actualCostUsd,
+          quotaUnits: settlement.inputTokens + settlement.outputTokens,
+          resultStatus: "SUCCESS",
+          usageStatus: "model_reported_settled",
+          usageMetadata: {
+            reported_input_tokens: settlement.inputTokens,
+            reported_output_tokens: settlement.outputTokens,
+            reported_total_tokens: settlement.inputTokens + settlement.outputTokens,
+          },
+          occurredAt: finishedAt,
         }),
       );
     },

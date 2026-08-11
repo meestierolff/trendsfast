@@ -65,6 +65,22 @@ test("public source labels stay friendly while technical truth remains available
   await expect(page.getByText("UNVERIFIED", { exact: true }).first()).toBeVisible();
 });
 
+test("Founder pricing collects explicit launch consent without a public checkout link", async ({
+  page,
+}) => {
+  await page.goto("/pricing");
+
+  const founder = page.locator("#founder");
+  await expect(founder.getByLabel("Email address")).toBeVisible();
+  await expect(
+    founder.getByRole("checkbox", {
+      name: /storing this email for up to 180 days and contacting me about the Founder launch/i,
+    }),
+  ).toBeVisible();
+  await expect(founder.getByRole("button", { name: "Join the paid launch list" })).toBeVisible();
+  await expect(founder.getByRole("link", { name: /start founder/i })).toHaveCount(0);
+});
+
 test("desktop navigation exposes every launch route", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === "mobile", "Desktop-only navigation assertion");
   await page.goto("/");

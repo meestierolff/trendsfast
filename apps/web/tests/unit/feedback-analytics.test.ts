@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-const { append, record, resolveReadyScanIdentity } = vi.hoisted(() => ({
-  append: vi.fn().mockResolvedValue({}),
-  record: vi.fn().mockResolvedValue({ id: "feedback-id" }),
+const { record, resolveReadyScanIdentity } = vi.hoisted(() => ({
+  record: vi.fn().mockResolvedValue({
+    event: { id: "feedback-id", kind: "WOULD_USE" },
+    created: true,
+  }),
   resolveReadyScanIdentity: vi.fn().mockResolvedValue({
     scanRequestId: "00000000-0000-4000-8000-000000000001",
     nextMoveId: "00000000-0000-4000-8000-000000000002",
@@ -13,13 +15,13 @@ const { append, record, resolveReadyScanIdentity } = vi.hoisted(() => ({
 }));
 
 vi.mock("../../lib/server-database", () => ({
-  getRepositories: () => ({ analytics: { append }, feedback: { record } }),
+  getRepositories: () => ({ feedback: { record } }),
 }));
 vi.mock("../../lib/scan-view-service", () => ({ resolveReadyScanIdentity }));
 
 import { POST } from "../../app/api/scans/[token]/feedback/route";
 
-const origin = "http://localhost:3000";
+const origin = new URL(process.env.APP_URL ?? "http://localhost:3000").origin;
 
 async function submit(kind: string) {
   return POST(
@@ -33,22 +35,51 @@ async function submit(kind: string) {
 }
 
 beforeEach(() => {
-  append.mockClear();
-  record.mockClear();
+  record.mockReset().mockResolvedValue({
+    event: { id: "feedback-id", kind: "WOULD_USE" },
+    created: true,
+  });
   resolveReadyScanIdentity.mockClear();
 });
 
-describe("private feedback analytics vocabulary", () => {
-  it.each([
-    ["WOULD_USE", ["feedback_submitted", "move_would_use"]],
-    ["USED_OR_PUBLISHED", ["feedback_submitted", "move_used"]],
-    ["REQUEST_ANOTHER_SCAN", ["feedback_submitted", "repeat_scan_requested"]],
-    ["NOT_RELEVANT", ["feedback_submitted"]],
-  ])("maps %s only to exact launch events", async (kind, names) => {
-    const response = await submit(kind);
+describe("private feedback route", () => {
+  it.each(["WOULD_USE", "USED_OR_PUBLISHED", "REQUEST_ANOTHER_SCAN", "NOT_RELEVANT"])(
+    "accepts the %s repository-backed choice",
+    async (kind) => {
+      record.mockResolvedValueOnce({ event: { id: "feedback-id", kind }, created: true });
 
-    expect(response.status).toBe(201);
-    expect(append.mock.calls.map(([event]) => event.name)).toEqual(names);
-    expect(JSON.stringify(append.mock.calls)).not.toContain("private-token");
+      const response = await submit(kind);
+
+      expect(response.status).toBe(201);
+      expect(record).toHaveBeenCalledWith(
+        expect.objectContaining({ kind, deliveryTokenId: expect.any(String) }),
+      );
+    },
+  );
+
+  it("treats a same-kind delivery-token replay as idempotent", async () => {
+    record.mockResolvedValueOnce({
+      event: { id: "feedback-id", kind: "USED_OR_PUBLISHED" },
+      created: false,
+    });
+
+    const response = await submit("USED_OR_PUBLISHED");
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ recorded: true, duplicate: true });
+  });
+
+  it("rejects a later conflicting choice instead of claiming it was stored", async () => {
+    record.mockResolvedValueOnce({
+      event: { id: "feedback-id", kind: "WOULD_USE" },
+      created: false,
+    });
+
+    const response = await submit("NOT_RELEVANT");
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: "Feedback was already recorded for this result.",
+    });
   });
 });

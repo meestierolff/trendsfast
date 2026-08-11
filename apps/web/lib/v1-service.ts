@@ -17,6 +17,16 @@ function statusUrl(id: string): string {
   return `${loadEnv().APP_URL.replace(/\/$/, "")}/v1/next-moves/${encodeURIComponent(id)}`;
 }
 
+export const FOUNDER_RESULT_HISTORY_MS = 30 * 24 * 60 * 60 * 1_000;
+
+export function isWithinFounderResultHistory(createdAt: Date, now = new Date()): boolean {
+  return (
+    !Number.isNaN(createdAt.getTime()) &&
+    createdAt <= now &&
+    createdAt >= new Date(now.getTime() - FOUNDER_RESULT_HISTORY_MS)
+  );
+}
+
 async function responseFor(
   principal: ApiPrincipal,
   id: string,
@@ -25,6 +35,15 @@ async function responseFor(
   const status = await getRepositories().scans.getStatusByPublicId(id);
   if (!status || status.request.apiKeyId !== principal.apiKeyId) return null;
   if (principal.projectId && status.request.projectId !== principal.projectId) return null;
+  if (principal.environment === "live") {
+    if (
+      !principal.projectId ||
+      !(await getRepositories().founderUsage.isProjectEntitled(principal.projectId)) ||
+      !isWithinFounderResultHistory(status.request.createdAt)
+    ) {
+      return null;
+    }
+  }
 
   if (status.request.state === "FAILED") {
     return NextMoveStatusResponseSchema.parse({

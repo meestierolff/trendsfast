@@ -154,7 +154,8 @@ export async function verifyProviderReadback(input: {
         .filter((url): url is string => url !== null),
     ),
   ].slice(0, adapter.metadata.maxResultsPerScan);
-  const verified = result.status === "SUCCESS" && canonicalUrls.length > 0;
+  const verified =
+    health.status === "HEALTHY" && result.status === "SUCCESS" && canonicalUrls.length > 0;
   const firstError = result.errors[0];
   return {
     ...base(adapter, context),
@@ -169,7 +170,11 @@ export async function verifyProviderReadback(input: {
     limitations: [
       ...(health.message ? [health.message] : []),
       ...result.limitations,
-      ...(verified ? [] : ["No canonical original source URL was verified by this read-back."]),
+      ...(verified
+        ? []
+        : health.status === "DEGRADED" && canonicalUrls.length > 0
+          ? ["The source read-back returned canonical URLs, but provider health was degraded."]
+          : ["No canonical original source URL was verified by this read-back."]),
     ],
     ...(firstError?.code ? { failureCode: firstError.code } : {}),
     ...(firstError?.message ? { failureMessage: firstError.message } : {}),

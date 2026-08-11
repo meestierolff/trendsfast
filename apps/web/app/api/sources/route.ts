@@ -9,7 +9,7 @@ export async function GET() {
     { sources },
     {
       headers: {
-        "cache-control": "public, max-age=0, s-maxage=60, stale-while-revalidate=300",
+        "cache-control": "private, no-store, max-age=0",
         "x-content-type-options": "nosniff",
       },
     },

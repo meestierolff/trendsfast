@@ -89,7 +89,6 @@ export async function POST(request: Request) {
       {
         secret,
         interests: repositories.founderLaunchInterests,
-        analytics: repositories.analytics,
         now,
       },
     );

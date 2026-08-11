@@ -1,4 +1,4 @@
-import { and, count, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, count, desc, eq, gt, gte, inArray, lt, lte, sql } from "drizzle-orm";
 
 import type { TrendsFastDatabase } from "../client";
 import { founderUsageEvents, projectEntitlements, scanRequests, subscriptions } from "../schema";
@@ -162,6 +162,22 @@ export class FounderUsageRepository {
       )
       .limit(1);
     return event ?? null;
+  }
+
+  async isProjectEntitled(projectId: string, now = new Date()) {
+    const [entitlement] = await this.db
+      .select({ projectId: projectEntitlements.projectId })
+      .from(projectEntitlements)
+      .where(
+        and(
+          eq(projectEntitlements.projectId, projectId),
+          eq(projectEntitlements.active, true),
+          gt(projectEntitlements.periodEnd, now),
+          lte(projectEntitlements.periodStart, now),
+        ),
+      )
+      .limit(1);
+    return Boolean(entitlement);
   }
 
   async listHistory(projectId: string, now = new Date(), limit = 100) {

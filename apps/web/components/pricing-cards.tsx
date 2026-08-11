@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { SITE_GITHUB_URL } from "../lib/site";
+import { FounderLaunchInterestForm } from "./founder-launch-interest-form";
 
 const free = [
   "One founder-reviewed scan",
@@ -41,25 +42,11 @@ function FeatureList({ items }: { items: readonly string[] }) {
   );
 }
 
-function safeCheckoutHref(value: string | undefined): string | null {
-  if (!value) return null;
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" ? url.toString() : null;
-  } catch {
-    return null;
-  }
-}
-
 export function PricingCards({
-  paidEnabled = false,
-  paidHref,
+  launchInterestSource,
 }: {
-  paidEnabled?: boolean;
-  paidHref?: string;
+  launchInterestSource: "homepage" | "pricing";
 }) {
-  const checkoutHref = safeCheckoutHref(paidHref);
-  const checkoutAvailable = paidEnabled && checkoutHref !== null;
   return (
     <div className="pricing-grid">
       <article className="pricing-card">
@@ -82,15 +69,17 @@ export function PricingCards({
         <p>Planned managed monitoring for one product, with bounded research usage.</p>
         <FeatureList items={founder} />
         <p className="pricing-limit">Not unlimited scan creation.</p>
-        {checkoutAvailable ? (
-          <a className="button button-primary" href={checkoutHref}>
-            Start Founder <span aria-hidden="true">→</span>
-          </a>
-        ) : (
-          <span className="button button-muted" aria-disabled="true">
-            Join the paid launch list
-          </span>
-        )}
+        <FounderLaunchInterestForm
+          source={launchInterestSource}
+          consentLabel="I consent to TrendsFast storing this email for up to 180 days and contacting me about the Founder launch."
+          submitLabel="Join the paid launch list"
+          successMessage="Saved. We’ll contact you when Founder access is ready."
+          errorMessage="We couldn’t save your request. Please try again."
+          className="launch-interest-form"
+        />
+        <p className="launch-interest-note">
+          Launch updates only · No card · Contact expires after 180 days
+        </p>
       </article>
 
       <article className="pricing-card">

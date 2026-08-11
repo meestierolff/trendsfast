@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { afterAll, describe, expect, it } from "vitest";
 
 import {
@@ -67,6 +67,7 @@ databaseDescribe("launch analytics and consented interest durability", () => {
     const now = new Date("2026-08-11T12:00:00.000Z");
     const email = `launch-${randomUUID()}@example.com`;
     const emailHash = randomUUID().replaceAll("-", "").repeat(2);
+    const anonymousSessionHash = randomUUID().replaceAll("-", "").repeat(2);
     const created = await repositories.founderLaunchInterests.create({
       normalizedEmail: email,
       emailHash,
@@ -74,6 +75,7 @@ databaseDescribe("launch analytics and consented interest durability", () => {
       consentedAt: now,
       source: "pricing",
       expiresAt: new Date("2027-02-07T12:00:00.000Z"),
+      anonymousSessionHash,
     });
     interestIds.push(created.id);
     const duplicate = await repositories.founderLaunchInterests.create({
@@ -83,8 +85,21 @@ databaseDescribe("launch analytics and consented interest durability", () => {
       consentedAt: new Date("2026-08-12T12:00:00.000Z"),
       source: "homepage",
       expiresAt: new Date("2027-02-08T12:00:00.000Z"),
+      anonymousSessionHash,
     });
     expect(duplicate).toEqual({ id: created.id, created: false });
+    const joinedEvents = await client.db
+      .select()
+      .from(analyticsEvents)
+      .where(
+        and(
+          eq(analyticsEvents.name, "beta_waitlist_joined"),
+          eq(analyticsEvents.anonymousSessionHash, anonymousSessionHash),
+        ),
+      );
+    expect(joinedEvents).toHaveLength(1);
+    expect(joinedEvents[0]?.properties).toEqual({ source: "pricing" });
+    if (joinedEvents[0]?.dedupeKey) dedupeKeys.push(joinedEvents[0].dedupeKey);
     const listed = await repositories.founderLaunchInterests.list({
       now: new Date("2026-08-13T12:00:00.000Z"),
     });
@@ -111,6 +126,7 @@ databaseDescribe("launch analytics and consented interest durability", () => {
   it("purges expired contact PII while retaining a non-PII audit", async () => {
     const id = randomUUID();
     const email = `expired-${id}@example.com`;
+    const anonymousSessionHash = randomUUID().replaceAll("-", "").repeat(2);
     const created = await repositories.founderLaunchInterests.create({
       normalizedEmail: email,
       emailHash: randomUUID().replaceAll("-", "").repeat(2),
@@ -118,8 +134,14 @@ databaseDescribe("launch analytics and consented interest durability", () => {
       consentedAt: new Date("2026-01-01T00:00:00.000Z"),
       source: "pricing",
       expiresAt: new Date("2026-06-30T00:00:00.000Z"),
+      anonymousSessionHash,
     });
     interestIds.push(created.id);
+    const [joinedEvent] = await client.db
+      .select({ dedupeKey: analyticsEvents.dedupeKey })
+      .from(analyticsEvents)
+      .where(eq(analyticsEvents.anonymousSessionHash, anonymousSessionHash));
+    if (joinedEvent?.dedupeKey) dedupeKeys.push(joinedEvent.dedupeKey);
 
     const purged = await repositories.founderLaunchInterests.purgeExpired({
       now: new Date("2026-08-11T12:00:00.000Z"),
@@ -184,5 +206,30 @@ databaseDescribe("launch analytics and consented interest durability", () => {
     );
     expect(purged.deletedAnalyticsEvents).toBeGreaterThanOrEqual(3);
     expect(purged.deletedScanRequests).toBeGreaterThanOrEqual(1);
+  });
+
+  it("drains more than one bounded interest batch and reports no hidden backlog", async () => {
+    const runId = randomUUID();
+    const expired = await client.db
+      .insert(founderLaunchInterests)
+      .values(
+        Array.from({ length: 501 }, (_, index) => ({
+          email: `expired-batch-${index}-${runId}@example.com`,
+          emailHash: createHash("sha256").update(`${runId}:${index}`).digest("hex"),
+          consentVersion: "founder-launch-v1",
+          consentedAt: new Date("2026-01-01T00:00:00.000Z"),
+          source: "pricing" as const,
+          expiresAt: new Date("2026-06-30T00:00:00.000Z"),
+        })),
+      )
+      .returning({ id: founderLaunchInterests.id });
+    interestIds.push(...expired.map((interest) => interest.id));
+
+    const purged = await repositories.privacy.purgeExpired(
+      new Date("2026-08-11T12:00:00.000Z"),
+      30,
+    );
+    expect(purged.deletedFounderLaunchInterests).toBeGreaterThanOrEqual(501);
+    expect(purged.remainingExpiredFounderLaunchInterests).toBe(0);
   });
 });

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { analyticsDedupeKey, derivePrivacyHash } from "./first-party-analytics";
+import { derivePrivacyHash } from "./first-party-analytics";
 
 export const FOUNDER_LAUNCH_BODY_MAX_BYTES = 512;
 export const FOUNDER_LAUNCH_CONSENT_VERSION = "founder-launch-v1";
@@ -36,17 +36,8 @@ export type FounderLaunchInterestWriter = {
     consentedAt: Date;
     source: "homepage" | "pricing";
     expiresAt: Date;
-  }): Promise<{ id: string; created: boolean }>;
-};
-
-export type FounderLaunchAnalyticsWriter = {
-  appendOnce(input: {
-    name: "beta_waitlist_joined";
     anonymousSessionHash: string;
-    dedupeKey: string;
-    properties: { source: "homepage" | "pricing" };
-    occurredAt: Date;
-  }): Promise<unknown>;
+  }): Promise<{ id: string; created: boolean }>;
 };
 
 export async function acceptFounderLaunchInterest(
@@ -58,7 +49,6 @@ export async function acceptFounderLaunchInterest(
   dependencies: {
     secret: string;
     interests: FounderLaunchInterestWriter;
-    analytics: FounderLaunchAnalyticsWriter;
     now?: Date;
   },
 ): Promise<{ joined: true }> {
@@ -71,34 +61,15 @@ export async function acceptFounderLaunchInterest(
     normalizedEmail,
   );
   const expiresAt = new Date(now.getTime() + FOUNDER_LAUNCH_RETENTION_DAYS * 24 * 60 * 60 * 1_000);
-  const interest = await dependencies.interests.create({
+  await dependencies.interests.create({
     normalizedEmail,
     emailHash,
     consentVersion: FOUNDER_LAUNCH_CONSENT_VERSION,
     consentedAt: now,
     source: input.source,
     expiresAt,
+    anonymousSessionHash: input.anonymousSessionHash,
   });
-
-  if (interest.created) {
-    const dedupeKey = analyticsDedupeKey({
-      secret: dependencies.secret,
-      sessionHash: input.anonymousSessionHash,
-      event: "beta_waitlist_joined",
-      entityScope: `interest:${interest.id}`,
-      now,
-      windowMs: FOUNDER_LAUNCH_RETENTION_DAYS * 24 * 60 * 60 * 1_000,
-    });
-    await dependencies.analytics
-      .appendOnce({
-        name: "beta_waitlist_joined",
-        anonymousSessionHash: input.anonymousSessionHash,
-        dedupeKey,
-        properties: { source: input.source },
-        occurredAt: now,
-      })
-      .catch(() => undefined);
-  }
 
   return { joined: true };
 }

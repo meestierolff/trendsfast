@@ -184,9 +184,15 @@ export function OpsQueue({
                     <span data-health="clear">No recorded failure</span>
                     <strong>
                       {item.run
-                        ? `$${Number(item.run.actualCostUsd).toFixed(4)} actual / $${Number(item.run.estimatedCostUsd).toFixed(4)} estimated`
+                        ? `$${Number(item.run.actualCostUsd).toFixed(4)} provider-reported subtotal · $${Number(item.run.estimatedCostUsd).toFixed(4)} reserved estimate`
                         : "Awaiting run"}
                     </strong>
+                    {item.run ? (
+                      <small>
+                        Unsettled provider or model reservations are excluded from the reported
+                        subtotal.
+                      </small>
+                    ) : null}
                     {item.run?.sourceCoverage ? (
                       <small>
                         {Object.entries(item.run.sourceCoverage)

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 
 import { createPrefixedId, redactRecord, redactSecrets } from "@trendsfast/core";
 import {
@@ -599,20 +599,51 @@ export class ScanDataRepository {
     verified?: boolean;
   }) {
     return this.db.transaction(async (tx) => {
+      const [identity] = await tx
+        .select({
+          id: nextMoves.id,
+          scanRequestId: nextMoves.scanRequestId,
+          scanRunId: nextMoves.scanRunId,
+        })
+        .from(nextMoves)
+        .where(eq(nextMoves.id, input.nextMoveId))
+        .limit(1);
+      if (!identity) throw new Error("Next Move was not found");
+      await tx.execute(
+        sql`SELECT id FROM scan_requests WHERE id = ${identity.scanRequestId} FOR UPDATE`,
+      );
+      await tx.execute(sql`SELECT id FROM scan_runs WHERE id = ${identity.scanRunId} FOR UPDATE`);
+      await tx.execute(sql`SELECT id FROM next_moves WHERE id = ${identity.id} FOR UPDATE`);
       const [stored] = await tx
-        .select({ signal: signals, sourceRun: sourceRuns, move: nextMoves })
+        .select({
+          signal: signals,
+          sourceRun: sourceRuns,
+          move: nextMoves,
+          requestState: scanRequests.state,
+          runState: scanRuns.state,
+        })
         .from(signals)
         .innerJoin(sourceRuns, eq(signals.sourceRunId, sourceRuns.id))
         .innerJoin(nextMoves, eq(nextMoves.id, input.nextMoveId))
-        .where(
-          and(
-            eq(signals.id, input.signalId),
-            eq(sourceRuns.scanRunId, nextMoves.scanRunId),
-          ),
-        )
+        .innerJoin(scanRequests, eq(scanRequests.id, nextMoves.scanRequestId))
+        .innerJoin(scanRuns, eq(scanRuns.id, nextMoves.scanRunId))
+        .where(and(eq(signals.id, input.signalId), eq(sourceRuns.scanRunId, nextMoves.scanRunId)))
         .limit(1);
       if (!stored) {
         throw new Error("Evidence must reference a stored signal from the same scan run");
+      }
+      const processingBind =
+        stored.requestState === "RUNNING" &&
+        stored.runState === "RUNNING" &&
+        stored.move.state === "DRAFT" &&
+        input.reviewerId === undefined &&
+        input.verified !== true;
+      const founderReviewBind =
+        stored.requestState === "REVIEW_REQUIRED" &&
+        stored.runState === "REVIEW_REQUIRED" &&
+        stored.move.state === "DRAFT";
+      if (!processingBind && !founderReviewBind) {
+        throw new Error("Evidence can only be bound to a founder review draft");
       }
       const verified = input.verified ?? false;
       const [receipt] = await tx

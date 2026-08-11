@@ -22,6 +22,11 @@ import {
 } from "../lib/marketing-content";
 import { absoluteUrl, DEFAULT_DESCRIPTION, SITE_GITHUB_URL } from "../lib/site";
 
+// Source verification is durable operational state. Never freeze its public
+// projection into a build artifact; each request must observe the latest
+// production read-back (and any later degradation).
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   alternates: { canonical: absoluteUrl("/") },
   openGraph: { url: absoluteUrl("/") },
@@ -85,9 +90,6 @@ export default function HomePage() {
     "I’m running free trend and distribution scans for technical founders.";
   const videoUrl = process.env.NEXT_PUBLIC_DEMO_VIDEO_URL;
   const captionsUrl = process.env.NEXT_PUBLIC_DEMO_CAPTIONS_URL;
-  const paidHref = process.env.NEXT_PUBLIC_FOUNDER_CHECKOUT_URL;
-  const paidEnabled =
-    process.env.BILLING_ENABLED === "true" && process.env.PAID_MONITORING_ENABLED === "true";
 
   return (
     <>
@@ -391,7 +393,7 @@ export default function HomePage() {
             monitoring stays bounded by real research and provider cost.
           </p>
         </div>
-        <PricingCards paidEnabled={paidEnabled} {...(paidHref ? { paidHref } : {})} />
+        <PricingCards launchInterestSource="homepage" />
       </section>
 
       <section className="faq-section section-pad">

@@ -1771,6 +1771,82 @@ pre:focus-visible,
   font-size: 0.66rem;
 }
 
+.launch-interest-form {
+  display: grid;
+  gap: 14px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.launch-interest-email {
+  display: grid;
+  gap: 8px;
+  color: var(--text-1);
+  font-size: 0.74rem;
+  font-weight: 750;
+}
+
+.launch-interest-email input {
+  width: 100%;
+  min-height: 46px;
+  padding: 0 13px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  color: var(--text-1);
+  background: var(--bg-1);
+  font: inherit;
+}
+
+.launch-interest-email input:focus-visible {
+  border-color: var(--cyan);
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
+.launch-interest-consent {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  align-items: start;
+  gap: 10px;
+  color: var(--text-2);
+  font-size: 0.7rem;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.launch-interest-consent input {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--lime);
+}
+
+.launch-interest-form .button {
+  width: 100%;
+  border: 1px solid var(--lime);
+  cursor: pointer;
+}
+
+.launch-interest-form .button:disabled {
+  cursor: wait;
+  opacity: 0.64;
+}
+
+.launch-interest-status {
+  min-height: 1.5em;
+  margin: 0;
+  color: var(--cyan);
+  font-size: 0.7rem;
+}
+
+.pricing-card .launch-interest-note {
+  margin: 2px 0 0;
+  color: var(--text-3);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.62rem;
+  text-align: center;
+}
+
 .faq-list {
   border-top: 1px solid var(--line);
 }

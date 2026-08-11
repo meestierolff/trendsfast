@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createManualEvidenceAdapter,
   createProviderContext,
+  createWebsiteAdapter,
   verifyProviderReadback,
   type ProviderAdapter,
 } from "../src/index";
@@ -95,6 +96,82 @@ describe("provider read-back verification", () => {
       readbackVerified: true,
       canonicalUrls: ["https://example.com/evidence"],
       actualCostUsd: 0,
+    });
+  });
+
+  it("keeps a successful canonical read-back degraded when provider health is degraded", async () => {
+    const baseAdapter = createManualEvidenceAdapter();
+    const adapter: ProviderAdapter = {
+      ...baseAdapter,
+      healthCheck: async () => ({
+        status: "DEGRADED",
+        checkedAt: now.toISOString(),
+        message: "Provider latency exceeded the healthy threshold.",
+      }),
+    };
+    const result = await verifyProviderReadback({
+      adapter,
+      context: createProviderContext({
+        credentialMode: "managed",
+        now: () => now,
+        resolveDns: async () => [{ address: "93.184.216.34", family: 4 }],
+      }),
+      request: {
+        scanId: "verify_degraded",
+        queries: [],
+        manualEvidence: [
+          {
+            url: "https://example.com/evidence",
+            sourceLabel: "Founder observation",
+            title: "A current public signal",
+            reason: "This directly supports the proposed reply.",
+            reviewedBy: "founder:test",
+          },
+        ],
+      },
+      maximumCostUsd: 0.25,
+      deadline: new Date(now.getTime() + 1_000),
+    });
+
+    expect(result).toMatchObject({
+      state: "DEGRADED",
+      healthStatus: "DEGRADED",
+      readbackVerified: false,
+      canonicalUrls: ["https://example.com/evidence"],
+    });
+    expect(result.limitations).toContain(
+      "The source read-back returned canonical URLs, but provider health was degraded.",
+    );
+  });
+
+  it("can verify a bounded website read-back after the safety preflight is healthy", async () => {
+    const adapter = createWebsiteAdapter();
+    const result = await verifyProviderReadback({
+      adapter,
+      context: createProviderContext({
+        credentialMode: "managed",
+        now: () => now,
+        resolveDns: async () => [{ address: "93.184.216.34", family: 4 }],
+        websiteTransport: async () =>
+          new Response(
+            "<title>TrendsFast</title><main>Evidence-backed distribution for founders.</main>",
+            { headers: { "content-type": "text/html" } },
+          ),
+      }),
+      request: {
+        scanId: "verify_website",
+        productUrl: "https://trendsfast.com",
+        queries: [],
+      },
+      maximumCostUsd: 0.25,
+      deadline: new Date(now.getTime() + 1_000),
+    });
+
+    expect(result).toMatchObject({
+      state: "VERIFIED",
+      healthStatus: "HEALTHY",
+      readbackVerified: true,
+      canonicalUrls: ["https://trendsfast.com/"],
     });
   });
 

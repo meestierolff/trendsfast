@@ -117,15 +117,29 @@ databaseDescribe("persisted fixture scan", () => {
         afterManual?.evidence.find((receipt) => receipt.id === manual.receipt.id)?.bindingRole,
       ).toBe("SUPPLEMENTAL");
 
-      const receipt = pending.evidence[0];
-      if (!receipt) throw new Error("An actionable move requires persisted evidence");
-      await repositories.scanData.bindEvidence({
-        nextMoveId: pending.move.id,
-        signalId: receipt.signalId,
-        reason: receipt.reason,
-        reviewerId: "integration-founder",
-        verified: true,
-      });
+      const decisionReceipts = pending.evidence.filter(
+        (receipt) => receipt.bindingRole === "DECISION_SUPPORT",
+      );
+      if (decisionReceipts.length === 0) {
+        throw new Error("An actionable move requires persisted decision-support evidence");
+      }
+      for (const [index, receipt] of decisionReceipts.entries()) {
+        await repositories.scanData.bindEvidence({
+          nextMoveId: pending.move.id,
+          signalId: receipt.signalId,
+          reason: receipt.reason,
+          reviewerId: "integration-founder",
+          verified: true,
+        });
+        if (index === 0 && decisionReceipts.length > 1) {
+          await expect(
+            repositories.reviews.approve({
+              nextMoveId: pending.move.id,
+              reviewerId: "integration-founder",
+            }),
+          ).rejects.toThrow(/every decision-support receipt/i);
+        }
+      }
     }
     await repositories.reviews.approve({
       nextMoveId: pending.move.id,
@@ -143,6 +157,34 @@ databaseDescribe("persisted fixture scan", () => {
     expect(result?.move.state).toBe("READY");
     expect(result?.move.founderReviewed).toBe(true);
     expect(result?.move.autoPublish).toBe(false);
+
+    await expect(
+      repositories.reviews.convertToWait({
+        nextMoveId: pending.move.id,
+        reviewerId: "stale-integration-founder",
+        reason: "A stale review action must not rewrite a delivered move.",
+        validUntil: new Date(Date.now() + 86_400_000),
+      }),
+    ).rejects.toThrow(/review draft/i);
+    const deliveredReceipt = pending.evidence[0];
+    if (deliveredReceipt) {
+      await expect(
+        repositories.scanData.bindEvidence({
+          nextMoveId: pending.move.id,
+          signalId: deliveredReceipt.signalId,
+          reason: "A stale evidence verification must not rewrite a delivered receipt.",
+          reviewerId: "stale-integration-founder",
+          verified: true,
+        }),
+      ).rejects.toThrow(/review draft/i);
+      await expect(
+        repositories.reviews.rejectEvidence({
+          evidenceReceiptId: deliveredReceipt.id,
+          reviewerId: "stale-integration-founder",
+          reason: "A stale evidence rejection must not rewrite a delivered receipt.",
+        }),
+      ).rejects.toThrow(/review draft/i);
+    }
 
     const retried = await processScan(publicId, dependencies);
     expect(retried.state).toBe("READY");

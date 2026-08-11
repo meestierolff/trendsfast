@@ -795,6 +795,7 @@ export const feedbackEvents = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
+    uniqueIndex("feedback_events_delivery_token_uidx").on(table.deliveryTokenId),
     index("feedback_events_move_created_idx").on(table.nextMoveId, table.createdAt),
     index("feedback_events_kind_created_idx").on(table.kind, table.createdAt),
     check(
@@ -936,22 +937,13 @@ export const founderLaunchInterests = pgTable(
       "founder_launch_interests_email_normalized_check",
       sql`${table.email} = lower(btrim(${table.email})) AND position('@' in ${table.email}) > 1`,
     ),
-    check(
-      "founder_launch_interests_email_hash_check",
-      sql`${table.emailHash} ~ '^[0-9a-f]{64}$'`,
-    ),
+    check("founder_launch_interests_email_hash_check", sql`${table.emailHash} ~ '^[0-9a-f]{64}$'`),
     check(
       "founder_launch_interests_consent_version_check",
       sql`${table.consentVersion} = 'founder-launch-v1'`,
     ),
-    check(
-      "founder_launch_interests_source_check",
-      sql`${table.source} IN ('homepage','pricing')`,
-    ),
-    check(
-      "founder_launch_interests_expiry_check",
-      sql`${table.expiresAt} > ${table.consentedAt}`,
-    ),
+    check("founder_launch_interests_source_check", sql`${table.source} IN ('homepage','pricing')`),
+    check("founder_launch_interests_expiry_check", sql`${table.expiresAt} > ${table.consentedAt}`),
   ],
 );
 
@@ -1377,10 +1369,7 @@ export const monitoringRuns = pgTable(
   },
   (table) => [
     uniqueIndex("monitoring_runs_idempotency_uidx").on(table.idempotencyKey),
-    uniqueIndex("monitoring_runs_slot_uidx").on(
-      table.monitoringSubscriptionId,
-      table.scheduledFor,
-    ),
+    uniqueIndex("monitoring_runs_slot_uidx").on(table.monitoringSubscriptionId, table.scheduledFor),
     uniqueIndex("monitoring_runs_one_open_uidx")
       .on(table.monitoringSubscriptionId)
       .where(sql`${table.state} = 'PROCESSING'`),

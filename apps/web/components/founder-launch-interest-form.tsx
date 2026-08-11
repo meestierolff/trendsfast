@@ -49,7 +49,7 @@ export function FounderLaunchInterestForm({
 
   return (
     <form className={className} onSubmit={submit}>
-      <label>
+      <label className="launch-interest-email">
         <span>Email address</span>
         <input
           name="email"
@@ -68,7 +68,7 @@ export function FounderLaunchInterestForm({
         autoComplete="off"
         aria-hidden="true"
       />
-      <label>
+      <label className="launch-interest-consent">
         <input
           name="consent"
           type="checkbox"
@@ -78,10 +78,14 @@ export function FounderLaunchInterestForm({
         />
         <span>{consentLabel}</span>
       </label>
-      <button type="submit" disabled={state === "pending" || state === "success"}>
+      <button
+        className="button button-primary"
+        type="submit"
+        disabled={state === "pending" || state === "success"}
+      >
         {state === "pending" ? "Saving…" : submitLabel}
       </button>
-      <p aria-live="polite">
+      <p className="launch-interest-status" aria-live="polite">
         {state === "success" ? successMessage : null}
         {state === "error" ? errorMessage : null}
       </p>

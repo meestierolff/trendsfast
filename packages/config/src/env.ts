@@ -1,6 +1,8 @@
 import { z } from "zod";
 
 const DEFAULT_DATABASE_URL = "postgresql://trendsfast:trendsfast_local@localhost:54329/trendsfast";
+const MONITORING_ROUTE_MAX_SECONDS = 300;
+const MONITORING_ROUTE_BUFFER_SECONDS = 30;
 
 const emptyToUndefined = (value: unknown) =>
   typeof value === "string" && value.trim() === "" ? undefined : value;
@@ -201,11 +203,16 @@ export const EnvironmentSchema = z
           message: "Live credential modes require Google Trends credentials",
         });
       }
-      if (!env.XAI_API_KEY && !env.TAVILY_API_KEY) {
+      const hasViableXSearch = Boolean(
+        env.XAI_API_KEY && env.XAI_MODEL && env.XAI_MAX_TOOL_CALLS_PER_SCAN > 0,
+      );
+      const hasViableTavily = Boolean(env.TAVILY_API_KEY && env.TAVILY_MAX_CREDITS_PER_SCAN > 0);
+      if (!hasViableXSearch && !hasViableTavily) {
         context.addIssue({
           code: "custom",
           path: ["TAVILY_API_KEY"],
-          message: "Live credential modes require at least X or Tavily coverage",
+          message:
+            "Live credential modes require a usable X Search model or Tavily credential with a nonzero request cap",
         });
       }
       if (env.LLM_PROVIDER === "xai") {
@@ -339,12 +346,24 @@ export const EnvironmentSchema = z
     }
     if (
       env.PAID_MONITORING_ENABLED &&
-      env.MONITORING_LEASE_SECONDS < env.MAX_SCAN_DURATION_SECONDS + 30
+      env.MONITORING_LEASE_SECONDS < env.MAX_SCAN_DURATION_SECONDS + MONITORING_ROUTE_BUFFER_SECONDS
     ) {
       context.addIssue({
         code: "custom",
         path: ["MONITORING_LEASE_SECONDS"],
         message: "Paid monitoring lease must exceed the scan deadline by at least 30 seconds",
+      });
+    }
+    if (
+      env.PAID_MONITORING_ENABLED &&
+      env.MAX_SCAN_DURATION_SECONDS * env.MONITORING_CRON_BATCH_SIZE +
+        MONITORING_ROUTE_BUFFER_SECONDS >
+        MONITORING_ROUTE_MAX_SECONDS
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["MONITORING_CRON_BATCH_SIZE"],
+        message: "Paid monitoring batch deadlines plus cleanup must fit the 300-second cron route",
       });
     }
 
