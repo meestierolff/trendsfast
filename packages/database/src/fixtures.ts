@@ -1,0 +1,35 @@
+export const FIXTURE_IDS = {
+  project: "00000000-0000-4000-8000-000000000001",
+  context: "00000000-0000-4000-8000-000000000002",
+  apiKey: "00000000-0000-4000-8000-000000000003",
+  scanRequest: "00000000-0000-4000-8000-000000000004",
+  scanRun: "00000000-0000-4000-8000-000000000005",
+  websiteRun: "00000000-0000-4000-8000-000000000010",
+  trendsRun: "00000000-0000-4000-8000-000000000011",
+  hackerNewsRun: "00000000-0000-4000-8000-000000000012",
+  githubRun: "00000000-0000-4000-8000-000000000013",
+  websiteSignal: "00000000-0000-4000-8000-000000000020",
+  trendsSignal: "00000000-0000-4000-8000-000000000021",
+  hackerNewsSignal: "00000000-0000-4000-8000-000000000022",
+  githubSignal: "00000000-0000-4000-8000-000000000023",
+  cluster: "00000000-0000-4000-8000-000000000030",
+  opportunity: "00000000-0000-4000-8000-000000000031",
+  nextMove: "00000000-0000-4000-8000-000000000040",
+  evidenceTrends: "00000000-0000-4000-8000-000000000041",
+  evidenceHackerNews: "00000000-0000-4000-8000-000000000042",
+  evidenceGithub: "00000000-0000-4000-8000-000000000043",
+  reviewEvent: "00000000-0000-4000-8000-000000000050",
+  deliveryToken: "00000000-0000-4000-8000-000000000060",
+  costWebsite: "00000000-0000-4000-8000-000000000070",
+  costTrends: "00000000-0000-4000-8000-000000000071",
+  costHackerNews: "00000000-0000-4000-8000-000000000072",
+  costGithub: "00000000-0000-4000-8000-000000000073",
+  analyticsDelivered: "00000000-0000-4000-8000-000000000080",
+} as const;
+
+/** Publicly documented local-demo credentials. Never use them outside fixture mode. */
+export const FIXTURE_API_KEY = "tf_test_fixture1.fixture-only-key-not-for-production-000000000000";
+export const FIXTURE_DELIVERY_TOKEN =
+  "scan_fixture1.fixture-demo-token-not-for-production-000000000000";
+export const FIXTURE_SCAN_PUBLIC_ID = "scan_fixture_trendsfast";
+export const FIXTURE_MOVE_PUBLIC_ID = "move_fixture_trendsfast";

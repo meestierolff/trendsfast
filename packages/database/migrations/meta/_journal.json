@@ -1,0 +1,62 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1786417941724,
+      "tag": "0000_fixture_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1786419347422,
+      "tag": "0001_retry_idempotency",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786419599010,
+      "tag": "0002_signal_run_ownership",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1786421477002,
+      "tag": "0003_api_idempotency_payload_digest",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786421659047,
+      "tag": "0004_api-key-expiry",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786424679193,
+      "tag": "0005_processing_fence",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786424950256,
+      "tag": "0006_api_auth_admission",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786426915339,
+      "tag": "0007_api_cost_admission",
+      "breakpoints": true
+    }
+  ]
+}

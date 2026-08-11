@@ -1,0 +1,1 @@
+ALTER TABLE "scan_requests" ADD COLUMN "request_payload_hash" varchar(200);

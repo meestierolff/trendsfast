@@ -1,0 +1,27 @@
+{
+  "name": "@trendsfast/database",
+  "version": "0.1.0-alpha.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./migrate": "./src/migrate.ts",
+    "./purge": "./src/purge.ts",
+    "./seed": "./src/seed.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src tests"
+  },
+  "dependencies": {
+    "@trendsfast/config": "workspace:*",
+    "@trendsfast/core": "workspace:*",
+    "@trendsfast/schemas": "workspace:*",
+    "dotenv": "^17.4.2",
+    "drizzle-orm": "^0.44.0",
+    "pg": "^8.0.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.0.0",
+    "typescript": "^5.9.0"
+  }
+}

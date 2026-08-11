@@ -1,0 +1,3 @@
+ALTER TABLE "scan_requests" ADD COLUMN "api_cost_reservation_usd" numeric(10, 6) DEFAULT '0' NOT NULL;--> statement-breakpoint
+CREATE INDEX "scan_requests_api_cost_window_idx" ON "scan_requests" USING btree ("api_key_id","submitted_at");--> statement-breakpoint
+ALTER TABLE "scan_requests" ADD CONSTRAINT "scan_requests_api_cost_reservation_nonnegative_check" CHECK ("scan_requests"."api_cost_reservation_usd" >= 0);
