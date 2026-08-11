@@ -180,7 +180,7 @@ databaseDescribe("paid monitoring claims", () => {
       leaseSeconds: 300,
       leaseOwner: "worker-before-revocation",
     });
-    expect(claim).toBeDefined();
+    expect(claim).toMatchObject({ projectId });
 
     await repositories.billing.projectWebhook({
       event: {
