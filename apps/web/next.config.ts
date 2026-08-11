@@ -4,12 +4,30 @@ import type { NextConfig } from "next";
 const isProduction = process.env.NODE_ENV === "production";
 const isHttpsDeployment = process.env.APP_URL?.startsWith("https://") ?? false;
 
+function configuredMediaOrigin(value: string | undefined): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password ? url.origin : null;
+  } catch {
+    // Relative media URLs are already covered by 'self'.
+    return null;
+  }
+}
+
+const externalMediaOrigins = [
+  configuredMediaOrigin(process.env.NEXT_PUBLIC_DEMO_VIDEO_URL),
+  configuredMediaOrigin(process.env.NEXT_PUBLIC_DEMO_CAPTIONS_URL),
+].filter(
+  (origin, index, values): origin is string => Boolean(origin) && values.indexOf(origin) === index,
+);
+
 const contentSecurityPolicy = [
   "default-src 'self'",
   `script-src 'self' 'unsafe-inline'${isProduction ? "" : " 'unsafe-eval'"} https://challenges.cloudflare.com`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
-  "media-src 'self' https:",
+  `media-src 'self'${externalMediaOrigins.map((origin) => ` ${origin}`).join("")}`,
   "font-src 'self'",
   `connect-src 'self' https://challenges.cloudflare.com${isProduction ? "" : " ws: wss:"}`,
   "frame-src https://challenges.cloudflare.com",
