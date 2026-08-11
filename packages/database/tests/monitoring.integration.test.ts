@@ -44,7 +44,7 @@ databaseDescribe("paid monitoring claims", () => {
       event: {
         eventId: `evt_monitoring_${randomUUID()}`,
         type: "customer.subscription.created",
-        createdAt: new Date("2026-08-11T09:59:00Z"),
+        createdAt: new Date("2026-08-01T09:59:00Z"),
         livemode: false,
         kind: "subscription",
         subscriptionId: stripeSubscriptionId,
@@ -65,7 +65,7 @@ databaseDescribe("paid monitoring claims", () => {
       event: {
         eventId: `evt_monitoring_invoice_${randomUUID()}`,
         type: "invoice.paid",
-        createdAt: new Date("2026-08-11T09:59:01Z"),
+        createdAt: new Date("2026-08-01T09:59:01Z"),
         livemode: false,
         kind: "invoice",
         invoiceId: `in_monitoring_${randomUUID()}`,
@@ -80,10 +80,10 @@ databaseDescribe("paid monitoring claims", () => {
     });
     await client.db
       .update(monitoringSubscriptions)
-      .set({ nextDueAt: new Date("2026-08-11T10:00:00Z") })
+      .set({ nextDueAt: new Date("2026-08-01T10:00:00Z") })
       .where(eq(monitoringSubscriptions.projectId, projectId));
 
-    const now = new Date("2026-08-11T10:00:01Z");
+    const now = new Date("2026-08-01T10:00:01Z");
     const concurrent = await Promise.all([
       repositories.monitoring.claimDue({
         now,
@@ -103,7 +103,7 @@ databaseDescribe("paid monitoring claims", () => {
     expect(claims[0]).toMatchObject({
       attempt: 1,
       projectId,
-      scheduledFor: new Date("2026-08-11T10:00:00Z"),
+      scheduledFor: new Date("2026-08-01T10:00:00Z"),
     });
 
     const [request] = await client.db
@@ -124,7 +124,7 @@ databaseDescribe("paid monitoring claims", () => {
 
     expect(
       await repositories.monitoring.claimDue({
-        now: new Date("2026-08-11T10:01:00Z"),
+        now: new Date("2026-08-01T10:01:00Z"),
         batchSize: 1,
         leaseSeconds: 300,
         leaseOwner: "worker-c",
@@ -132,7 +132,7 @@ databaseDescribe("paid monitoring claims", () => {
     ).toEqual([]);
 
     const reclaimed = await repositories.monitoring.claimDue({
-      now: new Date("2026-08-11T10:05:02Z"),
+      now: new Date("2026-08-01T10:05:02Z"),
       batchSize: 1,
       leaseSeconds: 300,
       leaseOwner: "worker-d",
@@ -150,7 +150,7 @@ databaseDescribe("paid monitoring claims", () => {
         runId: claims[0]!.id,
         leaseOwner: claims[0]!.leaseOwner,
         state: "REVIEW_REQUIRED",
-        now: new Date("2026-08-11T10:05:03Z"),
+        now: new Date("2026-08-01T10:05:03Z"),
       }),
     ).toBe(false);
     expect(
@@ -158,7 +158,7 @@ databaseDescribe("paid monitoring claims", () => {
         runId: reclaimed[0]!.id,
         leaseOwner: reclaimed[0]!.leaseOwner,
         state: "REVIEW_REQUIRED",
-        now: new Date("2026-08-11T10:05:03Z"),
+        now: new Date("2026-08-01T10:05:03Z"),
       }),
     ).toBe(true);
 
@@ -172,10 +172,10 @@ databaseDescribe("paid monitoring claims", () => {
   it("pauses and fences open work on payment failure, then cancels on deletion", async () => {
     await client.db
       .update(monitoringSubscriptions)
-      .set({ state: "ACTIVE", nextDueAt: new Date("2026-08-12T10:00:00Z") })
+      .set({ state: "ACTIVE", nextDueAt: new Date("2026-08-02T10:00:00Z") })
       .where(eq(monitoringSubscriptions.projectId, projectId));
     const [claim] = await repositories.monitoring.claimDue({
-      now: new Date("2026-08-12T10:00:01Z"),
+      now: new Date("2026-08-02T10:00:01Z"),
       batchSize: 1,
       leaseSeconds: 300,
       leaseOwner: "worker-before-revocation",
@@ -186,7 +186,7 @@ databaseDescribe("paid monitoring claims", () => {
       event: {
         eventId: `evt_monitoring_failed_${randomUUID()}`,
         type: "invoice.payment_failed",
-        createdAt: new Date("2026-08-12T10:00:02Z"),
+        createdAt: new Date("2026-08-02T10:00:02Z"),
         livemode: false,
         kind: "invoice",
         invoiceId: `in_monitoring_failed_${randomUUID()}`,
@@ -218,7 +218,7 @@ databaseDescribe("paid monitoring claims", () => {
         runId: claim!.id,
         leaseOwner: claim!.leaseOwner,
         state: "REVIEW_REQUIRED",
-        now: new Date("2026-08-12T10:00:03Z"),
+        now: new Date("2026-08-02T10:00:03Z"),
       }),
     ).toBe(false);
 
@@ -226,7 +226,7 @@ databaseDescribe("paid monitoring claims", () => {
       event: {
         eventId: `evt_monitoring_deleted_${randomUUID()}`,
         type: "customer.subscription.deleted",
-        createdAt: new Date("2026-08-12T10:00:04Z"),
+        createdAt: new Date("2026-08-02T10:00:04Z"),
         livemode: false,
         kind: "subscription",
         subscriptionId: stripeSubscriptionId,

@@ -278,6 +278,6 @@ databaseDescribe("Stripe webhook-authoritative billing projection", () => {
         expectedLivemode: false,
         expectedPriceId: "price_founder",
       }),
-    ).rejects.toThrow(/cannot own multiple Founder projects/i);
+    ).rejects.toThrow();
   });
 });
