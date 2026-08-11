@@ -6,16 +6,22 @@ if ! command -v stripe >/dev/null 2>&1; then
   exit 1
 fi
 
-live_flag=()
 mode="test"
 if [[ "${STRIPE_CLI_LIVE_MODE:-0}" == "1" ]]; then
   if [[ "${I_UNDERSTAND_LIVE_STRIPE:-}" != "YES" ]]; then
     echo "Live catalog bootstrap requires I_UNDERSTAND_LIVE_STRIPE=YES." >&2
     exit 1
   fi
-  live_flag=(--live)
   mode="live"
 fi
+
+stripe_api() {
+  if [[ "$mode" == "live" ]]; then
+    stripe "$@" --live
+  else
+    stripe "$@"
+  fi
+}
 
 stripe config --list >/dev/null
 
@@ -29,11 +35,11 @@ lookup_key="trendsfast_founder_monthly"
 coupon_id="trendsfast_founding_100_12_months"
 promotion_code="FOUNDING100"
 
-product_json="$(stripe products search "${live_flag[@]}" --query "metadata['catalog_key']:'${catalog_key}'" --limit=1 --color=off)"
+product_json="$(stripe_api products search --query "metadata['catalog_key']:'${catalog_key}'" --limit=1 --color=off)"
 product_id="$(printf '%s' "$product_json" | json_field 'json => json.data?.[0]?.id')"
 
 if [[ -z "$product_id" ]]; then
-  product_json="$(stripe products create "${live_flag[@]}" \
+  product_json="$(stripe_api products create \
     --name="TrendsFast Founder" \
     -d "metadata[catalog_key]=${catalog_key}" \
     -d "metadata[plan]=founder" \
@@ -45,12 +51,16 @@ if [[ -z "$product_id" ]]; then
     --confirm --color=off)"
   product_id="$(printf '%s' "$product_json" | json_field 'json => json.id')"
 fi
+if [[ -z "$product_id" ]]; then
+  echo "Stripe did not return a Founder product ID." >&2
+  exit 1
+fi
 
-price_json="$(stripe prices list "${live_flag[@]}" --lookup-keys="$lookup_key" --limit=1 --color=off)"
+price_json="$(stripe_api prices list --lookup-keys="$lookup_key" --limit=1 --color=off)"
 price_id="$(printf '%s' "$price_json" | json_field 'json => json.data?.[0]?.id')"
 
 if [[ -z "$price_id" ]]; then
-  price_json="$(stripe prices create "${live_flag[@]}" \
+  price_json="$(stripe_api prices create \
     --product="$product_id" \
     --currency=usd \
     --unit-amount=3900 \
@@ -61,11 +71,17 @@ if [[ -z "$price_id" ]]; then
     --confirm --color=off)"
   price_id="$(printf '%s' "$price_json" | json_field 'json => json.id')"
 fi
+if [[ -z "$price_id" ]]; then
+  echo "Stripe did not return a Founder monthly price ID." >&2
+  exit 1
+fi
 
-if ! coupon_json="$(stripe coupons retrieve "${live_flag[@]}" "$coupon_id" --color=off 2>/dev/null)"; then
-  coupon_json="$(stripe coupons create "${live_flag[@]}" \
+coupon_json="$(stripe_api coupons retrieve "$coupon_id" --color=off 2>/dev/null || true)"
+stored_coupon_id="$(printf '%s' "$coupon_json" | json_field 'json => json.id')"
+if [[ "$stored_coupon_id" != "$coupon_id" ]]; then
+  coupon_json="$(stripe_api coupons create \
     --id="$coupon_id" \
-    --name="TrendsFast Founding 100 — first 12 months" \
+    --name="TrendsFast Founding 100 - 12 months" \
     --percent-off=50 \
     --duration=repeating \
     --duration-in-months=12 \
@@ -73,11 +89,16 @@ if ! coupon_json="$(stripe coupons retrieve "${live_flag[@]}" "$coupon_id" --col
     --idempotency="trendsfast-${mode}-founding-100-coupon-v1" \
     --confirm --color=off)"
 fi
+stored_coupon_id="$(printf '%s' "$coupon_json" | json_field 'json => json.id')"
+if [[ "$stored_coupon_id" != "$coupon_id" ]]; then
+  echo "Stripe did not return the Founding 100 coupon." >&2
+  exit 1
+fi
 
-promotion_json="$(stripe promotion_codes list "${live_flag[@]}" --code="$promotion_code" --limit=1 --color=off)"
+promotion_json="$(stripe_api promotion_codes list --code="$promotion_code" --limit=1 --color=off)"
 promotion_id="$(printf '%s' "$promotion_json" | json_field 'json => json.data?.[0]?.id')"
 if [[ -z "$promotion_id" ]]; then
-  promotion_json="$(stripe promotion_codes create "${live_flag[@]}" \
+  promotion_json="$(stripe_api promotion_codes create \
     --promotion.type=coupon \
     --promotion.coupon="$coupon_id" \
     --code="$promotion_code" \
@@ -86,6 +107,10 @@ if [[ -z "$promotion_id" ]]; then
     --idempotency="trendsfast-${mode}-founding-100-promotion-v1" \
     --confirm --color=off)"
   promotion_id="$(printf '%s' "$promotion_json" | json_field 'json => json.id')"
+fi
+if [[ -z "$promotion_id" ]]; then
+  echo "Stripe did not return the disabled Founding 100 promotion code." >&2
+  exit 1
 fi
 
 printf 'mode=%s\nproduct_id=%s\nprice_id=%s\ncoupon_id=%s\npromotion_code_id=%s\n' \
