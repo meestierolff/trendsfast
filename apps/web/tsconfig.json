@@ -1,0 +1,25 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "jsx": "preserve",
+    "incremental": true,
+    "plugins": [{ "name": "next" }],
+    "paths": {
+      "@/*": ["./*"],
+      "@trendsfast/analytics": ["../../packages/analytics/src/index.ts"],
+      "@trendsfast/billing": ["../../packages/billing/src/index.ts"],
+      "@trendsfast/config": ["../../packages/config/src/index.ts"],
+      "@trendsfast/core": ["../../packages/core/src/index.ts"],
+      "@trendsfast/database": ["../../packages/database/src/index.ts"],
+      "@trendsfast/evidence": ["../../packages/evidence/src/index.ts"],
+      "@trendsfast/observability": ["../../packages/observability/src/index.ts"],
+      "@trendsfast/orchestration": ["../../packages/orchestration/src/index.ts"],
+      "@trendsfast/providers": ["../../packages/providers/src/index.ts"],
+      "@trendsfast/schemas": ["../../packages/schemas/src/index.ts"],
+      "@trendsfast/scoring": ["../../packages/scoring/src/index.ts"]
+    }
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules"]
+}

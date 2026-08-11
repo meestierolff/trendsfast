@@ -1,0 +1,53 @@
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Open metrics" };
+
+const metrics = [
+  "Products scanned",
+  "Scans delivered",
+  "Useful-move rate",
+  "Moves used",
+  "Evidence validity",
+  "Median provider cost",
+  "Median founder review time",
+  "WAIT rate",
+  "Research time replaced",
+];
+
+export default function OpenMetricsPage() {
+  return (
+    <>
+      <section className="page-hero section-pad">
+        <p className="section-index">OPEN PROOF / ALPHA</p>
+        <h1>
+          Denominators
+          <br />
+          before celebration.
+        </h1>
+        <p>
+          The first cohort is measured for usefulness, evidence validity, actual usage, founder
+          review time, and provider cost—not signups or dashboard sessions.
+        </p>
+      </section>
+      <section className="content-page section-pad">
+        <div className="metric-grid">
+          {metrics.map((metric) => (
+            <article className="metric-card" key={metric}>
+              <span>{metric}</span>
+              <strong>Not enough verified data yet</strong>
+            </article>
+          ))}
+        </div>
+        <div className="prose">
+          <h2>Publication rule</h2>
+          <p>
+            Rates appear only with a denominator and verified events. Costs come from the provider
+            cost ledger. Review time uses recorded review timestamps. Evidence validity is checked
+            at delivery. No fixture, internal dogfood, or unapproved public scan is blended into
+            external cohort proof without a label.
+          </p>
+        </div>
+      </section>
+    </>
+  );
+}
