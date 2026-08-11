@@ -1,0 +1,42 @@
+{
+  "name": "trendsfast",
+  "version": "0.1.0-alpha.0",
+  "private": true,
+  "type": "module",
+  "description": "The distribution intelligence API for founders and their agents.",
+  "license": "AGPL-3.0-only",
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @trendsfast/web dev",
+    "build": "pnpm --filter @trendsfast/web build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "pnpm --filter @trendsfast/web test:e2e",
+    "db:generate": "drizzle-kit generate --config packages/database/drizzle.config.ts",
+    "db:migrate": "tsx packages/database/src/migrate.ts",
+    "db:purge": "tsx packages/database/src/purge.ts",
+    "db:seed": "tsx packages/database/src/seed.ts",
+    "db:studio": "drizzle-kit studio --config packages/database/drizzle.config.ts",
+    "openapi:generate": "tsx packages/schemas/src/write-openapi.ts",
+    "verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "drizzle-kit": "^0.31.0",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^16.0.0",
+    "eslint-plugin-import": "^2.0.0",
+    "prettier": "^3.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^4.0.0"
+  }
+}

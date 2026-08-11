@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowJs": false,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@trendsfast/analytics": ["packages/analytics/src/index.ts"],
+      "@trendsfast/billing": ["packages/billing/src/index.ts"],
+      "@trendsfast/config": ["packages/config/src/index.ts"],
+      "@trendsfast/core": ["packages/core/src/index.ts"],
+      "@trendsfast/database": ["packages/database/src/index.ts"],
+      "@trendsfast/evidence": ["packages/evidence/src/index.ts"],
+      "@trendsfast/observability": ["packages/observability/src/index.ts"],
+      "@trendsfast/orchestration": ["packages/orchestration/src/index.ts"],
+      "@trendsfast/providers": ["packages/providers/src/index.ts"],
+      "@trendsfast/schemas": ["packages/schemas/src/index.ts"],
+      "@trendsfast/scoring": ["packages/scoring/src/index.ts"]
+    }
+  }
+}
