@@ -23,7 +23,7 @@ import { POST as postOpsSession } from "../../app/api/ops/session/route";
 import { POST as postFeedback } from "../../app/api/scans/[token]/feedback/route";
 import { POST as postShareConsent } from "../../app/api/scans/[token]/share-consent/route";
 
-const origin = "http://localhost:3000";
+const origin = process.env.APP_URL ?? "http://localhost:3000";
 const sessionSecret = "mutation-body-test-secret-at-least-32-characters";
 
 function streamedRequest(input: {

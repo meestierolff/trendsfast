@@ -9,6 +9,8 @@ vi.mock("../../lib/server-database", () => ({
 
 import { POST } from "../../app/api/scan-requests/route";
 
+const origin = process.env.APP_URL ?? "http://localhost:3000";
+
 function oversizedPublicRequest(contentLength?: string): Request {
   const encoder = new TextEncoder();
   const body = new ReadableStream<Uint8Array>({
@@ -19,10 +21,10 @@ function oversizedPublicRequest(contentLength?: string): Request {
       controller.close();
     },
   });
-  return new Request("http://localhost:3000/api/scan-requests", {
+  return new Request(`${origin}/api/scan-requests`, {
     method: "POST",
     headers: {
-      origin: "http://localhost:3000",
+      origin,
       "content-type": "application/json",
       ...(contentLength === undefined ? {} : { "content-length": contentLength }),
     },
