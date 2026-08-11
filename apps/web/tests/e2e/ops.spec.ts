@@ -81,7 +81,7 @@ test("founder reviews, approves, and privately delivers a persisted scan", async
   const resultResponse = await page.goto(delivery.deliveryUrl);
   expect(resultResponse?.status()).toBe(200);
   await expect(page.getByRole("heading", { name: "Your next distribution move." })).toBeVisible();
-  await expect(page.getByText(/Founder reviewed/).first()).toBeVisible();
+  await expect(page.getByText(/Founder-reviewed/).first()).toBeVisible();
 
   await page.goto(`/ops/${scanId}`);
   await expect(page.getByText("This review is closed.")).toBeVisible();
