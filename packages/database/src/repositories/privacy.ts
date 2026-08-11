@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, lt, notExists, or } from "drizzle-orm";
+import { and, eq, inArray, isNull, lt, lte, notExists, or } from "drizzle-orm";
 
 import type { TrendsFastDatabase } from "../client";
 import {
@@ -7,6 +7,8 @@ import {
   apiKeyManagementEvents,
   apiKeys,
   deliveryTokens,
+  founderLaunchInterestEvents,
+  founderLaunchInterests,
   nextMoves,
   projects,
   scanRequests,
@@ -124,6 +126,29 @@ export class PrivacyRepository {
   async purgeExpired(now: Date, retentionDays: number) {
     const cutoff = retentionCutoff(now, retentionDays);
     return this.db.transaction(async (tx) => {
+      const expiredFounderInterests = await tx
+        .select({ id: founderLaunchInterests.id })
+        .from(founderLaunchInterests)
+        .where(lte(founderLaunchInterests.expiresAt, now))
+        .limit(500)
+        .for("update", { skipLocked: true });
+      if (expiredFounderInterests.length > 0) {
+        await tx.insert(founderLaunchInterestEvents).values(
+          expiredFounderInterests.map((interest) => ({
+            interestReference: interest.id,
+            action: "PURGED" as const,
+            actorId: "system:retention",
+            occurredAt: now,
+          })),
+        );
+        await tx.delete(founderLaunchInterests).where(
+          inArray(
+            founderLaunchInterests.id,
+            expiredFounderInterests.map((interest) => interest.id),
+          ),
+        );
+      }
+
       const expiredRequests = await tx
         .select({ id: scanRequests.id })
         .from(scanRequests)
@@ -152,7 +177,11 @@ export class PrivacyRepository {
           ).map((row) => row.id)
         : [];
 
-      let deletedAnalyticsEvents = 0;
+      const oldAnonymousAnalytics = await tx
+        .delete(analyticsEvents)
+        .where(lt(analyticsEvents.occurredAt, cutoff))
+        .returning({ id: analyticsEvents.id });
+      let deletedAnalyticsEvents = oldAnonymousAnalytics.length;
       if (requestIds.length || moveIds.length) {
         const filters = [
           requestIds.length ? inArray(analyticsEvents.scanRequestId, requestIds) : undefined,
@@ -162,7 +191,7 @@ export class PrivacyRepository {
           .delete(analyticsEvents)
           .where(or(...filters))
           .returning({ id: analyticsEvents.id });
-        deletedAnalyticsEvents = deleted.length;
+        deletedAnalyticsEvents += deleted.length;
       }
       const deletedRequests = requestIds.length
         ? await tx
@@ -204,6 +233,7 @@ export class PrivacyRepository {
         deletedScanRequests: deletedRequests.length,
         deletedDeliveryTokens: deletedTokens.length,
         deletedAnalyticsEvents,
+        deletedFounderLaunchInterests: expiredFounderInterests.length,
         deletedOrphanProjects: deletedProjects.length,
       };
     });

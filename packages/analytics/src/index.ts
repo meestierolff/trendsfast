@@ -1,25 +1,20 @@
-export const TRACKED_EVENTS = [
-  "landing_viewed",
-  "example_scan_viewed",
-  "free_scan_started",
-  "free_scan_submitted",
-  "scan_qualified",
-  "scan_processing_started",
-  "scan_review_required",
-  "scan_reviewed",
-  "scan_delivered",
-  "scan_result_viewed",
-  "scan_feedback_submitted",
-  "move_marked_used",
-  "second_scan_requested",
-  "api_key_issued",
-  "api_request_succeeded",
-  "pricing_viewed",
-  "checkout_started",
-  "subscription_started",
-] as const;
+import {
+  LAUNCH_ANALYTICS_EVENT_NAMES,
+  LEGACY_ANALYTICS_EVENT_NAMES,
+  sanitizeAnalyticsDimension,
+  sanitizeFirstPartyAnalyticsProperties,
+  sanitizePublicAnalyticsPath,
+  type AnalyticsEventName,
+} from "@trendsfast/schemas";
 
-export type AnalyticsEventName = (typeof TRACKED_EVENTS)[number];
+export const LAUNCH_ANALYTICS_EVENTS = LAUNCH_ANALYTICS_EVENT_NAMES;
+
+/** Historical ledger names retained for rolling-deploy and stored-row compatibility. */
+export const LEGACY_ANALYTICS_EVENTS = LEGACY_ANALYTICS_EVENT_NAMES;
+
+export const TRACKED_EVENTS = [...LAUNCH_ANALYTICS_EVENTS, ...LEGACY_ANALYTICS_EVENTS] as const;
+
+export type { AnalyticsEventName };
 export type Attribution = {
   ref?: string;
   utm_source?: string;
@@ -37,12 +32,12 @@ const EXTERNAL_ALLOWLIST = new Set([
 ]);
 
 function clean(value: string | null | undefined, max = 120): string | undefined {
-  const normalized = value?.trim().slice(0, max);
-  return normalized ? normalized : undefined;
+  if (!value) return undefined;
+  return sanitizeAnalyticsDimension(value, max) ?? undefined;
 }
 
 export function parseAttribution(url: URL): Attribution {
-  const result: Attribution = { first_landing: url.pathname };
+  const result: Attribution = { first_landing: sanitizePublicAnalyticsPath(url.pathname) };
   const values = {
     ref: clean(url.searchParams.get("ref")),
     utm_source: clean(url.searchParams.get("utm_source")),
@@ -61,8 +56,13 @@ export function buildExternalAnalyticsPayload(
 ): Record<string, unknown> {
   const payload: Record<string, unknown> = { event };
   for (const [key, value] of Object.entries(properties)) {
-    if (EXTERNAL_ALLOWLIST.has(key) && typeof value === "string")
-      payload[key] = value.slice(0, 120);
+    if (!EXTERNAL_ALLOWLIST.has(key) || typeof value !== "string") continue;
+    if (key === "first_landing") {
+      payload[key] = sanitizePublicAnalyticsPath(value);
+      continue;
+    }
+    const dimension = sanitizeAnalyticsDimension(value, 120);
+    if (dimension) payload[key] = dimension;
   }
   return payload;
 }
@@ -103,7 +103,7 @@ export function createAnalytics(input: {
         ...(context.anonymousId ? { anonymousId: context.anonymousId } : {}),
         ...(context.projectId ? { projectId: context.projectId } : {}),
         ...(context.scanRequestId ? { scanRequestId: context.scanRequestId } : {}),
-        properties: context.properties ?? {},
+        properties: sanitizeFirstPartyAnalyticsProperties(name, context.properties ?? {}),
       };
       await input.ledger.write(event);
       if (input.externalEnabled && input.external) {

@@ -1,6 +1,10 @@
 import { after, NextResponse } from "next/server";
 import { loadEnv } from "@trendsfast/config";
 import { readBoundedJsonBody } from "../../../lib/bounded-json";
+import {
+  analyticsSessionCookie,
+  analyticsSessionForRequest,
+} from "../../../lib/first-party-analytics";
 import { getRepositories } from "../../../lib/server-database";
 import { acceptPublicScan, isSameOrigin, PublicScanError } from "../../../lib/public-scan-service";
 import { clientAddress } from "../../../lib/request-security";
@@ -59,9 +63,16 @@ export async function POST(request: Request) {
           : {}),
       },
     );
+    const analyticsSession =
+      env.SESSION_SECRET && env.SESSION_SECRET.length >= 32
+        ? analyticsSessionForRequest(request, env.SESSION_SECRET)
+        : null;
     await repositories.analytics
       .append({
         name: "free_scan_submitted",
+        ...(analyticsSession
+          ? { anonymousSessionHash: analyticsSession.anonymousSessionHash }
+          : {}),
         scanRequestId: accepted.scanRequestId,
         properties: { reused: accepted.reused },
       })
@@ -71,10 +82,20 @@ export async function POST(request: Request) {
         await runPersistedScan(accepted.token).catch(() => undefined);
       });
     }
-    return NextResponse.json(
+    const response = NextResponse.json(
       { token: accepted.token, status: "QUEUED", reused: accepted.reused },
       { status: accepted.reused ? 200 : 202, headers: { "cache-control": "no-store" } },
     );
+    if (analyticsSession?.rawSessionToSet) {
+      response.headers.set(
+        "set-cookie",
+        analyticsSessionCookie(
+          analyticsSession.rawSessionToSet,
+          env.APP_URL.startsWith("https://"),
+        ),
+      );
+    }
+    return response;
   } catch (error) {
     if (error instanceof PublicScanError) {
       return NextResponse.json({ error: error.message }, { status: error.status });

@@ -80,24 +80,48 @@ export type ApiKeyEnvironment = z.infer<typeof ApiKeyEnvironmentSchema>;
 export const ApiKeyStatusSchema = z.enum(["ACTIVE", "REVOKED"]);
 export type ApiKeyStatus = z.infer<typeof ApiKeyStatusSchema>;
 
-export const AnalyticsEventNameSchema = z.enum([
+export const LAUNCH_ANALYTICS_EVENT_NAMES = [
   "landing_viewed",
+  "hero_cta_clicked",
+  "demo_viewed",
+  "free_scan_submitted",
+  "scan_status_viewed",
+  "scan_delivered",
+  "evidence_opened",
+  "feedback_submitted",
+  "move_would_use",
+  "move_used",
+  "repeat_scan_requested",
+  "agents_page_viewed",
+  "docs_viewed",
+  "pricing_viewed",
+  "beta_waitlist_joined",
+  "checkout_started",
+  "subscription_started",
+] as const;
+export const LaunchAnalyticsEventNameSchema = z.enum(LAUNCH_ANALYTICS_EVENT_NAMES);
+export type LaunchAnalyticsEventName = z.infer<typeof LaunchAnalyticsEventNameSchema>;
+
+/** Historical ledger values retained while old deployments and rows age out. */
+export const LEGACY_ANALYTICS_EVENT_NAMES = [
   "example_scan_viewed",
   "free_scan_started",
-  "free_scan_submitted",
   "scan_qualified",
   "scan_processing_started",
   "scan_review_required",
   "scan_reviewed",
-  "scan_delivered",
   "scan_result_viewed",
   "scan_feedback_submitted",
   "move_marked_used",
   "second_scan_requested",
   "api_key_issued",
   "api_request_succeeded",
-  "pricing_viewed",
-  "checkout_started",
-  "subscription_started",
+] as const;
+export const LegacyAnalyticsEventNameSchema = z.enum(LEGACY_ANALYTICS_EVENT_NAMES);
+export type LegacyAnalyticsEventName = z.infer<typeof LegacyAnalyticsEventNameSchema>;
+
+export const AnalyticsEventNameSchema = z.union([
+  LaunchAnalyticsEventNameSchema,
+  LegacyAnalyticsEventNameSchema,
 ]);
 export type AnalyticsEventName = z.infer<typeof AnalyticsEventNameSchema>;

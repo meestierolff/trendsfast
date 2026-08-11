@@ -7,6 +7,7 @@ import { CostRepository } from "./costs";
 import { DeliveryRepository } from "./delivery";
 import { FeedbackRepository } from "./feedback";
 import { FounderUsageRepository } from "./founder-usage";
+import { FounderLaunchInterestRepository } from "./founder-launch-interest";
 import { ScanRepository } from "./lifecycle";
 import { ReviewRepository } from "./review";
 import { ScanDataRepository } from "./scan-data";
@@ -19,6 +20,7 @@ export * from "./analytics";
 export * from "./auth-admission";
 export * from "./billing";
 export * from "./founder-usage-model";
+export * from "./founder-launch-interest";
 export * from "./monitoring-model";
 export * from "./monitoring";
 export * from "./api-keys";
@@ -45,6 +47,7 @@ export function createRepositories(
     costs: new CostRepository(db),
     delivery: new DeliveryRepository(db),
     feedback: new FeedbackRepository(db),
+    founderLaunchInterests: new FounderLaunchInterestRepository(db),
     founderUsage: new FounderUsageRepository(db),
     manualEvidence: new ManualEvidenceRepository(db),
     monitoring: new MonitoringRepository(db),

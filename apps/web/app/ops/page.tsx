@@ -99,6 +99,8 @@ export default async function OpsPage({
         <Link href="/ops/sources">Source verification</Link>
         <span>/</span>
         <Link href="/ops/billing">Founder billing</Link>
+        <span>/</span>
+        <Link href="/ops/launch-interest">Launch interest</Link>
       </nav>
       <OpsQueue
         items={items}

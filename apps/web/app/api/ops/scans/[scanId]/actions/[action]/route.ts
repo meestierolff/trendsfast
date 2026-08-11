@@ -3,6 +3,10 @@ import { after } from "next/server";
 import { loadEnv } from "@trendsfast/config";
 
 import { readBoundedJsonBody } from "../../../../../../../lib/bounded-json";
+import {
+  analyticsDedupeKey,
+  derivePrivacyHash,
+} from "../../../../../../../lib/first-party-analytics";
 import { getRepositories } from "../../../../../../../lib/server-database";
 import { runPersistedScan } from "../../../../../../../lib/scan-processing";
 import { authorizeOpsActionRequest } from "../../../../_security";
@@ -147,6 +151,35 @@ export async function POST(
           reviewerId: authorization.reviewerId,
           expiresAt,
         });
+        if (delivery.created) {
+          const secret = process.env.SESSION_SECRET ?? "";
+          if (secret.length >= 32) {
+            const occurredAt = new Date();
+            const anonymousSessionHash = derivePrivacyHash(
+              secret,
+              "ops-analytics-session:v1",
+              authorization.sessionToken,
+            );
+            await repositories.analytics
+              .appendOnce({
+                name: "scan_delivered",
+                anonymousSessionHash,
+                scanRequestId: detail.request.id,
+                nextMoveId: move.id,
+                dedupeKey: analyticsDedupeKey({
+                  secret,
+                  sessionHash: anonymousSessionHash,
+                  event: "scan_delivered",
+                  entityScope: `move:${move.id}`,
+                  now: occurredAt,
+                  windowMs: 365 * 24 * 60 * 60 * 1_000,
+                }),
+                properties: { created: true },
+                occurredAt,
+              })
+              .catch(() => undefined);
+          }
+        }
         const deliveryUrl = delivery.rawToken
           ? new URL(
               `/scan/${encodeURIComponent(delivery.rawToken)}`,

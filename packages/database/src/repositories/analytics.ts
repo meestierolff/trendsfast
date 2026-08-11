@@ -1,4 +1,11 @@
-import { AnalyticsEventNameSchema, type AnalyticsEventName } from "@trendsfast/schemas";
+import {
+  AnalyticsEventNameSchema,
+  sanitizeAnalyticsDimension,
+  sanitizeAnalyticsReferrer,
+  sanitizeFirstPartyAnalyticsProperties,
+  sanitizePublicAnalyticsPath,
+  type AnalyticsEventName,
+} from "@trendsfast/schemas";
 
 import type { TrendsFastDatabase } from "../client";
 import { analyticsEvents } from "../schema";
@@ -6,24 +13,25 @@ import { analyticsEvents } from "../schema";
 const FORBIDDEN_PROPERTY =
   /(email|api.?key|authorization|token|secret|password|evidence.?text|model.?prompt|provider.?payload|product.?url|private.?url|submitted.?url)/i;
 const SECRET_VALUE = /tf_(?:test|live)_[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|Bearer\s+/i;
+const ATTRIBUTION_KEYS = new Set([
+  "ref",
+  "source",
+  "utm_source",
+  "utm_medium",
+  "utm_campaign",
+  "first_landing",
+  "landing_path",
+]);
 
-const stripQuery = (value: string) => {
-  try {
-    const url = new URL(value, "https://local.invalid");
-    url.search = "";
-    url.hash = "";
-    url.username = "";
-    url.password = "";
-    return url.origin === "https://local.invalid" ? url.pathname : url.toString();
-  } catch {
-    return value.split(/[?#]/, 1)[0] ?? "";
-  }
-};
-
-const safeAttributionText = (value: string | undefined, maxLength: number, removeQuery = false) => {
+const safeAttributionText = (
+  value: string | undefined,
+  maxLength: number,
+  kind: "dimension" | "landing" | "referrer" = "dimension",
+) => {
   if (!value || SECRET_VALUE.test(value)) return null;
-  const sanitized = removeQuery ? stripQuery(value) : value;
-  return sanitized.slice(0, maxLength);
+  if (kind === "landing") return sanitizePublicAnalyticsPath(value).slice(0, maxLength);
+  if (kind === "referrer") return sanitizeAnalyticsReferrer(value)?.slice(0, maxLength) ?? null;
+  return sanitizeAnalyticsDimension(value, maxLength);
 };
 
 export function sanitizeAnalyticsAttribution(
@@ -31,10 +39,13 @@ export function sanitizeAnalyticsAttribution(
 ): Record<string, string> {
   const safe: Record<string, string> = {};
   for (const [key, value] of Object.entries(input).slice(0, 20)) {
-    if (FORBIDDEN_PROPERTY.test(key) || SECRET_VALUE.test(value)) continue;
-    safe[key.slice(0, 100)] = /(url|path|landing|referrer)/i.test(key)
-      ? stripQuery(value).slice(0, 500)
-      : value.slice(0, 500);
+    if (!ATTRIBUTION_KEYS.has(key) || FORBIDDEN_PROPERTY.test(key) || SECRET_VALUE.test(value)) {
+      continue;
+    }
+    const sanitized = /(path|landing)/i.test(key)
+      ? sanitizePublicAnalyticsPath(value)
+      : sanitizeAnalyticsDimension(value, 500);
+    if (sanitized) safe[key] = sanitized;
   }
   return safe;
 }
@@ -54,46 +65,75 @@ export function sanitizeAnalyticsProperties(
   return safe;
 }
 
+export function sanitizeAnalyticsEventProperties(
+  name: AnalyticsEventName,
+  input: Readonly<Record<string, unknown>>,
+): Record<string, string | number | boolean | null> {
+  return sanitizeFirstPartyAnalyticsProperties(name, input);
+}
+
+export type AnalyticsAppendInput = {
+  name: AnalyticsEventName;
+  anonymousSessionHash?: string;
+  scanRequestId?: string;
+  nextMoveId?: string;
+  apiKeyId?: string;
+  referrer?: string;
+  utmSource?: string;
+  utmMedium?: string;
+  utmCampaign?: string;
+  firstLandingPath?: string;
+  firstTouch?: Record<string, string>;
+  currentTouch?: Record<string, string>;
+  properties?: Record<string, unknown>;
+  occurredAt?: Date;
+};
+
+function analyticsValues(
+  input: AnalyticsAppendInput & { dedupeKey?: string },
+): typeof analyticsEvents.$inferInsert {
+  const name = AnalyticsEventNameSchema.parse(input.name);
+  if (input.dedupeKey !== undefined && !/^[0-9a-f]{64}$/.test(input.dedupeKey)) {
+    throw new Error("Analytics dedupe key must be a 64-character lowercase HMAC");
+  }
+  return {
+    name,
+    anonymousSessionHash: input.anonymousSessionHash ?? null,
+    scanRequestId: input.scanRequestId ?? null,
+    nextMoveId: input.nextMoveId ?? null,
+    apiKeyId: input.apiKeyId ?? null,
+    referrer: safeAttributionText(input.referrer, 500, "referrer"),
+    utmSource: safeAttributionText(input.utmSource, 200),
+    utmMedium: safeAttributionText(input.utmMedium, 200),
+    utmCampaign: safeAttributionText(input.utmCampaign, 200),
+    firstLandingPath: safeAttributionText(input.firstLandingPath, 500, "landing"),
+    firstTouch: input.firstTouch ? sanitizeAnalyticsAttribution(input.firstTouch) : null,
+    currentTouch: input.currentTouch ? sanitizeAnalyticsAttribution(input.currentTouch) : null,
+    properties: input.properties ? sanitizeAnalyticsEventProperties(name, input.properties) : null,
+    dedupeKey: input.dedupeKey ?? null,
+    occurredAt: input.occurredAt ?? new Date(),
+  };
+}
+
 export class AnalyticsRepository {
   constructor(private readonly db: TrendsFastDatabase) {}
 
-  async append(input: {
-    name: AnalyticsEventName;
-    anonymousSessionHash?: string;
-    scanRequestId?: string;
-    nextMoveId?: string;
-    apiKeyId?: string;
-    referrer?: string;
-    utmSource?: string;
-    utmMedium?: string;
-    utmCampaign?: string;
-    firstLandingPath?: string;
-    firstTouch?: Record<string, string>;
-    currentTouch?: Record<string, string>;
-    properties?: Record<string, unknown>;
-    occurredAt?: Date;
-  }) {
-    const name = AnalyticsEventNameSchema.parse(input.name);
+  async append(input: AnalyticsAppendInput) {
     const [event] = await this.db
       .insert(analyticsEvents)
-      .values({
-        name,
-        anonymousSessionHash: input.anonymousSessionHash ?? null,
-        scanRequestId: input.scanRequestId ?? null,
-        nextMoveId: input.nextMoveId ?? null,
-        apiKeyId: input.apiKeyId ?? null,
-        referrer: safeAttributionText(input.referrer, 500, true),
-        utmSource: safeAttributionText(input.utmSource, 200),
-        utmMedium: safeAttributionText(input.utmMedium, 200),
-        utmCampaign: safeAttributionText(input.utmCampaign, 200),
-        firstLandingPath: safeAttributionText(input.firstLandingPath, 500, true),
-        firstTouch: input.firstTouch ? sanitizeAnalyticsAttribution(input.firstTouch) : null,
-        currentTouch: input.currentTouch ? sanitizeAnalyticsAttribution(input.currentTouch) : null,
-        properties: input.properties ? sanitizeAnalyticsProperties(input.properties) : null,
-        occurredAt: input.occurredAt ?? new Date(),
-      })
+      .values(analyticsValues(input))
       .returning();
     if (!event) throw new Error("Could not append analytics event");
     return event;
+  }
+
+  /** Database-unique append for refresh/poll-safe analytics. */
+  async appendOnce(input: AnalyticsAppendInput & { dedupeKey: string }) {
+    const [event] = await this.db
+      .insert(analyticsEvents)
+      .values(analyticsValues(input))
+      .onConflictDoNothing()
+      .returning();
+    return { created: Boolean(event), event: event ?? null };
   }
 }

@@ -1,3 +1,5 @@
+import { TrackedEvidenceLink } from "./tracked-evidence-link";
+
 export type NextMoveCardModel = {
   action: "PUBLISH" | "REPLY" | "REMIX" | "WAIT";
   productName?: string;
@@ -16,6 +18,7 @@ export type NextMoveCardModel = {
     title: string;
     note: string;
     href?: string;
+    analyticsPath?: string;
   }[];
   limitations: readonly string[];
   founderReviewed: boolean;
@@ -90,7 +93,11 @@ export function NextMoveCard({
             <div className="receipt" key={`${index}-${receipt.source}-${receipt.title}`}>
               <span className="source-dot" />
               <strong>{receipt.source}</strong>
-              {receipt.href ? (
+              {receipt.href && receipt.analyticsPath ? (
+                <TrackedEvidenceLink href={receipt.href} analyticsPath={receipt.analyticsPath}>
+                  {receipt.title} <span aria-hidden="true">↗</span>
+                </TrackedEvidenceLink>
+              ) : receipt.href ? (
                 <a href={receipt.href} rel="noreferrer">
                   {receipt.title} <span aria-hidden="true">↗</span>
                 </a>

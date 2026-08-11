@@ -5,6 +5,7 @@ import { ProjectContextSchema, type ProjectContext } from "@trendsfast/schemas";
 
 import type { ReadyScanResultView } from "../components/scan-result-view";
 import type { ScanStatusView } from "../components/scan-status-poller";
+import { analyticsDedupeKey } from "./first-party-analytics";
 import { getRepositories } from "./server-database";
 
 type ReadyRecord = {
@@ -16,6 +17,11 @@ type ReadyRecord = {
 };
 
 export type ScanStatusLookup = ScanStatusView | { found: false };
+export type CapabilityAnalyticsContext = {
+  anonymousSessionHash: string;
+  secret: string;
+  now?: Date;
+};
 
 function plausibleBearer(value: string): boolean {
   return value.length >= 8 && value.length <= 200 && /^[A-Za-z0-9_.-]+$/.test(value);
@@ -149,7 +155,10 @@ async function readyRecordByToken(
   };
 }
 
-export async function getScanStatusByToken(token: string): Promise<ScanStatusLookup> {
+export async function getScanStatusByToken(
+  token: string,
+  analyticsContext?: CapabilityAnalyticsContext | null,
+): Promise<ScanStatusLookup> {
   if (!plausibleBearer(token)) return { found: false };
   const repositories = getRepositories();
   const status = await repositories.scans.getStatusByPublicId(token);
@@ -174,6 +183,28 @@ export async function getScanStatusByToken(token: string): Promise<ScanStatusLoo
     status.move.autoPublish === false &&
     deliveryAvailable(status.delivery);
 
+  if (analyticsContext) {
+    const occurredAt = analyticsContext.now ?? new Date();
+    await repositories.analytics
+      .appendOnce({
+        name: "scan_status_viewed",
+        anonymousSessionHash: analyticsContext.anonymousSessionHash,
+        scanRequestId: status.request.id,
+        ...(status.move ? { nextMoveId: status.move.id } : {}),
+        dedupeKey: analyticsDedupeKey({
+          secret: analyticsContext.secret,
+          sessionHash: analyticsContext.anonymousSessionHash,
+          event: "scan_status_viewed",
+          entityScope: `scan:${status.request.id}`,
+          now: occurredAt,
+          windowMs: 24 * 60 * 60 * 1_000,
+        }),
+        properties: { state: status.request.state },
+        occurredAt,
+      })
+      .catch(() => undefined);
+  }
+
   return {
     found: true,
     state: status.request.state,
@@ -194,15 +225,45 @@ export async function getReadyResultByToken(token: string): Promise<ReadyScanRes
   if (!resolved) return null;
   const result = readyView(resolved.record);
   if (!result) return null;
+  return result;
+}
+
+export async function recordEvidenceOpenedByToken(
+  token: string,
+  evidenceReceiptId: string,
+  analyticsContext: CapabilityAnalyticsContext | null,
+): Promise<boolean> {
+  if (!/^[0-9a-f-]{36}$/i.test(evidenceReceiptId)) return false;
+  const resolved = await readyRecordByToken(token, false);
+  if (!resolved || !readyView(resolved.record)) return false;
+  const receipt = resolved.record.evidence.find(
+    (candidate) =>
+      candidate.id === evidenceReceiptId && candidate.nextMoveId === resolved.record.move.id,
+  );
+  if (!receipt) return false;
+  if (!analyticsContext) return true;
+
+  const occurredAt = analyticsContext.now ?? new Date();
   const repositories = getRepositories();
   await repositories.analytics
-    .append({
-      name: "scan_result_viewed",
+    .appendOnce({
+      name: "evidence_opened",
+      anonymousSessionHash: analyticsContext.anonymousSessionHash,
       scanRequestId: resolved.scanRequestId,
       nextMoveId: resolved.record.move.id,
+      dedupeKey: analyticsDedupeKey({
+        secret: analyticsContext.secret,
+        sessionHash: analyticsContext.anonymousSessionHash,
+        event: "evidence_opened",
+        entityScope: `evidence:${receipt.id}`,
+        now: occurredAt,
+        windowMs: 24 * 60 * 60 * 1_000,
+      }),
+      properties: { source: receipt.source },
+      occurredAt,
     })
     .catch(() => undefined);
-  return result;
+  return true;
 }
 
 export async function resolveReadyScanIdentity(token: string): Promise<{

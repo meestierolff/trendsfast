@@ -8,6 +8,7 @@ import { JsonLd } from "../components/json-ld";
 import { PricingCards } from "../components/pricing-cards";
 import { ScanForm } from "../components/scan-form";
 import { SourceStatusStrip } from "../components/source-status-strip";
+import { AnalyticsPageView } from "../components/analytics-page-view";
 import {
   AGENT_TOOLS,
   AUDIENCES,
@@ -91,6 +92,7 @@ export default function HomePage() {
   return (
     <>
       <MarketingSchema />
+      <AnalyticsPageView event={{ event: "landing_viewed", placement: "homepage" }} />
 
       {announcementVisible ? (
         <aside className="announcement-bar" aria-label="Free scan announcement">
@@ -116,7 +118,7 @@ export default function HomePage() {
           <p className="hero-support">
             Reach the right users before the moment passes—without chasing irrelevant hype.
           </p>
-          <ScanForm formId="scan" />
+          <ScanForm formId="scan" analyticsPlacement="homepage_hero" />
           <div className="hero-actions">
             <a className="text-link" href="#demo">
               See it in action <span aria-hidden="true">↓</span>
@@ -245,7 +247,7 @@ export default function HomePage() {
           <p className="section-index">YOUR URL IS THE ONBOARDING</p>
           <h2>What trend should your product act on next?</h2>
         </div>
-        <ScanForm compact formId="scan-repeat" />
+        <ScanForm compact formId="scan-repeat" analyticsPlacement="homepage_repeat" />
       </section>
 
       <section className="video-section section-pad">
@@ -412,7 +414,7 @@ export default function HomePage() {
           Stop researching every platform.
           <strong>Spot the trend your users care about now.</strong>
         </h2>
-        <ScanForm compact formId="scan-final" />
+        <ScanForm compact formId="scan-final" analyticsPlacement="homepage_final" />
         <p>One free founder-reviewed scan · Private by default · No card</p>
       </section>
     </>

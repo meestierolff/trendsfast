@@ -50,18 +50,25 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
     kind: kind.data,
     ...(visitorFingerprintHash === undefined ? {} : { visitorFingerprintHash }),
   });
-  await repositories.analytics
-    .append({
-      name:
-        kind.data === "USED_OR_PUBLISHED"
-          ? "move_marked_used"
-          : kind.data === "REQUEST_ANOTHER_SCAN"
-            ? "second_scan_requested"
-            : "scan_feedback_submitted",
-      scanRequestId: identity.scanRequestId,
-      nextMoveId: identity.nextMoveId,
-      properties: { kind: kind.data },
-    })
-    .catch(() => undefined);
+  const analyticsNames = [
+    "feedback_submitted",
+    ...(kind.data === "WOULD_USE"
+      ? (["move_would_use"] as const)
+      : kind.data === "USED_OR_PUBLISHED"
+        ? (["move_used"] as const)
+        : kind.data === "REQUEST_ANOTHER_SCAN"
+          ? (["repeat_scan_requested"] as const)
+          : []),
+  ] as const;
+  await Promise.allSettled(
+    analyticsNames.map((name) =>
+      repositories.analytics.append({
+        name,
+        scanRequestId: identity.scanRequestId,
+        nextMoveId: identity.nextMoveId,
+        properties: { kind: kind.data },
+      }),
+    ),
+  );
   return NextResponse.json({ recorded: true }, { status: 201, headers: PRIVATE_RESPONSE_HEADERS });
 }

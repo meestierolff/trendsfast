@@ -892,14 +892,88 @@ export const analyticsEvents = pgTable(
     firstTouch: jsonb("first_touch").$type<Record<string, string>>(),
     currentTouch: jsonb("current_touch").$type<Record<string, string>>(),
     properties: jsonb("properties").$type<Record<string, unknown>>(),
+    dedupeKey: varchar("dedupe_key", { length: 64 }),
     occurredAt: timestamp("occurred_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
+    uniqueIndex("analytics_events_dedupe_uidx")
+      .on(table.dedupeKey)
+      .where(sql`${table.dedupeKey} IS NOT NULL`),
     index("analytics_events_name_occurred_idx").on(table.name, table.occurredAt),
     index("analytics_events_scan_occurred_idx").on(table.scanRequestId, table.occurredAt),
     check(
+      "analytics_events_dedupe_key_check",
+      sql`${table.dedupeKey} IS NULL OR ${table.dedupeKey} ~ '^[0-9a-f]{64}$'`,
+    ),
+    check(
+      "analytics_events_session_hash_check",
+      sql`${table.anonymousSessionHash} IS NULL OR ${table.anonymousSessionHash} ~ '^[0-9a-f]{64}$'`,
+    ),
+    check(
       "analytics_events_name_check",
-      sql`${table.name} IN ('landing_viewed','example_scan_viewed','free_scan_started','free_scan_submitted','scan_qualified','scan_processing_started','scan_review_required','scan_reviewed','scan_delivered','scan_result_viewed','scan_feedback_submitted','move_marked_used','second_scan_requested','api_key_issued','api_request_succeeded','pricing_viewed','checkout_started','subscription_started')`,
+      sql`${table.name} IN ('landing_viewed','hero_cta_clicked','demo_viewed','free_scan_submitted','scan_status_viewed','scan_delivered','evidence_opened','feedback_submitted','move_would_use','move_used','repeat_scan_requested','agents_page_viewed','docs_viewed','pricing_viewed','beta_waitlist_joined','checkout_started','subscription_started','example_scan_viewed','free_scan_started','scan_qualified','scan_processing_started','scan_review_required','scan_reviewed','scan_result_viewed','scan_feedback_submitted','move_marked_used','second_scan_requested','api_key_issued','api_request_succeeded')`,
+    ),
+  ],
+);
+
+/** Consented launch contact only; no product payload, token, or analytics fingerprint. */
+export const founderLaunchInterests = pgTable(
+  "founder_launch_interests",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    email: varchar("email", { length: 254 }).notNull(),
+    emailHash: varchar("email_hash", { length: 64 }).notNull(),
+    consentVersion: varchar("consent_version", { length: 40 }).notNull(),
+    consentedAt: timestamp("consented_at", { withTimezone: true }).notNull(),
+    source: varchar("source", { length: 32 }).$type<"homepage" | "pricing">().notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("founder_launch_interests_email_hash_uidx").on(table.emailHash),
+    index("founder_launch_interests_expires_idx").on(table.expiresAt),
+    check(
+      "founder_launch_interests_email_normalized_check",
+      sql`${table.email} = lower(btrim(${table.email})) AND position('@' in ${table.email}) > 1`,
+    ),
+    check(
+      "founder_launch_interests_email_hash_check",
+      sql`${table.emailHash} ~ '^[0-9a-f]{64}$'`,
+    ),
+    check(
+      "founder_launch_interests_consent_version_check",
+      sql`${table.consentVersion} = 'founder-launch-v1'`,
+    ),
+    check(
+      "founder_launch_interests_source_check",
+      sql`${table.source} IN ('homepage','pricing')`,
+    ),
+    check(
+      "founder_launch_interests_expiry_check",
+      sql`${table.expiresAt} > ${table.consentedAt}`,
+    ),
+  ],
+);
+
+/** Audit survives hard deletion and intentionally contains no email or email hash. */
+export const founderLaunchInterestEvents = pgTable(
+  "founder_launch_interest_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    interestReference: uuid("interest_reference").notNull(),
+    action: varchar("action", { length: 20 }).notNull(),
+    actorId: varchar("actor_id", { length: 100 }).notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("founder_launch_interest_events_reference_idx").on(
+      table.interestReference,
+      table.occurredAt,
+    ),
+    index("founder_launch_interest_events_action_idx").on(table.action, table.occurredAt),
+    check(
+      "founder_launch_interest_events_action_check",
+      sql`${table.action} IN ('JOINED','RECONSENTED','DELETED','PURGED')`,
     ),
   ],
 );
@@ -1321,6 +1395,8 @@ export const databaseSchema = {
   outcomes,
   providerCostLedger,
   analyticsEvents,
+  founderLaunchInterests,
+  founderLaunchInterestEvents,
   apiKeyAuthEvents,
   apiAuthAdmissionBuckets,
   providerVerificationRecords,

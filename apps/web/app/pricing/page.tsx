@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { AnalyticsPageView } from "../../components/analytics-page-view";
 import { FaqList } from "../../components/faq-list";
 import { PricingCards } from "../../components/pricing-cards";
 import { pageMetadata } from "../../lib/site";
@@ -17,6 +18,7 @@ export default function PricingPage() {
 
   return (
     <>
+      <AnalyticsPageView event={{ event: "pricing_viewed", placement: "pricing" }} />
       <section className="intent-hero section-pad">
         <p className="section-index">PRICING / BOUNDED BY REAL RESEARCH</p>
         <h1>See the decision free. Pay for managed repetition.</h1>
