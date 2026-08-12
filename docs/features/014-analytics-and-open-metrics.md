@@ -1,7 +1,8 @@
 # 014 — First-party analytics and open metrics
 
-Status: privacy-constrained ledger/purge implementation; external analytics and
-operational privacy workflows remain gated.
+Status: privacy-constrained ledger/purge exists; the expanded launch-event path
+is work in progress. External analytics, public aggregates, and operational
+privacy workflows remain gated.
 
 ## User problem
 
@@ -60,11 +61,25 @@ best-effort and cannot block scans.
 
 ### Current implementation truth
 
-The application writes allowlisted first-party events for accepted scans, API
-requests, result views, feedback, used/repeat outcomes, and processing states.
-The optional analytics adapter is disabled by default and filters sensitive
-properties. The public open-metrics page deliberately reports insufficient data;
-no external cohort metric is claimed.
+The committed application writes allowlisted first-party events for accepted
+scans, API requests, result views, feedback, used/repeat outcomes, and processing
+states. The active development tree expands the fixed event vocabulary and adds
+a bounded same-origin browser-event route, privacy-separated HMAC session
+identity, dedupe keys, and durable admission. The historical database event name
+`beta_waitlist_joined` may remain for compatibility while public copy says
+founder launch list.
+
+This work is not yet a completed analytics release or monitoring claim. The
+optional analytics adapter remains disabled by default, and the public
+open-metrics page must report insufficient data until a reproducible,
+denominator-backed query is reviewed. No external cohort metric is claimed.
+
+The current working tree's actual production-artifact browser run covered the
+launch-interest surface within its 58 passes/two intentional mobile skips, and
+the full database-enabled suite reached 449 passing tests across 85 files. This
+is local implementation evidence only: final remote CI, deployment, scheduler
+operation, external analytics, and real denominator-backed metrics remain
+unverified.
 
 Exact-project deletion removes linked request, key, authentication, analytics,
 and related cascaded records. `pnpm db:purge` removes eligible retained terminal

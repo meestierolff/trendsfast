@@ -11,15 +11,24 @@ import {
   apiKeyAuthEvents,
   apiKeyManagementEvents,
   apiKeys,
+  billingCheckoutSessions,
+  billingPaymentStates,
+  billingWebhookEvents,
   clusterMembers,
   clusters,
   deliveryTokens,
   evidenceReceipts,
   feedbackEvents,
+  founderLaunchInterestEvents,
+  founderLaunchInterests,
+  founderUsageEvents,
+  monitoringRuns,
+  monitoringSubscriptions,
   nextMoves,
   opportunities,
   outcomes,
   projectContextVersions,
+  projectEntitlements,
   projects,
   providerCostLedger,
   providerVerificationRecords,
@@ -61,6 +70,15 @@ const minimumTableNames = [
   ...foundationTableNames,
   "api_key_management_events",
   "provider_verification_records",
+  "billing_checkout_sessions",
+  "billing_payment_states",
+  "billing_webhook_events",
+  "project_entitlements",
+  "founder_usage_events",
+  "monitoring_subscriptions",
+  "monitoring_runs",
+  "founder_launch_interests",
+  "founder_launch_interest_events",
 ];
 
 describe("portable PostgreSQL schema", () => {
@@ -68,6 +86,7 @@ describe("portable PostgreSQL schema", () => {
     const tables = [
       scanRequests,
       projects,
+      projectEntitlements,
       projectContextVersions,
       scanRuns,
       sourceRuns,
@@ -75,12 +94,20 @@ describe("portable PostgreSQL schema", () => {
       signalMetricSnapshots,
       clusters,
       clusterMembers,
+      billingCheckoutSessions,
+      billingPaymentStates,
+      billingWebhookEvents,
       opportunities,
       nextMoves,
       evidenceReceipts,
       reviewEvents,
       deliveryTokens,
       feedbackEvents,
+      founderLaunchInterests,
+      founderLaunchInterestEvents,
+      founderUsageEvents,
+      monitoringSubscriptions,
+      monitoringRuns,
       outcomes,
       apiKeys,
       apiKeyManagementEvents,
@@ -185,6 +212,83 @@ describe("portable PostgreSQL schema", () => {
     expect(migration).toContain("provider_verification_production_identity_check");
     expect(migration).toContain("provider_verification_truth_check");
     expect(migration).toContain('ADD COLUMN "binding_role"');
+  });
+
+  it("reserves 0011–0013 for webhook authority, Founder usage, and monitoring", () => {
+    const billing = readFileSync(
+      fileURLToPath(new URL("../migrations/0011_billing_webhook_authority.sql", import.meta.url)),
+      "utf8",
+    );
+    const usage = readFileSync(
+      fileURLToPath(new URL("../migrations/0012_founder_usage_limits.sql", import.meta.url)),
+      "utf8",
+    );
+    const monitoring = readFileSync(
+      fileURLToPath(new URL("../migrations/0013_paid_monitoring.sql", import.meta.url)),
+      "utf8",
+    );
+
+    expect(billing).toContain('CREATE TABLE "billing_webhook_events"');
+    expect(billing).toContain('CREATE TABLE "project_entitlements"');
+    expect(billing).toContain("stripe_customers_project_uidx");
+    expect(usage).toContain('CREATE TABLE "founder_usage_events"');
+    expect(usage).toContain("founder_usage_project_kind_occurred_idx");
+    expect(monitoring).toContain('CREATE TABLE "monitoring_subscriptions"');
+    expect(monitoring).toContain('CREATE TABLE "monitoring_runs"');
+    expect(monitoring).toContain("monitoring_runs_one_open_uidx");
+    expect(monitoring).toContain("ADD VALUE 'MONITORING'");
+  });
+
+  it("persists append-once analytics and consented expiring launch interest in 0014", () => {
+    expect(Object.keys(analyticsEvents)).toContain("dedupeKey");
+    expect(Object.keys(founderLaunchInterestEvents)).not.toContain("email");
+    expect(Object.keys(founderLaunchInterestEvents)).not.toContain("emailHash");
+
+    const migration = readFileSync(
+      fileURLToPath(new URL("../migrations/0014_launch_analytics_interest.sql", import.meta.url)),
+      "utf8",
+    );
+    expect(migration).toContain('CREATE TABLE "founder_launch_interests"');
+    expect(migration).toContain('CREATE TABLE "founder_launch_interest_events"');
+    expect(migration).toContain("analytics_events_dedupe_uidx");
+    expect(migration).toContain("analytics_events_session_hash_check");
+    expect(migration).toContain("founder_launch_interests_expiry_check");
+  });
+
+  it("binds payment truth to service periods and prevents duplicate paid enrollment in 0015", () => {
+    expect(Object.keys(billingPaymentStates)).toEqual(
+      expect.arrayContaining(["periodStart", "periodEnd"]),
+    );
+    expect(
+      getTableConfig(billingCheckoutSessions).indexes.map((index) => index.config.name),
+    ).toContain("billing_checkout_project_open_uidx");
+    expect(Object.keys(billingCheckoutSessions)).toEqual(
+      expect.arrayContaining(["expiresAt", "requestedStripeCustomerId"]),
+    );
+    expect(billingCheckoutSessions.stripeCheckoutSessionId.notNull).toBe(false);
+    expect(getTableConfig(subscriptions).indexes.map((index) => index.config.name)).toContain(
+      "subscriptions_project_nonterminal_uidx",
+    );
+
+    const migration = readFileSync(
+      fileURLToPath(
+        new URL("../migrations/0015_billing_period_checkout_guards.sql", import.meta.url),
+      ),
+      "utf8",
+    );
+    expect(migration).toContain('ADD COLUMN "period_start"');
+    expect(migration).toContain('ADD COLUMN "expires_at"');
+    expect(migration).toContain('ADD COLUMN "requested_stripe_customer_id"');
+    expect(migration).toContain('ALTER COLUMN "stripe_checkout_session_id" DROP NOT NULL');
+    expect(migration).toContain("billing_payment_period_check");
+    expect(migration).toContain("billing_checkout_binding_check");
+    expect(migration).toContain("BILLING_CHECKOUT_DUPLICATE_OPEN_REQUIRES_RECONCILIATION");
+    expect(migration).toContain(
+      "BILLING_DUPLICATE_NONTERMINAL_SUBSCRIPTIONS_REQUIRE_RECONCILIATION",
+    );
+    expect(migration).toContain(`"created_at" + interval '24 hours'`);
+    expect(migration).toContain("billing_checkout_project_open_uidx");
+    expect(migration).toContain("subscriptions_project_nonterminal_uidx");
   });
 
   it("keeps the same external signal independent across scan source runs", () => {

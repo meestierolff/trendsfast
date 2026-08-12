@@ -1,5 +1,6 @@
 import { FeedbackControls } from "./feedback-controls";
 import { NextMoveCard, type NextMoveCardModel } from "./next-move-card";
+import { TrackedEvidenceLink } from "./tracked-evidence-link";
 import {
   dateTimeValue,
   formatCodeLabel,
@@ -83,9 +84,11 @@ function freshestObservation(evidence: ReadyScanResultView["evidence"]): ScanDat
 function EvidenceReceipt({
   receipt,
   index,
+  token,
 }: {
   receipt: ReadyScanResultView["evidence"][number];
   index: number;
+  token: string;
 }) {
   const originalUrl = safeHttpUrl(receipt.url);
   return (
@@ -137,9 +140,12 @@ function EvidenceReceipt({
         {originalUrl ? (
           <div className="scan-receipt-link">
             <code>{receipt.url}</code>
-            <a href={originalUrl} rel="noreferrer">
+            <TrackedEvidenceLink
+              href={originalUrl}
+              analyticsPath={`/api/scans/${encodeURIComponent(token)}/evidence/${encodeURIComponent(receipt.id)}`}
+            >
               View original evidence <span aria-hidden="true">↗</span>
-            </a>
+            </TrackedEvidenceLink>
           </div>
         ) : (
           <div className="scan-receipt-link">
@@ -177,6 +183,11 @@ export function ScanResultView({ token, result }: { token: string; result: Ready
           title: receipt.title || "Original source receipt",
           note: receipt.reason,
           ...(href ? { href } : {}),
+          ...(href
+            ? {
+                analyticsPath: `/api/scans/${encodeURIComponent(token)}/evidence/${encodeURIComponent(receipt.id)}`,
+              }
+            : {}),
         };
       }),
     limitations: result.limitations,
@@ -323,7 +334,7 @@ export function ScanResultView({ token, result }: { token: string; result: Ready
         <div className="scan-receipts">
           {result.evidence.length > 0 ? (
             result.evidence.map((receipt, index) => (
-              <EvidenceReceipt key={receipt.id} receipt={receipt} index={index} />
+              <EvidenceReceipt key={receipt.id} receipt={receipt} index={index} token={token} />
             ))
           ) : (
             <p className="scan-no-receipts">No evidence receipts were supplied with this result.</p>

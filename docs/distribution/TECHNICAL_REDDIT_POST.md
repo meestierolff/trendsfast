@@ -9,6 +9,11 @@ How I’m keeping an LLM from inventing evidence in a trend-recommendation pipel
 
 ## Draft
 
+I was spending hours searching social media and search demand for something
+relevant to distribute. TrendsFast now gives my agents one evidence-backed Next
+Move from a product URL. The implementation question that mattered most was how
+to keep that answer tied to original evidence.
+
 The obvious implementation for “what should I publish today?” is to fetch a
 bunch of posts and ask a model. I tried designing the system from the opposite
 direction: assume every fetched page, provider result, and model token is
@@ -36,7 +41,7 @@ Three rules matter more than the model choice:
 
 External calls are bounded and checkpointed in PostgreSQL before/after each
 step, with separate request/provider/delivery idempotency and a per-scan cost
-ceiling. Fixture mode walks through the same schemas, persistence, scoring,
+ceiling. Example mode walks through the same schemas, persistence, scoring,
 review, and delivery path without paid keys.
 
 The trickiest non-model boundary is submitted-URL fetching: every DNS result and
@@ -45,14 +50,19 @@ with strict byte/type/time caps. Extracted text is prompt-injection data, not
 instructions.
 
 Current verification at `[SHA]`: `[PASTE ONLY ACTUAL TEST/READ-BACK SUMMARY]`.
-There is no automated Reddit ingestion; that remains `LEGAL_REVIEW`. Billing is
-disabled.
+There is no automated Reddit ingestion; that remains permission-gated. Paid
+availability is not claimed unless the linked release record proves it.
 
 Source/code: `[REPOSITORY OR ARCHITECTURE LINK]`
 
 I’d value critique of `[ONE SPECIFIC OPEN QUESTION: e.g. evidence independence
-or crash idempotency]`, especially failure cases I should add to the fixture
+or crash idempotency]`, especially failure cases I should add to the example
 suite.
+
+If this is relevant to your product:
+
+> **Drop your product URL. I’ll run a free founder-reviewed trend and
+> distribution scan.** `[TRACKED LINK]`
 
 ## Posting guardrail
 

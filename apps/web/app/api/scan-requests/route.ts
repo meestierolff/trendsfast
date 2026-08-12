@@ -1,8 +1,17 @@
 import { after, NextResponse } from "next/server";
 import { loadEnv } from "@trendsfast/config";
 import { readBoundedJsonBody } from "../../../lib/bounded-json";
+import {
+  analyticsSessionCookie,
+  analyticsSessionForRequest,
+} from "../../../lib/first-party-analytics";
 import { getRepositories } from "../../../lib/server-database";
-import { acceptPublicScan, isSameOrigin, PublicScanError } from "../../../lib/public-scan-service";
+import {
+  acceptPublicScan,
+  isSameOrigin,
+  publicScanCredentialModeAvailable,
+  PublicScanError,
+} from "../../../lib/public-scan-service";
 import { clientAddress } from "../../../lib/request-security";
 import { runPersistedScan } from "../../../lib/scan-processing";
 import { createTurnstileVerifier } from "../../../lib/turnstile";
@@ -16,6 +25,19 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { error: "Cross-site scan requests are not accepted." },
       { status: 403 },
+    );
+  }
+  if (
+    !publicScanCredentialModeAvailable(
+      env.PROVIDER_CREDENTIAL_MODE,
+      env.APP_URL,
+      process.env.VERCEL_ENV ?? process.env.TRENDSFAST_DEPLOYMENT_ENV,
+      process.env.VERCEL === "1",
+    )
+  ) {
+    return NextResponse.json(
+      { error: "Public scans are temporarily unavailable." },
+      { status: 503, headers: { "cache-control": "no-store" } },
     );
   }
   const parsedBody = await readBoundedJsonBody(request, 8_192);
@@ -40,6 +62,10 @@ export async function POST(request: Request) {
   }
   const repositories = getRepositories();
   const address = clientAddress(request.headers);
+  const analyticsSession =
+    env.SESSION_SECRET && env.SESSION_SECRET.length >= 32
+      ? analyticsSessionForRequest(request, env.SESSION_SECRET)
+      : null;
   try {
     const accepted = await acceptPublicScan(
       {
@@ -54,27 +80,33 @@ export async function POST(request: Request) {
         repository: repositories.scans,
         fingerprintPepper,
         dailyLimit: env.PUBLIC_SCAN_DAILY_LIMIT,
+        ...(analyticsSession
+          ? { anonymousSessionHash: analyticsSession.anonymousSessionHash }
+          : {}),
         ...(env.TURNSTILE_ENABLED && env.TURNSTILE_SECRET_KEY
           ? { turnstile: createTurnstileVerifier(env.TURNSTILE_SECRET_KEY) }
           : {}),
       },
     );
-    await repositories.analytics
-      .append({
-        name: "free_scan_submitted",
-        scanRequestId: accepted.scanRequestId,
-        properties: { reused: accepted.reused },
-      })
-      .catch(() => undefined);
     if (!accepted.reused && env.PUBLIC_SCAN_PROCESSING === "inline") {
       after(async () => {
         await runPersistedScan(accepted.token).catch(() => undefined);
       });
     }
-    return NextResponse.json(
+    const response = NextResponse.json(
       { token: accepted.token, status: "QUEUED", reused: accepted.reused },
       { status: accepted.reused ? 200 : 202, headers: { "cache-control": "no-store" } },
     );
+    if (analyticsSession?.rawSessionToSet) {
+      response.headers.set(
+        "set-cookie",
+        analyticsSessionCookie(
+          analyticsSession.rawSessionToSet,
+          env.APP_URL.startsWith("https://"),
+        ),
+      );
+    }
+    return response;
   } catch (error) {
     if (error instanceof PublicScanError) {
       return NextResponse.json({ error: error.message }, { status: error.status });

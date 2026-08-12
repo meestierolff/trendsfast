@@ -59,10 +59,52 @@
       "breakpoints": true
     },
     {
-      "idx": 8,
+      "idx": 10,
       "version": "7",
       "when": 1786473877381,
       "tag": "0008_luxuriant_onslaught",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1786475189124,
+      "tag": "0011_billing_webhook_authority",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1786475219691,
+      "tag": "0012_founder_usage_limits",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1786475258056,
+      "tag": "0013_paid_monitoring",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1786476861628,
+      "tag": "0014_launch_analytics_interest",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1786482314124,
+      "tag": "0015_billing_period_checkout_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1786483080088,
+      "tag": "0016_feedback_acl_guards",
       "breakpoints": true
     }
   ]

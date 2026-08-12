@@ -137,9 +137,9 @@ importers:
 
   packages/analytics:
     dependencies:
-      "@trendsfast/database":
+      "@trendsfast/schemas":
         specifier: workspace:*
-        version: link:../database
+        version: link:../schemas
     devDependencies:
       typescript:
         specifier: ^5.9.0

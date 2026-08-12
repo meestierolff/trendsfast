@@ -48,7 +48,7 @@ export type V1ApiDependencies = {
 
 export class ApiServiceError extends Error {
   constructor(
-    readonly code: "RATE_LIMITED" | "COST_LIMITED" | "FORBIDDEN" | "CONFLICT",
+    readonly code: "RATE_LIMITED" | "COST_LIMITED" | "USAGE_LIMITED" | "FORBIDDEN" | "CONFLICT",
     message: string,
     readonly status: 403 | 409 | 429 = code === "FORBIDDEN" ? 403 : code === "CONFLICT" ? 409 : 429,
   ) {
@@ -137,7 +137,9 @@ export function createV1Api(dependencies: V1ApiDependencies) {
               "422": apiErrorResponse(
                 "The JSON body does not match the Next Move request contract",
               ),
-              "429": apiErrorResponse("The key's request or provider-cost limit was reached"),
+              "429": apiErrorResponse(
+                "The key's request, provider-cost, or Founder usage limit was reached",
+              ),
               "500": apiErrorResponse("The request failed without exposing internal details"),
             },
           },

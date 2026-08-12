@@ -2,15 +2,18 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { sendFirstPartyAnalytics } from "../lib/analytics-client";
 
 export function ScanForm({
   compact = false,
   formId,
   buttonLabel = "Find my next move",
+  analyticsPlacement,
 }: {
   compact?: boolean;
   formId?: string;
   buttonLabel?: string;
+  analyticsPlacement?: "homepage_hero" | "homepage_repeat" | "homepage_final" | "agents";
 }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
@@ -18,6 +21,9 @@ export function ScanForm({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (analyticsPlacement) {
+      sendFirstPartyAnalytics({ event: "hero_cta_clicked", placement: analyticsPlacement });
+    }
     setPending(true);
     setError(null);
     const form = new FormData(event.currentTarget);

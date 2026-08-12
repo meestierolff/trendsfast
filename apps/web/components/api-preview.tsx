@@ -28,7 +28,7 @@ const ready = `GET /v1/next-moves/scan_01J...
     "channel": "x",
     "topic": "Evidence-first distribution agents",
     "confidence": 0.82,
-    "valid_until": "2026-08-14T10:00:00.000Z"
+    "valid_until": "<absolute ISO-8601 timestamp>"
   },
   "why_now": {
     "signal_class": "CORROBORATED_SIGNAL",

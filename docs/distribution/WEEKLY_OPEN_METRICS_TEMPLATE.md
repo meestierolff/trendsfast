@@ -18,13 +18,15 @@ Build/source-status snapshot: `[SHA + LINK]`
 | Median provider cost      |       `[$ or insufficient]` | completed non-fixture scan ledger; state unknown-cost handling          |
 | Median founder review     | `[minutes or insufficient]` | completed review events with start/end definition                       |
 | `WAIT` rate               |  `[x/y, % or insufficient]` | reviewed WAIT results / delivered reviewed results                      |
+| Repeat scan requests      |  `[x/y, % or insufficient]` | explicit repeat requests / delivered scans eligible for another scan    |
 | Research time replaced    |   `[hours or insufficient]` | self-reported/explicit estimate; never implied measured automatically   |
 
 ## Source coverage
 
-Paste the actual verified/degraded matrix and read-back dates. Do not aggregate a
-configured or fixture-only source into “live coverage.” Reddit automation remains
-`LEGAL_REVIEW` unless an approved status record says otherwise.
+Paste the actual **Connected**, **Limited**, **Coming soon**, **Unavailable**, or
+**Permission required** matrix and read-back dates. Do not aggregate a configured
+or example-only source into “connected coverage.” Keep the exact engineering
+state in the linked source ledger.
 
 ## What changed
 

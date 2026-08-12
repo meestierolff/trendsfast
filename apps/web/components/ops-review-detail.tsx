@@ -100,6 +100,7 @@ export type OpsReviewDetailView = {
     callsMade: number;
     candidateCount: number;
     actualCostUsd: string;
+    estimatedCostUsd: string;
     durationMs?: number | null;
     failureCode?: string | null;
     failureMessage?: string | null;
@@ -369,7 +370,7 @@ export function OpsReviewDetail({
                   <th>Latency</th>
                   <th>Calls</th>
                   <th>Candidates</th>
-                  <th>Cost</th>
+                  <th>Cost accounting</th>
                   <th>Failure</th>
                 </tr>
               </thead>
@@ -394,7 +395,15 @@ export function OpsReviewDetail({
                       {sourceRun.callsMade} / {sourceRun.maxCalls}
                     </td>
                     <td>{sourceRun.candidateCount}</td>
-                    <td>${Number(sourceRun.actualCostUsd).toFixed(4)}</td>
+                    <td>
+                      <strong>
+                        ${Number(sourceRun.actualCostUsd).toFixed(4)} reported subtotal
+                      </strong>
+                      <small>
+                        ${Number(sourceRun.estimatedCostUsd).toFixed(4)} reserved · unsettled
+                        attempts excluded
+                      </small>
+                    </td>
                     <td>
                       {sourceRun.failureCode ? (
                         <>

@@ -7,6 +7,7 @@ import {
   isScanStateTransitionAllowed,
   isSameIdempotentRequest,
   sanitizeAnalyticsAttribution,
+  sanitizeAnalyticsEventProperties,
   sanitizeProcessingFailure,
   sanitizeProviderPayloadFragment,
   sanitizeAnalyticsProperties,
@@ -111,7 +112,19 @@ describe("scan lifecycle", () => {
         source: "reddit",
         api_key: "tf_live_prefix.secret",
       }),
-    ).toEqual({ landing_path: "/scan/private", source: "reddit" });
+    ).toEqual({ landing_path: "/other", source: "reddit" });
+    expect(
+      sanitizeAnalyticsAttribution({
+        first_landing: "/scan/scan_this-private-capability-must-never-persist",
+      }),
+    ).toEqual({ first_landing: "/other" });
+    expect(
+      sanitizeAnalyticsEventProperties("hero_cta_clicked", {
+        placement: "homepage_hero",
+        campaign: "arbitrary",
+        email: "private@example.com",
+      }),
+    ).toEqual({ placement: "homepage_hero" });
   });
 
   it("redacts and bounds persisted provider fragments", () => {

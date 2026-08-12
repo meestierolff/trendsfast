@@ -14,6 +14,7 @@ import {
   sourceRuns,
   deliveryTokens,
 } from "../schema";
+import { requireDecisionEvidenceQuality } from "./review-evidence";
 
 type AppendReviewEventInput = {
   scanRequestId: string;
@@ -131,33 +132,47 @@ export class ReviewRepository {
     note?: string;
   }) {
     return this.db.transaction(async (tx) => {
-      await tx.execute(sql`SELECT id FROM next_moves WHERE id = ${input.nextMoveId} FOR UPDATE`);
-      const [move] = await tx
+      const [identity] = await tx
         .select()
         .from(nextMoves)
         .where(eq(nextMoves.id, input.nextMoveId))
         .limit(1);
-      if (!move) throw new Error("Next Move was not found");
+      if (!identity) throw new Error("Next Move was not found");
+      await tx.execute(
+        sql`SELECT id FROM scan_requests WHERE id = ${identity.scanRequestId} FOR UPDATE`,
+      );
+      await tx.execute(sql`SELECT id FROM scan_runs WHERE id = ${identity.scanRunId} FOR UPDATE`);
+      await tx.execute(sql`SELECT id FROM next_moves WHERE id = ${identity.id} FOR UPDATE`);
+      const [locked] = await tx
+        .select({ move: nextMoves, requestState: scanRequests.state, runState: scanRuns.state })
+        .from(nextMoves)
+        .innerJoin(scanRequests, eq(scanRequests.id, nextMoves.scanRequestId))
+        .innerJoin(scanRuns, eq(scanRuns.id, nextMoves.scanRunId))
+        .where(eq(nextMoves.id, identity.id))
+        .limit(1);
+      if (!locked) throw new Error("Next Move was not found");
+      const move = locked.move;
+      if (locked.requestState !== "REVIEW_REQUIRED" || locked.runState !== "REVIEW_REQUIRED") {
+        throw new Error("Next Move is no longer in founder review");
+      }
       if (move.state !== "DRAFT" && move.state !== "APPROVED") {
         throw new Error(`Next Move cannot be approved from ${move.state}`);
       }
-      if (move.action !== "WAIT") {
-        const [evidence] = await tx
-          .select({ id: evidenceReceipts.id })
-          .from(evidenceReceipts)
-          .where(
-            and(
-              eq(evidenceReceipts.nextMoveId, move.id),
-              eq(evidenceReceipts.bindingRole, "DECISION_SUPPORT"),
-              eq(evidenceReceipts.availability, "AVAILABLE"),
-              eq(evidenceReceipts.verified, true),
-            ),
-          )
-          .limit(1);
-        if (!evidence) {
-          throw new Error("A non-WAIT move requires verified stored evidence");
-        }
-      }
+      const receipts = await tx
+        .select({
+          bindingRole: evidenceReceipts.bindingRole,
+          availability: evidenceReceipts.availability,
+          verified: evidenceReceipts.verified,
+          source: evidenceReceipts.source,
+          canonicalUrl: evidenceReceipts.canonicalUrl,
+        })
+        .from(evidenceReceipts)
+        .where(eq(evidenceReceipts.nextMoveId, move.id));
+      const evidenceQuality = requireDecisionEvidenceQuality({
+        action: move.action,
+        signalClass: move.signalClass,
+        receipts,
+      });
 
       const now = new Date();
       const [approved] = await tx
@@ -165,10 +180,13 @@ export class ReviewRepository {
         .set({
           state: "APPROVED",
           founderReviewed: true,
+          ...(move.action === "WAIT"
+            ? {}
+            : { independentSourceCount: evidenceQuality.independentSourceCount }),
           approvedAt: now,
           updatedAt: now,
         })
-        .where(eq(nextMoves.id, move.id))
+        .where(and(eq(nextMoves.id, move.id), inArray(nextMoves.state, ["DRAFT", "APPROVED"])))
         .returning();
       if (!approved) throw new Error("Could not approve Next Move");
 
@@ -193,36 +211,62 @@ export class ReviewRepository {
     validUntil: Date;
   }) {
     return this.db.transaction(async (tx) => {
-      const [move] = await tx
+      const [identity] = await tx
         .select()
         .from(nextMoves)
         .where(eq(nextMoves.id, input.nextMoveId))
         .limit(1);
-      if (!move) throw new Error("Next Move was not found");
+      if (!identity) throw new Error("Next Move was not found");
+      await tx.execute(
+        sql`SELECT id FROM scan_requests WHERE id = ${identity.scanRequestId} FOR UPDATE`,
+      );
+      await tx.execute(sql`SELECT id FROM scan_runs WHERE id = ${identity.scanRunId} FOR UPDATE`);
+      await tx.execute(sql`SELECT id FROM next_moves WHERE id = ${identity.id} FOR UPDATE`);
+      const [locked] = await tx
+        .select({ move: nextMoves, requestState: scanRequests.state, runState: scanRuns.state })
+        .from(nextMoves)
+        .innerJoin(scanRequests, eq(scanRequests.id, nextMoves.scanRequestId))
+        .innerJoin(scanRuns, eq(scanRuns.id, nextMoves.scanRunId))
+        .where(eq(nextMoves.id, identity.id))
+        .limit(1);
+      if (!locked) throw new Error("Next Move was not found");
+      const move = locked.move;
+      if (
+        locked.requestState !== "REVIEW_REQUIRED" ||
+        locked.runState !== "REVIEW_REQUIRED" ||
+        move.state !== "DRAFT"
+      ) {
+        throw new Error("Only a founder review draft can be converted to WAIT");
+      }
       const now = new Date();
+      if (Number.isNaN(input.validUntil.getTime()) || input.validUntil <= now) {
+        throw new Error("A converted WAIT decision requires a future validity window");
+      }
+      const reason = redactSecrets(input.reason).slice(0, 4_000);
+      if (!reason) throw new Error("A converted WAIT decision requires a reason");
       const [updated] = await tx
         .update(nextMoves)
         .set({
           action: "WAIT",
           channel: "none",
           topic: "No move passes the quality floor",
-          angle: input.reason,
+          angle: reason,
           format: "none",
           hook: "Wait for stronger evidence.",
-          outline: [input.reason],
+          outline: [reason],
           cta: "Run another scan when the evidence window changes.",
-          whyNow: input.reason,
+          whyNow: reason,
           signalClass: "INSUFFICIENT_SIGNAL",
           independentSourceCount: 0,
           saturation: "unknown",
-          limitations: [input.reason],
+          limitations: [reason],
           validUntil: input.validUntil,
           state: "APPROVED",
           founderReviewed: true,
           approvedAt: now,
           updatedAt: now,
         })
-        .where(eq(nextMoves.id, move.id))
+        .where(and(eq(nextMoves.id, move.id), eq(nextMoves.state, "DRAFT")))
         .returning();
       if (!updated) throw new Error("Could not convert Next Move to WAIT");
       await tx.insert(reviewEvents).values({
@@ -233,7 +277,7 @@ export class ReviewRepository {
         reviewerId: input.reviewerId,
         before: { action: move.action, signalClass: move.signalClass },
         after: { action: "WAIT", signalClass: "INSUFFICIENT_SIGNAL" },
-        note: redactSecrets(input.reason).slice(0, 4_000),
+        note: reason,
       });
       return updated;
     });
@@ -241,23 +285,54 @@ export class ReviewRepository {
 
   async rejectEvidence(input: { evidenceReceiptId: string; reviewerId: string; reason: string }) {
     return this.db.transaction(async (tx) => {
-      const [receipt] = await tx
-        .select()
+      const [identity] = await tx
+        .select({
+          receiptId: evidenceReceipts.id,
+          nextMoveId: nextMoves.id,
+          scanRequestId: nextMoves.scanRequestId,
+          scanRunId: nextMoves.scanRunId,
+        })
         .from(evidenceReceipts)
+        .innerJoin(nextMoves, eq(nextMoves.id, evidenceReceipts.nextMoveId))
         .where(eq(evidenceReceipts.id, input.evidenceReceiptId))
         .limit(1);
-      if (!receipt) throw new Error("Evidence receipt was not found");
-      const [move] = await tx
-        .select()
-        .from(nextMoves)
-        .where(eq(nextMoves.id, receipt.nextMoveId))
+      if (!identity) throw new Error("Evidence receipt was not found");
+      await tx.execute(
+        sql`SELECT id FROM scan_requests WHERE id = ${identity.scanRequestId} FOR UPDATE`,
+      );
+      await tx.execute(sql`SELECT id FROM scan_runs WHERE id = ${identity.scanRunId} FOR UPDATE`);
+      await tx.execute(sql`SELECT id FROM next_moves WHERE id = ${identity.nextMoveId} FOR UPDATE`);
+      await tx.execute(
+        sql`SELECT id FROM evidence_receipts WHERE id = ${identity.receiptId} FOR UPDATE`,
+      );
+      const [locked] = await tx
+        .select({
+          receipt: evidenceReceipts,
+          move: nextMoves,
+          requestState: scanRequests.state,
+          runState: scanRuns.state,
+        })
+        .from(evidenceReceipts)
+        .innerJoin(nextMoves, eq(nextMoves.id, evidenceReceipts.nextMoveId))
+        .innerJoin(scanRequests, eq(scanRequests.id, nextMoves.scanRequestId))
+        .innerJoin(scanRuns, eq(scanRuns.id, nextMoves.scanRunId))
+        .where(eq(evidenceReceipts.id, identity.receiptId))
         .limit(1);
-      if (!move) throw new Error("Next Move was not found");
+      if (!locked) throw new Error("Evidence receipt was not found");
+      const { receipt, move } = locked;
+      if (
+        locked.requestState !== "REVIEW_REQUIRED" ||
+        locked.runState !== "REVIEW_REQUIRED" ||
+        move.state !== "DRAFT"
+      ) {
+        throw new Error("Evidence can only be rejected from a founder review draft");
+      }
       const [updated] = await tx
         .update(evidenceReceipts)
         .set({ availability: "REJECTED", verified: false, verifiedAt: null })
-        .where(eq(evidenceReceipts.id, receipt.id))
+        .where(and(eq(evidenceReceipts.id, receipt.id), eq(evidenceReceipts.nextMoveId, move.id)))
         .returning();
+      if (!updated) throw new Error("Could not reject evidence");
       await tx.insert(reviewEvents).values({
         scanRequestId: move.scanRequestId,
         scanRunId: move.scanRunId,
@@ -310,11 +385,22 @@ export class ReviewRepository {
         .where(
           and(
             eq(scanRuns.id, input.scanRunId),
+            eq(scanRuns.scanRequestId, input.scanRequestId),
             inArray(scanRuns.state, ["QUEUED", "RUNNING", "REVIEW_REQUIRED"]),
           ),
         )
         .returning({ id: scanRuns.id });
       if (!run) throw new Error("A delivered or missing scan run cannot be marked failed");
+      await tx
+        .update(nextMoves)
+        .set({ state: "REJECTED", updatedAt: now })
+        .where(
+          and(
+            eq(nextMoves.scanRequestId, input.scanRequestId),
+            eq(nextMoves.scanRunId, input.scanRunId),
+            inArray(nextMoves.state, ["DRAFT", "APPROVED"]),
+          ),
+        );
       const [event] = await tx
         .insert(reviewEvents)
         .values({

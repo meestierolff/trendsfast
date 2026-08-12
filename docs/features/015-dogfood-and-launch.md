@@ -74,6 +74,17 @@ Eight founder-linked products are a learning set, not broad market validation.
 Offer a small number of free founder-reviewed scans and publish only
 permissioned, denominator-backed learning.
 
+Canonical founder message:
+
+> I was spending hours searching social media and search demand for something
+> relevant to distribute. TrendsFast now gives my agents one evidence-backed
+> Next Move from a product URL.
+
+Canonical CTA:
+
+> Drop your product URL. I’ll run a free founder-reviewed trend and distribution
+> scan.
+
 ## Rollback
 
 Pause intake, retract inaccurate public material, honor takedowns, and keep

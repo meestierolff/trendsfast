@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   acceptPublicScan,
+  publicScanCredentialModeAvailable,
   PublicScanError,
   type PublicScanRepository,
 } from "../../lib/public-scan-service";
@@ -17,15 +18,42 @@ function repository(overrides: Partial<PublicScanRepository> = {}): PublicScanRe
 }
 
 describe("public scan acceptance", () => {
+  it("fails closed for fixture mode on every non-loopback public origin", () => {
+    expect(publicScanCredentialModeAvailable("fixture", "https://trendsfast.com")).toBe(false);
+    expect(publicScanCredentialModeAvailable("fixture", "https://preview.vercel.app")).toBe(false);
+    expect(publicScanCredentialModeAvailable("fixture", "http://localhost:3000")).toBe(true);
+    expect(publicScanCredentialModeAvailable("fixture", "http://127.0.0.1:3000")).toBe(true);
+    expect(publicScanCredentialModeAvailable("fixture", "http://[::1]:3000")).toBe(true);
+    expect(
+      publicScanCredentialModeAvailable("fixture", "https://localhost:3000", "production"),
+    ).toBe(false);
+    expect(publicScanCredentialModeAvailable("fixture", "https://127.0.0.1:3000", "preview")).toBe(
+      false,
+    );
+    expect(
+      publicScanCredentialModeAvailable("fixture", "https://localhost:3000", undefined, true),
+    ).toBe(false);
+    expect(publicScanCredentialModeAvailable("managed", "https://trendsfast.com")).toBe(true);
+    expect(publicScanCredentialModeAvailable("byok", "https://trendsfast.com")).toBe(true);
+  });
+
   it("stores only a keyed requester hash and creates an unguessable token", async () => {
     const repo = repository();
     const accepted = await acceptPublicScan(
       { productUrl: "https://example.com", address: "203.0.113.10" },
-      { repository: repo, fingerprintPepper: "pepper-pepper-pepper-pepper-pepper", dailyLimit: 20 },
+      {
+        repository: repo,
+        fingerprintPepper: "pepper-pepper-pepper-pepper-pepper",
+        anonymousSessionHash: "a".repeat(64),
+        dailyLimit: 20,
+      },
     );
     expect(accepted.token).toMatch(/^scan_[A-Za-z0-9_-]{43}$/);
     expect(repo.admitPublicRequest).toHaveBeenCalledWith(
-      expect.objectContaining({ normalizedUrl: "https://example.com/" }),
+      expect.objectContaining({
+        normalizedUrl: "https://example.com/",
+        anonymousSessionHash: "a".repeat(64),
+      }),
     );
     expect(JSON.stringify(vi.mocked(repo.admitPublicRequest).mock.calls)).not.toContain(
       "203.0.113.10",

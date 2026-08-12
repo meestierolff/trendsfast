@@ -25,21 +25,26 @@ export default function PrivacyPage() {
           <p>
             We store the submitted product URL, inferred public product context, bounded source
             receipts, scan lifecycle and cost metadata, feedback you choose to submit, and the
-            minimum security audit events needed to operate the service.
+            minimum security audit events needed to operate the service. If you explicitly join the
+            paid launch list, we also store the normalized email address and consent record needed
+            to contact you about that launch.
           </p>
           <h2>Private by default</h2>
           <p>
             Scan links use unguessable tokens and are not made public without explicit consent. We
             do not send private scan URLs, API keys, emails, free text, prompts, or evidence text to
-            optional external analytics.
+            optional external analytics. First-party browser analytics use an HMAC-derived,
+            short-lived session identity and fixed event dimensions rather than raw private URLs or
+            submitted content.
           </p>
           <h2>Retention and deletion</h2>
           <p>
-            The current configuration defaults to a 90-day retention target, but no automated purge
+            The current configuration defaults to a 90-day scan and analytics retention target.
+            Paid-launch interest expires after 180 days unless you consent again. No automated purge
             scheduler or self-service deletion endpoint is enabled yet. A reviewed operator can
-            invoke the repository&apos;s exact-project deletion or expiry-purge procedure;
-            completion and lawful retention exceptions must be verified manually. Public launch
-            remains gated on an owned, monitored workflow.
+            invoke the exact-project, launch-interest, or expiry-purge procedure; completion and
+            lawful retention exceptions must be verified manually. Public launch remains gated on an
+            owned, monitored workflow.
           </p>
           <h2>Providers</h2>
           <p>

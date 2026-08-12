@@ -30,13 +30,12 @@ units and keep actual cost explicitly unknown when it cannot be known.
 For synthesis, the current implementation requires explicit non-fixture input
 and output prices per million tokens. It computes a conservative pre-call upper
 bound from input bytes, an allowance, and the configured maximum output tokens,
-then atomically reserves that amount under a unique ledger key. A duplicate
-reservation refuses another model call. The entry is labeled
-`conservative_pre_call_reservation` with `unknown_not_settled`; actual provider
-token usage and cost are not yet reconciled. The current model ledger keeps its
-actual-cost numeric field at `$0` alongside that unknown status; the zero is not
-a verified free/actual call. The operator-supplied price schedule is also not
-independently trusted.
+then atomically reserves that amount under a unique ledger key before I/O. A
+duplicate reservation refuses another model call. Valid provider-reported usage
+settles the reservation. Missing or invalid usage remains labeled
+`conservative_pre_call_reservation` with `unknown_not_settled`; any zero numeric
+actual field alongside that status is not verified free/actual usage. The
+operator-supplied price schedule is also not independently trusted.
 
 ## Admission control
 
@@ -48,12 +47,12 @@ admit only when operation_worst_case_estimate <= remaining
 ```
 
 Reserve worst-case cost atomically before the call. Reconcile to actual cost
-when known; synthesis does not yet perform that reconciliation. A classified
-in-attempt provider retry consumes its own bounded cost path, and the model has
-at most one repair covered by its conservative reservation. When remaining
-budget is inadequate, skip the source with `COST_CEILING` and evaluate whether
-disclosed partial coverage can still return a valid move; otherwise return
-`WAIT` or fail safely.
+when valid provider-reported usage is known; otherwise retain the conservative
+unsettled state. A classified in-attempt provider retry consumes its own bounded
+cost path, and the model has at most one repair covered by its conservative
+reservation. When remaining budget is inadequate, skip the source with
+`COST_CEILING` and evaluate whether disclosed partial coverage can still return
+a valid move; otherwise return `WAIT` or fail safely.
 
 Automatic recovery does not replay a provider left `RUNNING`: it records
 `PROVIDER_OUTCOME_UNKNOWN` and stops. The explicit ops action can still retry a

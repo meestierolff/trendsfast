@@ -19,7 +19,7 @@ Do not mark a gate passed without a link or artifact.
 14. **Dogfood:** `[eight results or NOT RUN]`
 15. **Provider/model cost:** `[ledger-derived provider actual/unknown; conservative model reservation; actual usage reconciliation; dated price source; or fixture zero]`
 16. **Stripe:** `[disabled state; application route/test journey or NOT IMPLEMENTED; no live inference]`
-17. **Limitations:** `[known defects, beta/degraded paths, manual-source entry status, uncertain-effect explicit retry policy]`
+17. **Limitations:** `[known defects, limited/degraded paths, manual-source supplemental/recompute status, uncertain-effect explicit retry policy]`
 18. **Launch gates:** `[every checklist item with pass/fail/not run]`
 19. **Deployment procedure/result:** `[exact steps; distinguish planned from executed]`
 20. **Founder actions:** `[accounts, terms, read-backs, legal, DNS, launch]`

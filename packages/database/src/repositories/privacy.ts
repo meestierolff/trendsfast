@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, lt, notExists, or } from "drizzle-orm";
+import { and, count, eq, inArray, isNull, lt, lte, notExists, or } from "drizzle-orm";
 
 import type { TrendsFastDatabase } from "../client";
 import {
@@ -7,6 +7,8 @@ import {
   apiKeyManagementEvents,
   apiKeys,
   deliveryTokens,
+  founderLaunchInterestEvents,
+  founderLaunchInterests,
   nextMoves,
   projects,
   scanRequests,
@@ -29,28 +31,34 @@ export class PrivacyRepository {
   constructor(private readonly db: TrendsFastDatabase) {}
 
   async deleteProjectData(target: ProjectDeletionTarget) {
-    if (
-      ("projectId" in target && !target.projectId) ||
-      ("normalizedUrl" in target && !target.normalizedUrl)
-    ) {
+    const projectId = typeof target.projectId === "string" ? target.projectId.trim() : "";
+    const normalizedUrlInput =
+      typeof target.normalizedUrl === "string" ? target.normalizedUrl.trim() : "";
+    if (Number(Boolean(projectId)) + Number(Boolean(normalizedUrlInput)) !== 1) {
       throw new Error("Project deletion requires one exact project ID or normalized URL");
     }
 
-    const projectFilter =
-      "projectId" in target && target.projectId
-        ? eq(projects.id, target.projectId)
-        : eq(
-            projects.normalizedUrl,
-            normalizeProductUrl((target as { normalizedUrl: string }).normalizedUrl),
-          );
+    const normalizedTarget = normalizedUrlInput ? normalizeProductUrl(normalizedUrlInput) : null;
+    const projectFilter = projectId
+      ? eq(projects.id, projectId)
+      : eq(projects.normalizedUrl, normalizedTarget!);
 
     return this.db.transaction(async (tx) => {
       const [project] = await tx
-        .select({ id: projects.id })
+        .select({ id: projects.id, normalizedUrl: projects.normalizedUrl })
         .from(projects)
         .where(projectFilter)
         .limit(1);
-      if (!project) {
+      const requestFilter = project
+        ? or(
+            eq(scanRequests.projectId, project.id),
+            eq(scanRequests.normalizedUrl, project.normalizedUrl),
+          )
+        : eq(scanRequests.normalizedUrl, normalizedTarget!);
+      const requestIds = (
+        await tx.select({ id: scanRequests.id }).from(scanRequests).where(requestFilter)
+      ).map((row) => row.id);
+      if (!project && requestIds.length === 0) {
         return {
           found: false as const,
           projectId: null,
@@ -61,12 +69,6 @@ export class PrivacyRepository {
         };
       }
 
-      const requestIds = (
-        await tx
-          .select({ id: scanRequests.id })
-          .from(scanRequests)
-          .where(eq(scanRequests.projectId, project.id))
-      ).map((row) => row.id);
       const moveIds = requestIds.length
         ? (
             await tx
@@ -75,9 +77,14 @@ export class PrivacyRepository {
               .where(inArray(nextMoves.scanRequestId, requestIds))
           ).map((row) => row.id)
         : [];
-      const keyIds = (
-        await tx.select({ id: apiKeys.id }).from(apiKeys).where(eq(apiKeys.projectId, project.id))
-      ).map((row) => row.id);
+      const keyIds = project
+        ? (
+            await tx
+              .select({ id: apiKeys.id })
+              .from(apiKeys)
+              .where(eq(apiKeys.projectId, project.id))
+          ).map((row) => row.id)
+        : [];
 
       let deletedAnalyticsEvents = 0;
       const analyticsFilters = [
@@ -95,24 +102,32 @@ export class PrivacyRepository {
       if (keyIds.length) {
         await tx.delete(apiKeyAuthEvents).where(inArray(apiKeyAuthEvents.apiKeyId, keyIds));
       }
-      const deletedKeyManagementEvents = await tx
-        .delete(apiKeyManagementEvents)
-        .where(eq(apiKeyManagementEvents.projectId, project.id))
-        .returning({ id: apiKeyManagementEvents.id });
-      const deletedKeys = await tx
-        .delete(apiKeys)
-        .where(eq(apiKeys.projectId, project.id))
-        .returning({ id: apiKeys.id });
-      const deletedRequests = await tx
-        .delete(scanRequests)
-        .where(eq(scanRequests.projectId, project.id))
-        .returning({ id: scanRequests.id });
-      await tx.delete(stripeCustomers).where(eq(stripeCustomers.projectId, project.id));
-      await tx.delete(projects).where(eq(projects.id, project.id));
+      const deletedKeyManagementEvents = project
+        ? await tx
+            .delete(apiKeyManagementEvents)
+            .where(eq(apiKeyManagementEvents.projectId, project.id))
+            .returning({ id: apiKeyManagementEvents.id })
+        : [];
+      const deletedKeys = project
+        ? await tx
+            .delete(apiKeys)
+            .where(eq(apiKeys.projectId, project.id))
+            .returning({ id: apiKeys.id })
+        : [];
+      const deletedRequests = requestIds.length
+        ? await tx
+            .delete(scanRequests)
+            .where(inArray(scanRequests.id, requestIds))
+            .returning({ id: scanRequests.id })
+        : [];
+      if (project) {
+        await tx.delete(stripeCustomers).where(eq(stripeCustomers.projectId, project.id));
+        await tx.delete(projects).where(eq(projects.id, project.id));
+      }
 
       return {
         found: true as const,
-        projectId: project.id,
+        projectId: project?.id ?? null,
         deletedScanRequests: deletedRequests.length,
         deletedApiKeys: deletedKeys.length,
         deletedApiKeyManagementEvents: deletedKeyManagementEvents.length,
@@ -124,6 +139,39 @@ export class PrivacyRepository {
   async purgeExpired(now: Date, retentionDays: number) {
     const cutoff = retentionCutoff(now, retentionDays);
     return this.db.transaction(async (tx) => {
+      const founderInterestBatchSize = 500;
+      const founderInterestBatchLimit = 20;
+      let deletedFounderLaunchInterests = 0;
+      for (let batch = 0; batch < founderInterestBatchLimit; batch += 1) {
+        const expiredFounderInterests = await tx
+          .select({ id: founderLaunchInterests.id })
+          .from(founderLaunchInterests)
+          .where(lte(founderLaunchInterests.expiresAt, now))
+          .limit(founderInterestBatchSize)
+          .for("update", { skipLocked: true });
+        if (expiredFounderInterests.length === 0) break;
+        await tx.insert(founderLaunchInterestEvents).values(
+          expiredFounderInterests.map((interest) => ({
+            interestReference: interest.id,
+            action: "PURGED" as const,
+            actorId: "system:retention",
+            occurredAt: now,
+          })),
+        );
+        await tx.delete(founderLaunchInterests).where(
+          inArray(
+            founderLaunchInterests.id,
+            expiredFounderInterests.map((interest) => interest.id),
+          ),
+        );
+        deletedFounderLaunchInterests += expiredFounderInterests.length;
+        if (expiredFounderInterests.length < founderInterestBatchSize) break;
+      }
+      const [founderInterestBacklog] = await tx
+        .select({ value: count() })
+        .from(founderLaunchInterests)
+        .where(lte(founderLaunchInterests.expiresAt, now));
+
       const expiredRequests = await tx
         .select({ id: scanRequests.id })
         .from(scanRequests)
@@ -152,7 +200,11 @@ export class PrivacyRepository {
           ).map((row) => row.id)
         : [];
 
-      let deletedAnalyticsEvents = 0;
+      const oldAnonymousAnalytics = await tx
+        .delete(analyticsEvents)
+        .where(lt(analyticsEvents.occurredAt, cutoff))
+        .returning({ id: analyticsEvents.id });
+      let deletedAnalyticsEvents = oldAnonymousAnalytics.length;
       if (requestIds.length || moveIds.length) {
         const filters = [
           requestIds.length ? inArray(analyticsEvents.scanRequestId, requestIds) : undefined,
@@ -162,7 +214,7 @@ export class PrivacyRepository {
           .delete(analyticsEvents)
           .where(or(...filters))
           .returning({ id: analyticsEvents.id });
-        deletedAnalyticsEvents = deleted.length;
+        deletedAnalyticsEvents += deleted.length;
       }
       const deletedRequests = requestIds.length
         ? await tx
@@ -204,6 +256,8 @@ export class PrivacyRepository {
         deletedScanRequests: deletedRequests.length,
         deletedDeliveryTokens: deletedTokens.length,
         deletedAnalyticsEvents,
+        deletedFounderLaunchInterests,
+        remainingExpiredFounderLaunchInterests: founderInterestBacklog?.value ?? 0,
         deletedOrphanProjects: deletedProjects.length,
       };
     });

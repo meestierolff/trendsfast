@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, gte, or, sum } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, gte, lte, or, sum } from "drizzle-orm";
 
 import {
   createApiKey,
@@ -15,9 +15,31 @@ import {
   apiKeyAuthEvents,
   apiKeyManagementEvents,
   apiKeys,
+  projectEntitlements,
   scanRequests,
   scanRuns,
 } from "../schema";
+
+async function requireActiveFounderEntitlement(
+  db: TrendsFastDatabase,
+  projectId: string | undefined,
+  now: Date,
+): Promise<void> {
+  if (!projectId) throw new Error("Live API keys require a paid project entitlement");
+  const [entitlement] = await db
+    .select({ projectId: projectEntitlements.projectId })
+    .from(projectEntitlements)
+    .where(
+      and(
+        eq(projectEntitlements.projectId, projectId),
+        eq(projectEntitlements.active, true),
+        lte(projectEntitlements.periodStart, now),
+        gt(projectEntitlements.periodEnd, now),
+      ),
+    )
+    .limit(1);
+  if (!entitlement) throw new Error("Live API keys require a paid project entitlement");
+}
 
 export const API_KEY_SCOPES = ["next_move:read", "next_move:write"] as const;
 export type ApiKeyScope = (typeof API_KEY_SCOPES)[number];
@@ -156,6 +178,13 @@ export class ApiKeyRepository {
     const actorId = redactSecrets(input.actorId ?? "system:repository").slice(0, 160);
     const issued = await createApiKey(input.environment, this.pepper);
     return this.db.transaction(async (tx) => {
+      if (input.environment === "live") {
+        await requireActiveFounderEntitlement(
+          tx as unknown as TrendsFastDatabase,
+          input.projectId,
+          createdAt,
+        );
+      }
       const [record] = await tx
         .insert(apiKeys)
         .values({
@@ -352,6 +381,13 @@ export class ApiKeyRepository {
         .for("update")
         .limit(1);
       if (!before || !before.projectId) throw new Error("Project-scoped API key was not found");
+      if (before.environment === "live") {
+        await requireActiveFounderEntitlement(
+          tx as unknown as TrendsFastDatabase,
+          before.projectId,
+          issuedAt,
+        );
+      }
       const expired = Boolean(before.expiresAt && before.expiresAt <= issuedAt);
       if (input.requireInactive) {
         if (before.status === "ACTIVE" && !expired) {

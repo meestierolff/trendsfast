@@ -2,6 +2,11 @@ import type { Metadata } from "next";
 import { listPublicSourceStatuses } from "../../lib/source-projection-service";
 import { pageMetadata } from "../../lib/site";
 
+// The source ledger reflects mutable, durable provider verification records.
+// Rendering it dynamically prevents a deployment build from permanently
+// baking in an older Connected or degraded state.
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = pageMetadata({
   title: "Source status and limitations",
   description:

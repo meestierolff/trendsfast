@@ -55,4 +55,4 @@ mock, test-mode, or local success never upgrades production status.
 
 Use the evidence template in [SETUP_CHECKLIST.md](SETUP_CHECKLIST.md). No
 production read-back has been supplied in this repository at the time of this
-alpha documentation.
+documentation.

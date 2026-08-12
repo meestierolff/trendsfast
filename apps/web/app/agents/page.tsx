@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { AnalyticsPageView } from "../../components/analytics-page-view";
 import { ApiPreview } from "../../components/api-preview";
 import { ScanForm } from "../../components/scan-form";
 import { AGENT_TOOLS } from "../../lib/marketing-content";
@@ -25,6 +26,7 @@ const comingSoon = ["TrendsFast CLI", "MCP server", "Native connectors"] as cons
 export default function AgentsPage() {
   return (
     <>
+      <AnalyticsPageView event={{ event: "agents_page_viewed", placement: "agents" }} />
       <section className="intent-hero section-pad">
         <p className="section-index">AI AGENTS / HTTP API</p>
         <h1>Give every agent one evidence-backed Next Move.</h1>
@@ -102,7 +104,7 @@ export default function AgentsPage() {
           <p className="section-index">PROVE VALUE BEFORE ACCESS</p>
           <h2>Start with one founder-reviewed scan.</h2>
         </div>
-        <ScanForm compact formId="agents-scan" />
+        <ScanForm compact formId="agents-scan" analyticsPlacement="agents" />
       </section>
     </>
   );

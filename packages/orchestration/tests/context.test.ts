@@ -55,12 +55,14 @@ describe("product context inference", () => {
       generate: vi.fn().mockResolvedValueOnce("bad").mockResolvedValueOnce(JSON.stringify(output)),
     };
     const reserveModelCost = vi.fn(async () => ({ created: true, projectedCostUsd: 0.01 }));
+    const settleModelCost = vi.fn(async () => ({ committedCostUsd: 0.01 }));
     const context = await createModelContextInferer(client)(
       "https://example.dev",
       [websiteSignal],
       {
         deadline: new Date("2026-08-11T12:01:00.000Z"),
         reserveModelCost,
+        settleModelCost,
       },
     );
     expect(context.url).toBe("https://example.dev/");

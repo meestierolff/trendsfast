@@ -87,6 +87,32 @@ describe("deterministic decision engine", () => {
     expect(draft.evidenceSignalIds.every((id) => id === "sig_hn")).toBe(true);
   });
 
+  it("selects independent evidence before filling the bounded receipt set", async () => {
+    const samePlatform = Array.from({ length: 5 }, (_, index) =>
+      signal(
+        `sig_hn_${index}`,
+        "hacker_news",
+        `https://news.ycombinator.com/item?id=${index + 10}`,
+      ),
+    );
+    const github = signal("sig_gh_independent", "github", "https://github.com/example/independent");
+    const draft = await decideDeterministically({
+      context,
+      signals: [...samePlatform, github],
+      measurements: [],
+      coverage: {
+        website: "SUCCEEDED",
+        hacker_news: "SUCCEEDED",
+        github: "SUCCEEDED",
+        google_trends: "SUCCEEDED",
+      },
+      now: new Date("2026-08-11T12:00:00.000Z"),
+    });
+    expect(draft.move.action).toBe("PUBLISH");
+    expect(draft.evidenceSignalIds).toContain("sig_gh_independent");
+    expect(draft.independentSourceCount).toBe(2);
+  });
+
   it("does not attach a rising measurement from an unrelated query to a cluster", async () => {
     const draft = await decideDeterministically({
       context,

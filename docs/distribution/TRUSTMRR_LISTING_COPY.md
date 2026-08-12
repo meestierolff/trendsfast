@@ -11,9 +11,9 @@ TrendsFast
 
 ## Short description
 
-One evidence-backed distribution move for technical founders: what to say,
-where, why now, and the source receipts—founder-reviewed, with `WAIT` when the
-signal is not good enough.
+Social and search trend intelligence for founders and their AI agents: one
+evidence-backed distribution move from a product URL, founder-reviewed, with
+`WAIT` when the signal is not good enough.
 
 ## Long description
 
@@ -37,6 +37,16 @@ cost control, and support.
 
 ## Pre-revenue fallback
 
-If TrustMRR permits pre-revenue listings, state: “Founder-reviewed alpha;
-billing disabled; no verified MRR yet.” If it does not, wait. Never submit `$0`
-as a disguised traction claim or future pricing as current revenue.
+If TrustMRR permits pre-revenue listings, state: “Founder-reviewed; paid
+availability and MRR are not verified yet.” If it does not, wait. Never submit
+`$0` as a disguised traction claim or future pricing as current revenue.
+
+Do not publish this CTA inside a revenue directory unless its rules allow it and
+the free-scan deployment is verified:
+
+> I was spending hours searching social media and search demand for something
+> relevant to distribute. TrendsFast now gives my agents one evidence-backed
+> Next Move from a product URL.
+
+> Drop your product URL. I’ll run a free founder-reviewed trend and distribution
+> scan. `[TRACKED LINK]`

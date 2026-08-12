@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { AnalyticsPageView } from "../../components/analytics-page-view";
 import { FaqList } from "../../components/faq-list";
 import { PricingCards } from "../../components/pricing-cards";
 import { pageMetadata } from "../../lib/site";
@@ -11,12 +12,9 @@ export const metadata: Metadata = pageMetadata({
 });
 
 export default function PricingPage() {
-  const paidHref = process.env.NEXT_PUBLIC_FOUNDER_CHECKOUT_URL;
-  const paidEnabled =
-    process.env.BILLING_ENABLED === "true" && process.env.PAID_MONITORING_ENABLED === "true";
-
   return (
     <>
+      <AnalyticsPageView event={{ event: "pricing_viewed", placement: "pricing" }} />
       <section className="intent-hero section-pad">
         <p className="section-index">PRICING / BOUNDED BY REAL RESEARCH</p>
         <h1>See the decision free. Pay for managed repetition.</h1>
@@ -26,7 +24,7 @@ export default function PricingPage() {
         </p>
       </section>
       <section className="pricing-section section-pad">
-        <PricingCards paidEnabled={paidEnabled} {...(paidHref ? { paidHref } : {})} />
+        <PricingCards launchInterestSource="pricing" />
       </section>
       <section className="usage-truth section-pad" id="api-access">
         <div>

@@ -8,7 +8,7 @@ stay portable across standard PostgreSQL hosting.
 
 ## Runtime shape
 
-The alpha is one deployable Next.js 16 / React 19 application. Hono exposes
+The product is one deployable Next.js 16 / React 19 application. Hono exposes
 versioned REST endpoints. Shared TypeScript packages separate contracts without
 creating microservices:
 
@@ -32,14 +32,18 @@ creating microservices:
    API creation atomically locks its key, rechecks idempotency, and reserves the
    rolling-hour provider-cost allowance before inserting work.
 2. PostgreSQL atomically applies the public fingerprint count/duplicate/insert
-   decision and stores a 256-bit public scan capability. A separate 256-bit,
-   hashed, expiring delivery token is issued only after founder approval.
+   decision; replay attempts still consume the durable daily cap. It stores a
+   256-bit public scan capability. A separate 256-bit, hashed, expiring delivery
+   token is issued only after founder approval.
 3. The orchestrator claims the scan, persists its hard deadline, rotates its
    processing fence, and records its bounded plan.
 4. Safe website ingestion validates every DNS/redirect hop and pins the outbound
    Node connection to an approved address while deriving bounded context.
-5. Each enabled provider receives a role-specific bounded query plan.
+5. Each enabled provider receives a role-specific bounded query plan after its
+   attempt reserves durably before external I/O.
 6. Provider outputs normalize to canonical signals with provenance and cost.
+   Valid provider-reported usage settles its reservation; missing/invalid usage
+   remains conservative and unsettled.
 7. Deterministic logic removes duplicates, evaluates independence, clusters,
    scores opportunities, and filters the candidate set.
 8. Optional bounded structured synthesis can refine prose but must preserve the
@@ -60,17 +64,21 @@ creating microservices:
 - **Application to website:** hostile network/content; defend against SSRF,
   rebinding, redirect escape, oversized bodies, and prompt injection.
 - **Application to providers:** external availability, billing, terms, and
-  schema boundary; cap and record calls, time, retries, quota, and cost.
+  schema boundary; reserve before I/O, then cap and record calls, time, retries,
+  quota, provider-reported usage, and conservative missing-usage cost.
 - **Model boundary:** untrusted inference; strict schema, input/response/output
   caps, one repair retry, exact deterministic evidence membership, no accepted
-  URLs/metrics/source claims, and conservative pre-call cost reservation.
+  URLs/metrics/source claims, durable pre-I/O cost reservation, and settlement
+  only from valid provider-reported usage.
 - **Database:** tenant/privacy boundary and durable truth; parameterized access,
   least privilege, retention, and audited state changes.
 - **Ops:** privileged temporary founder surface; server-only token, secure
   cookie, CSRF, audit, and preferably network access control.
-- **Stripe/webhooks:** target external money/state boundary; verified signatures
-  and idempotent local projection are required before enablement. The current web
-  app exposes no billing or webhook route.
+- **Stripe/webhooks:** external money/state boundary; verified signatures,
+  idempotent local projection, project ownership, usage enforcement, and
+  monitoring are required before enablement. Billing, usage, analytics, and
+  monitoring changes in the active development tree are work in progress, not
+  release or paid-availability evidence.
 
 ## Data shape
 
@@ -78,7 +86,8 @@ Lifecycle/filterable facts remain relational. JSONB is limited to bounded raw
 fragments and versioned model data. Key entities include requests, projects,
 context versions, runs, source runs, signals and metric snapshots, clusters,
 opportunities, Next Moves, evidence receipts, review/delivery/feedback/outcome
-events, API keys, provider costs, analytics events, and future Stripe records.
+events, API keys, provider costs, analytics events, and disabled-by-default
+billing/usage/monitoring records in the active development tree.
 
 Raw provider content is not an archive. Store hashes or minimal excerpts where
 possible and delete according to configured retention.
@@ -87,8 +96,8 @@ The database package implements exact-project deletion and a `pnpm db:purge`
 operation for eligible retained terminal and nonterminal scans, expired delivery
 tokens, linked analytics, and eligible orphan projects. Scheduling that purge,
 authenticating privacy requests, export, backup expiry, and legal-hold handling
-are deployment responsibilities and are not callable product routes in this
-alpha.
+are deployment responsibilities and are not callable product routes in the
+current product.
 
 All processing mutations are guarded by the current deadline/fence. Recovery
 checks a provider left `RUNNING` before deadline expiry and fails with
@@ -99,7 +108,7 @@ retry still requires upstream effect/cost reconciliation before non-fixture use.
 
 The hosted target is Vercel plus standard hosted PostgreSQL (Supabase is allowed
 as PostgreSQL). Migrations run as a controlled release step, not concurrently in
-every request instance. The alpha executor may run inside a bounded server
+every request instance. The current executor may run inside a bounded server
 function; orchestration can later move to a durable worker without changing the
 domain/API contracts.
 

@@ -69,3 +69,14 @@ sources, and why one case is not market validation.
 
 `[SUBJECT APPROVER, EXACT VERSION/ASSETS, DATE, REMOVAL CONTACT, PROJECT
 APPROVER]`
+
+## Optional CTA
+
+Use only after the named subject approves the final case-study version:
+
+> I was spending hours searching social media and search demand for something
+> relevant to distribute. TrendsFast now gives my agents one evidence-backed
+> Next Move from a product URL.
+
+> Drop your product URL. I’ll run a free founder-reviewed trend and distribution
+> scan. `[TRACKED LINK]`

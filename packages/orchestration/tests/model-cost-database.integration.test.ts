@@ -9,7 +9,7 @@ import type { ProcessingClaimIdentity } from "../src/state-machine";
 
 const databaseDescribe = process.env.RUN_DATABASE_INTEGRATION === "1" ? describe : describe.skip;
 
-databaseDescribe("fenced model cost persistence", () => {
+databaseDescribe("fenced model and provider cost persistence", () => {
   const client = createDatabaseFromEnv();
   const repositories = createRepositories(client.db);
   const store = createDatabaseProcessingStore(repositories);
@@ -65,5 +65,68 @@ databaseDescribe("fenced model cost persistence", () => {
       actualCostUsd: 0,
     });
     await expect(repositories.costs.committedCostForScan(claim.runId)).resolves.toBe(0.004);
+
+    const settlement = {
+      ledgerKey: reservation.ledgerKey,
+      provider: reservation.provider,
+      model: reservation.model,
+      operation: reservation.operation,
+      attempt: reservation.attempt,
+      inputTokens: 1_000,
+      outputTokens: 500,
+      actualCostUsd: 0.002,
+      finishedAt: new Date().toISOString(),
+    };
+    const settled = await store.settleModelCost(claim, settlement);
+    expect(settled).toMatchObject({ committedCostUsd: 0.004 });
+    await expect(store.settleModelCost(claim, settlement)).resolves.toMatchObject({
+      committedCostUsd: 0.004,
+    });
+    await expect(
+      store.settleModelCost(claim, {
+        ...settlement,
+        inputTokens: 999,
+        outputTokens: 501,
+      }),
+    ).rejects.toThrow(/cannot be rewritten/i);
+    await expect(repositories.costs.totalsForScan(claim.runId)).resolves.toMatchObject({
+      estimatedCostUsd: 0.004,
+      actualCostUsd: 0.002,
+      quotaUnits: 1_500,
+    });
+  });
+
+  it("reserves and settles the exact provider attempt through the processing fence", async () => {
+    if (!claim) throw new Error("The cost integration scan was not claimed");
+    await store.beginProvider("hacker_news", claim, 1);
+    const reservation = {
+      provider: "hacker_news" as const,
+      attempt: 1,
+      estimatedCostUsd: 0.006,
+      calls: 1,
+      quotaUnits: 1,
+    };
+    await expect(store.reserveProviderAttempt(claim, reservation, 0.02)).resolves.toMatchObject({
+      created: true,
+      projectedCostUsd: 0.01,
+    });
+    await expect(store.reserveProviderAttempt(claim, reservation, 0.02)).resolves.toMatchObject({
+      created: false,
+      projectedCostUsd: 0.01,
+    });
+    await expect(
+      store.settleProviderAttempt(claim, {
+        ...reservation,
+        actualCostUsd: 0.002,
+        actualQuotaUnits: 1,
+        status: "SUCCESS",
+        finishedAt: new Date().toISOString(),
+      }),
+    ).resolves.toMatchObject({ committedCostUsd: 0.01 });
+    await expect(repositories.costs.totalsForScan(claim.runId)).resolves.toMatchObject({
+      estimatedCostUsd: 0.01,
+      actualCostUsd: 0.004,
+      quotaUnits: 1_501,
+    });
   });
 });

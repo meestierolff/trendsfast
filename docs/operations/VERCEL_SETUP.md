@@ -4,6 +4,10 @@ This procedure is executable only after the release SHA, remote CI, database,
 and secret inventory are approved. It does not make an unaudited deployment a
 public launch.
 
+Observed state on 2026-08-12: no TrendsFast Vercel project exists. Treat every
+step below as unexecuted provisioning, not an existing-project or deployment
+claim.
+
 ## Preflight and existing-project check
 
 ```bash
@@ -12,8 +16,9 @@ vercel whoami
 vercel project ls
 ```
 
-Inspect the existing `trendsfast` project before linking; do not create a second
-project with a similar name. From the repository root:
+First confirm whether a founder-owned `trendsfast` project has since been
+created; do not create a duplicate with a similar name. From the repository
+root, only after that ownership check:
 
 ```bash
 vercel link --yes --project trendsfast

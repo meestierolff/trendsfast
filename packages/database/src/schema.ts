@@ -36,7 +36,13 @@ export const scanStateEnum = pgEnum("scan_state", [
   "READY",
   "FAILED",
 ]);
-export const scanOriginEnum = pgEnum("scan_origin", ["PUBLIC_FORM", "API", "OPS", "FIXTURE"]);
+export const scanOriginEnum = pgEnum("scan_origin", [
+  "PUBLIC_FORM",
+  "API",
+  "OPS",
+  "FIXTURE",
+  "MONITORING",
+]);
 export const sourceSlugEnum = pgEnum("source_slug", [
   "website",
   "x",
@@ -140,12 +146,45 @@ export const evidenceBindingRoleEnum = pgEnum("evidence_binding_role", [
 ]);
 export const subscriptionStatusEnum = pgEnum("subscription_status", [
   "INCOMPLETE",
+  "INCOMPLETE_EXPIRED",
   "TRIALING",
   "ACTIVE",
   "PAST_DUE",
   "CANCELED",
   "UNPAID",
   "PAUSED",
+]);
+export const billingWebhookStateEnum = pgEnum("billing_webhook_state", [
+  "RECEIVED",
+  "PROCESSED",
+  "IGNORED",
+  "FAILED",
+]);
+export const billingCheckoutStateEnum = pgEnum("billing_checkout_state", [
+  "OPEN",
+  "COMPLETED",
+  "EXPIRED",
+]);
+export const billingPaymentStateEnum = pgEnum("billing_payment_state", [
+  "UNKNOWN",
+  "PAID",
+  "FAILED",
+]);
+export const founderUsageKindEnum = pgEnum("founder_usage_kind", [
+  "SCHEDULED_RUN_ACCEPTED",
+  "ON_DEMAND_RUN_ACCEPTED",
+  "NEXT_MOVE_DELIVERED",
+]);
+export const monitoringSubscriptionStateEnum = pgEnum("monitoring_subscription_state", [
+  "ACTIVE",
+  "PAUSED",
+  "CANCELED",
+]);
+export const monitoringRunStateEnum = pgEnum("monitoring_run_state", [
+  "PROCESSING",
+  "REVIEW_REQUIRED",
+  "COMPLETED",
+  "FAILED",
 ]);
 export const providerVerificationStateEnum = pgEnum("provider_verification_state", [
   "RUNNING",
@@ -756,6 +795,7 @@ export const feedbackEvents = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
+    uniqueIndex("feedback_events_delivery_token_uidx").on(table.deliveryTokenId),
     index("feedback_events_move_created_idx").on(table.nextMoveId, table.createdAt),
     index("feedback_events_kind_created_idx").on(table.kind, table.createdAt),
     check(
@@ -853,14 +893,79 @@ export const analyticsEvents = pgTable(
     firstTouch: jsonb("first_touch").$type<Record<string, string>>(),
     currentTouch: jsonb("current_touch").$type<Record<string, string>>(),
     properties: jsonb("properties").$type<Record<string, unknown>>(),
+    dedupeKey: varchar("dedupe_key", { length: 64 }),
     occurredAt: timestamp("occurred_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
+    uniqueIndex("analytics_events_dedupe_uidx")
+      .on(table.dedupeKey)
+      .where(sql`${table.dedupeKey} IS NOT NULL`),
     index("analytics_events_name_occurred_idx").on(table.name, table.occurredAt),
     index("analytics_events_scan_occurred_idx").on(table.scanRequestId, table.occurredAt),
     check(
+      "analytics_events_dedupe_key_check",
+      sql`${table.dedupeKey} IS NULL OR ${table.dedupeKey} ~ '^[0-9a-f]{64}$'`,
+    ),
+    check(
+      "analytics_events_session_hash_check",
+      sql`${table.anonymousSessionHash} IS NULL OR ${table.anonymousSessionHash} ~ '^[0-9a-f]{64}$'`,
+    ),
+    check(
       "analytics_events_name_check",
-      sql`${table.name} IN ('landing_viewed','example_scan_viewed','free_scan_started','free_scan_submitted','scan_qualified','scan_processing_started','scan_review_required','scan_reviewed','scan_delivered','scan_result_viewed','scan_feedback_submitted','move_marked_used','second_scan_requested','api_key_issued','api_request_succeeded','pricing_viewed','checkout_started','subscription_started')`,
+      sql`${table.name} IN ('landing_viewed','hero_cta_clicked','demo_viewed','free_scan_submitted','scan_status_viewed','scan_delivered','evidence_opened','feedback_submitted','move_would_use','move_used','repeat_scan_requested','agents_page_viewed','docs_viewed','pricing_viewed','beta_waitlist_joined','checkout_started','subscription_started','example_scan_viewed','free_scan_started','scan_qualified','scan_processing_started','scan_review_required','scan_reviewed','scan_result_viewed','scan_feedback_submitted','move_marked_used','second_scan_requested','api_key_issued','api_request_succeeded')`,
+    ),
+  ],
+);
+
+/** Consented launch contact only; no product payload, token, or analytics fingerprint. */
+export const founderLaunchInterests = pgTable(
+  "founder_launch_interests",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    email: varchar("email", { length: 254 }).notNull(),
+    emailHash: varchar("email_hash", { length: 64 }).notNull(),
+    consentVersion: varchar("consent_version", { length: 40 }).notNull(),
+    consentedAt: timestamp("consented_at", { withTimezone: true }).notNull(),
+    source: varchar("source", { length: 32 }).$type<"homepage" | "pricing">().notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("founder_launch_interests_email_hash_uidx").on(table.emailHash),
+    index("founder_launch_interests_expires_idx").on(table.expiresAt),
+    check(
+      "founder_launch_interests_email_normalized_check",
+      sql`${table.email} = lower(btrim(${table.email})) AND position('@' in ${table.email}) > 1`,
+    ),
+    check("founder_launch_interests_email_hash_check", sql`${table.emailHash} ~ '^[0-9a-f]{64}$'`),
+    check(
+      "founder_launch_interests_consent_version_check",
+      sql`${table.consentVersion} = 'founder-launch-v1'`,
+    ),
+    check("founder_launch_interests_source_check", sql`${table.source} IN ('homepage','pricing')`),
+    check("founder_launch_interests_expiry_check", sql`${table.expiresAt} > ${table.consentedAt}`),
+  ],
+);
+
+/** Audit survives hard deletion and intentionally contains no email or email hash. */
+export const founderLaunchInterestEvents = pgTable(
+  "founder_launch_interest_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    interestReference: uuid("interest_reference").notNull(),
+    action: varchar("action", { length: 20 }).notNull(),
+    actorId: varchar("actor_id", { length: 100 }).notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("founder_launch_interest_events_reference_idx").on(
+      table.interestReference,
+      table.occurredAt,
+    ),
+    index("founder_launch_interest_events_action_idx").on(table.action, table.occurredAt),
+    check(
+      "founder_launch_interest_events_action_check",
+      sql`${table.action} IN ('JOINED','RECONSENTED','DELETED','PURGED')`,
     ),
   ],
 );
@@ -987,6 +1092,9 @@ export const stripeCustomers = pgTable(
   },
   (table) => [
     uniqueIndex("stripe_customers_external_uidx").on(table.stripeCustomerId),
+    uniqueIndex("stripe_customers_project_uidx")
+      .on(table.projectId)
+      .where(sql`${table.projectId} IS NOT NULL`),
     index("stripe_customers_project_idx").on(table.projectId),
   ],
 );
@@ -995,6 +1103,9 @@ export const subscriptions = pgTable(
   "subscriptions",
   {
     id: uuid("id").defaultRandom().primaryKey(),
+    projectId: uuid("project_id").references(() => projects.id, {
+      onDelete: "set null",
+    }),
     stripeCustomerId: uuid("stripe_customer_id")
       .notNull()
       .references(() => stripeCustomers.id, { onDelete: "cascade" }),
@@ -1007,15 +1118,272 @@ export const subscriptions = pgTable(
     currentPeriodEnd: timestamp("current_period_end", { withTimezone: true }),
     canceledAt: timestamp("canceled_at", { withTimezone: true }),
     lastStripeEventId: varchar("last_stripe_event_id", { length: 255 }),
+    lastSubscriptionEventCreatedAt: timestamp("last_subscription_event_created_at", {
+      withTimezone: true,
+    }),
+    lastSubscriptionEventRank: integer("last_subscription_event_rank").default(0).notNull(),
     ...timestamps,
   },
   (table) => [
     uniqueIndex("subscriptions_external_uidx").on(table.stripeSubscriptionId),
+    uniqueIndex("subscriptions_project_nonterminal_uidx")
+      .on(table.projectId)
+      .where(
+        sql`${table.projectId} IS NOT NULL AND ${table.status} IN ('INCOMPLETE', 'TRIALING', 'ACTIVE', 'PAST_DUE', 'UNPAID', 'PAUSED')`,
+      ),
     uniqueIndex("subscriptions_last_event_uidx")
       .on(table.lastStripeEventId)
       .where(sql`${table.lastStripeEventId} IS NOT NULL`),
     index("subscriptions_customer_status_idx").on(table.stripeCustomerId, table.status),
+    index("subscriptions_project_status_idx").on(table.projectId, table.status),
     check("subscriptions_entitlement_check", sql`${table.entitlement} = 'founder_cloud'`),
+    check(
+      "subscriptions_event_rank_nonnegative_check",
+      sql`${table.lastSubscriptionEventRank} >= 0`,
+    ),
+  ],
+);
+
+/**
+ * Checkout is an ops-authorized project-binding record, never an entitlement
+ * source. A successful return URL cannot mutate access.
+ */
+export const billingCheckoutSessions = pgTable(
+  "billing_checkout_sessions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    stripeCheckoutSessionId: varchar("stripe_checkout_session_id", { length: 255 }),
+    requestedStripeCustomerId: varchar("requested_stripe_customer_id", { length: 255 }),
+    stripeCustomerId: varchar("stripe_customer_id", { length: 255 }),
+    stripeSubscriptionId: varchar("stripe_subscription_id", { length: 255 }),
+    state: billingCheckoutStateEnum("state").default("OPEN").notNull(),
+    initiatedBy: varchar("initiated_by", { length: 160 }).notNull(),
+    ...timestamps,
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("billing_checkout_external_uidx").on(table.stripeCheckoutSessionId),
+    uniqueIndex("billing_checkout_project_open_uidx")
+      .on(table.projectId)
+      .where(sql`${table.state} = 'OPEN'`),
+    index("billing_checkout_project_state_idx").on(table.projectId, table.state),
+    index("billing_checkout_subscription_idx").on(table.stripeSubscriptionId),
+    check("billing_checkout_actor_check", sql`length(${table.initiatedBy}) BETWEEN 1 AND 160`),
+    check(
+      "billing_checkout_completion_check",
+      sql`(${table.state} = 'COMPLETED') = (${table.completedAt} IS NOT NULL)`,
+    ),
+    check(
+      "billing_checkout_expiration_check",
+      sql`${table.expiresAt} IS NULL OR ${table.expiresAt} > ${table.createdAt}`,
+    ),
+    check(
+      "billing_checkout_binding_check",
+      sql`${table.state} <> 'COMPLETED' OR ${table.stripeCheckoutSessionId} IS NOT NULL`,
+    ),
+  ],
+);
+
+/** Append-only receipt ledger; raw Stripe payloads are deliberately omitted. */
+export const billingWebhookEvents = pgTable(
+  "billing_webhook_events",
+  {
+    stripeEventId: varchar("stripe_event_id", { length: 255 }).primaryKey(),
+    eventType: varchar("event_type", { length: 120 }).notNull(),
+    payloadHash: varchar("payload_hash", { length: 80 }).notNull(),
+    stripeCreatedAt: timestamp("stripe_created_at", { withTimezone: true }).notNull(),
+    livemode: boolean("livemode").notNull(),
+    state: billingWebhookStateEnum("state").default("RECEIVED").notNull(),
+    failureCode: varchar("failure_code", { length: 100 }),
+    receivedAt: timestamp("received_at", { withTimezone: true }).defaultNow().notNull(),
+    processedAt: timestamp("processed_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("billing_webhook_state_received_idx").on(table.state, table.receivedAt),
+    index("billing_webhook_type_created_idx").on(table.eventType, table.stripeCreatedAt),
+    check(
+      "billing_webhook_payload_hash_check",
+      sql`length(${table.payloadHash}) = 71 AND ${table.payloadHash} LIKE 'sha256:%'`,
+    ),
+    check(
+      "billing_webhook_completion_check",
+      sql`(${table.state} = 'RECEIVED') = (${table.processedAt} IS NULL)`,
+    ),
+  ],
+);
+
+/** Invoice events have their own monotonic lane and can arrive before a subscription event. */
+export const billingPaymentStates = pgTable(
+  "billing_payment_states",
+  {
+    stripeSubscriptionId: varchar("stripe_subscription_id", { length: 255 }).primaryKey(),
+    stripeCustomerId: varchar("stripe_customer_id", { length: 255 }),
+    state: billingPaymentStateEnum("state").default("UNKNOWN").notNull(),
+    lastInvoiceId: varchar("last_invoice_id", { length: 255 }),
+    periodStart: timestamp("period_start", { withTimezone: true }),
+    periodEnd: timestamp("period_end", { withTimezone: true }),
+    lastStripeEventId: varchar("last_stripe_event_id", { length: 255 }).notNull(),
+    lastStripeEventCreatedAt: timestamp("last_stripe_event_created_at", {
+      withTimezone: true,
+    }).notNull(),
+    lastStripeEventRank: integer("last_stripe_event_rank").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("billing_payment_last_event_uidx").on(table.lastStripeEventId),
+    index("billing_payment_customer_idx").on(table.stripeCustomerId),
+    check("billing_payment_event_rank_check", sql`${table.lastStripeEventRank} >= 0`),
+    check(
+      "billing_payment_period_check",
+      sql`(${table.periodStart} IS NULL AND ${table.periodEnd} IS NULL) OR (${table.periodStart} IS NOT NULL AND ${table.periodEnd} IS NOT NULL AND ${table.periodStart} < ${table.periodEnd})`,
+    ),
+  ],
+);
+
+/** The only durable access projection consumed by paid product paths. */
+export const projectEntitlements = pgTable(
+  "project_entitlements",
+  {
+    projectId: uuid("project_id")
+      .primaryKey()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    subscriptionId: uuid("subscription_id")
+      .notNull()
+      .references(() => subscriptions.id, { onDelete: "cascade" }),
+    entitlement: varchar("entitlement", { length: 100 }).default("founder_cloud").notNull(),
+    active: boolean("active").default(false).notNull(),
+    periodStart: timestamp("period_start", { withTimezone: true }),
+    periodEnd: timestamp("period_end", { withTimezone: true }),
+    sourceStripeEventId: varchar("source_stripe_event_id", { length: 255 }).notNull(),
+    sourceStripeEventCreatedAt: timestamp("source_stripe_event_created_at", {
+      withTimezone: true,
+    }).notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("project_entitlements_subscription_uidx").on(table.subscriptionId),
+    index("project_entitlements_active_period_idx").on(table.active, table.periodEnd),
+    check("project_entitlements_name_check", sql`${table.entitlement} = 'founder_cloud'`),
+    check(
+      "project_entitlements_period_check",
+      sql`${table.periodStart} IS NULL OR ${table.periodEnd} IS NULL OR ${table.periodStart} < ${table.periodEnd}`,
+    ),
+  ],
+);
+
+/**
+ * Append-only paid-plan usage. Accepted research runs remain charged even if
+ * their later decision is WAIT or processing ultimately fails.
+ */
+export const founderUsageEvents = pgTable(
+  "founder_usage_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projectEntitlements.projectId, { onDelete: "cascade" }),
+    subscriptionId: uuid("subscription_id").references(() => subscriptions.id, {
+      onDelete: "set null",
+    }),
+    scanRequestId: uuid("scan_request_id").references(() => scanRequests.id, {
+      onDelete: "set null",
+    }),
+    kind: founderUsageKindEnum("kind").notNull(),
+    idempotencyKey: varchar("idempotency_key", { length: 255 }).notNull(),
+    periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
+    periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("founder_usage_idempotency_uidx").on(table.idempotencyKey),
+    index("founder_usage_project_kind_occurred_idx").on(
+      table.projectId,
+      table.kind,
+      table.occurredAt,
+    ),
+    index("founder_usage_scan_kind_idx").on(table.scanRequestId, table.kind),
+    check("founder_usage_period_check", sql`${table.periodStart} < ${table.periodEnd}`),
+    check(
+      "founder_usage_occurrence_period_check",
+      sql`${table.occurredAt} >= ${table.periodStart} AND ${table.occurredAt} < ${table.periodEnd}`,
+    ),
+  ],
+);
+
+export const monitoringSubscriptions = pgTable(
+  "monitoring_subscriptions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projectEntitlements.projectId, { onDelete: "cascade" }),
+    subscriptionId: uuid("subscription_id")
+      .notNull()
+      .references(() => subscriptions.id, { onDelete: "cascade" }),
+    state: monitoringSubscriptionStateEnum("state").default("PAUSED").notNull(),
+    nextDueAt: timestamp("next_due_at", { withTimezone: true }).notNull(),
+    intervalSeconds: integer("interval_seconds").default(86_400).notNull(),
+    lastClaimedAt: timestamp("last_claimed_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("monitoring_subscriptions_project_uidx").on(table.projectId),
+    uniqueIndex("monitoring_subscriptions_subscription_uidx").on(table.subscriptionId),
+    index("monitoring_subscriptions_due_idx").on(table.state, table.nextDueAt),
+    check("monitoring_subscriptions_interval_check", sql`${table.intervalSeconds} = 86400`),
+  ],
+);
+
+/**
+ * A monitoring lease is a durable processing fence. Reclaims rotate
+ * leaseOwner; stale workers cannot complete the newer claim.
+ */
+export const monitoringRuns = pgTable(
+  "monitoring_runs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    monitoringSubscriptionId: uuid("monitoring_subscription_id")
+      .notNull()
+      .references(() => monitoringSubscriptions.id, { onDelete: "cascade" }),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projectEntitlements.projectId, { onDelete: "cascade" }),
+    scanRequestId: uuid("scan_request_id").references(() => scanRequests.id, {
+      onDelete: "set null",
+    }),
+    scheduledFor: timestamp("scheduled_for", { withTimezone: true }).notNull(),
+    idempotencyKey: varchar("idempotency_key", { length: 255 }).notNull(),
+    state: monitoringRunStateEnum("state").default("PROCESSING").notNull(),
+    attempt: integer("attempt").default(1).notNull(),
+    leaseOwner: varchar("lease_owner", { length: 100 }),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    failureCode: varchar("failure_code", { length: 100 }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("monitoring_runs_idempotency_uidx").on(table.idempotencyKey),
+    uniqueIndex("monitoring_runs_slot_uidx").on(table.monitoringSubscriptionId, table.scheduledFor),
+    uniqueIndex("monitoring_runs_one_open_uidx")
+      .on(table.monitoringSubscriptionId)
+      .where(sql`${table.state} = 'PROCESSING'`),
+    index("monitoring_runs_project_state_idx").on(table.projectId, table.state),
+    index("monitoring_runs_lease_idx").on(table.state, table.leaseExpiresAt),
+    check("monitoring_runs_attempt_check", sql`${table.attempt} > 0`),
+    check(
+      "monitoring_runs_lease_check",
+      sql`(${table.state} = 'PROCESSING') = (${table.leaseOwner} IS NOT NULL AND ${table.leaseExpiresAt} IS NOT NULL AND ${table.completedAt} IS NULL)`,
+    ),
+    check(
+      "monitoring_runs_completion_check",
+      sql`${table.state} = 'PROCESSING' OR ${table.completedAt} IS NOT NULL`,
+    ),
   ],
 );
 
@@ -1040,9 +1408,18 @@ export const databaseSchema = {
   outcomes,
   providerCostLedger,
   analyticsEvents,
+  founderLaunchInterests,
+  founderLaunchInterestEvents,
   apiKeyAuthEvents,
   apiAuthAdmissionBuckets,
   providerVerificationRecords,
   stripeCustomers,
   subscriptions,
+  billingCheckoutSessions,
+  billingWebhookEvents,
+  billingPaymentStates,
+  projectEntitlements,
+  founderUsageEvents,
+  monitoringSubscriptions,
+  monitoringRuns,
 };

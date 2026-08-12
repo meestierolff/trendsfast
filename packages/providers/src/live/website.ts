@@ -95,10 +95,10 @@ export function createWebsiteAdapter(): ProviderAdapter {
       }
     },
     healthCheck: async (context) => ({
-      status: "DEGRADED",
+      status: "HEALTHY",
       checkedAt: context.now().toISOString(),
       message:
-        "Website safety subsystem is loaded; LIVE requires a successful target URL read-back.",
+        "Website safety subsystem is ready; verification still requires a successful target URL read-back.",
     }),
   };
 }

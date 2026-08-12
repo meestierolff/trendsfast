@@ -3,7 +3,7 @@
   "version": "0.1.0-alpha.0",
   "private": true,
   "type": "module",
-  "description": "The distribution intelligence API for founders and their agents.",
+  "description": "Open-source social and search trend intelligence for founders and their AI agents.",
   "license": "AGPL-3.0-only",
   "packageManager": "pnpm@9.15.9",
   "engines": {

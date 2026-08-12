@@ -1,6 +1,6 @@
 import { ProjectContextSchema, type ProjectContext, type Signal } from "@trendsfast/schemas";
 import { dogfoodFixtureForUrl } from "./dogfood";
-import type { ModelClient, ReserveModelCost } from "./synthesis";
+import type { ModelClient, ReserveModelCost, SettleModelCost } from "./synthesis";
 
 export const CONTEXT_PROMPT_VERSION = "product-context-v1";
 
@@ -57,7 +57,11 @@ export function createModelContextInferer(client: ModelClient) {
   return async (
     urlValue: string,
     websiteSignals: Signal[],
-    controls?: { deadline: Date; reserveModelCost?: ReserveModelCost },
+    controls?: {
+      deadline: Date;
+      reserveModelCost?: ReserveModelCost;
+      settleModelCost?: SettleModelCost;
+    },
   ): Promise<ProjectContext> => {
     const url = new URL(urlValue).toString();
     const untrustedPageData = websiteSignals.slice(0, 3).map((signal) => ({
@@ -79,13 +83,14 @@ export function createModelContextInferer(client: ModelClient) {
         responseFormat: "json",
         schemaName: "trendsfast_project_context_v1",
         ...(controls ? { deadline: controls.deadline } : {}),
-        ...(controls?.reserveModelCost
+        ...(controls?.reserveModelCost && controls.settleModelCost
           ? {
               cost: {
                 ledgerKey: `model:context:attempt:${attempt + 1}`,
                 operation: "context" as const,
                 attempt: attempt + 1,
                 reserve: controls.reserveModelCost,
+                settle: controls.settleModelCost,
               },
             }
           : {}),

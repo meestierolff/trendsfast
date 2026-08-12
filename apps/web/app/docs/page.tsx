@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { AnalyticsPageView } from "../../components/analytics-page-view";
 import { ApiPreview } from "../../components/api-preview";
 import { pageMetadata } from "../../lib/site";
 
@@ -25,6 +26,7 @@ const workflows = ["ChatGPT", "Claude", "Codex", "OpenClaw", "n8n"] as const;
 export default function DocsPage() {
   return (
     <>
+      <AnalyticsPageView event={{ event: "docs_viewed", placement: "docs" }} />
       <section className="intent-hero section-pad">
         <p className="section-index">REST API / V1</p>
         <h1>Create one decision-ready Next Move.</h1>

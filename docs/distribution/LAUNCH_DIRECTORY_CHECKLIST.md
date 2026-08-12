@@ -8,7 +8,7 @@ paying for broad low-intent placement before cohort evidence.
 
 - [ ] One-sentence category/proposition and exact ICP.
 - [ ] Canonical HTTPS site and verified public repository.
-- [ ] Honest release/status matrix and fixture label.
+- [ ] Honest release/status matrix and example-data label.
 - [ ] Actual product screenshot/GIF from the release SHA, with no customer data.
 - [ ] Founder bio/affiliation and support/privacy/security contacts.
 - [ ] AGPL/trademark links and self-host quick start.
@@ -20,9 +20,9 @@ paying for broad low-intent placement before cohort evidence.
 
 | Channel                     | Submission angle                                      | Gate                                                 |
 | --------------------------- | ----------------------------------------------------- | ---------------------------------------------------- |
-| GitHub repository/release   | real engine, fixture demo, architecture, contribution | clean install/CI/license/security verified           |
+| GitHub repository/release   | real engine, example demo, architecture, contribution | clean install/CI/license/security verified           |
 | Hacker News Show HN         | technical trust model and one working result          | community rules, live URL, founder present to answer |
-| Product launch directories  | one decision, evidence, founder-reviewed alpha        | verify rules/fees and no unsupported “live sources”  |
+| Product launch directories  | one decision, evidence, founder-reviewed              | verify rules/fees and no unsupported source claims   |
 | Open-source directories     | AGPL engine and BYOK self-hosting                     | remote/tag/setup actually work                       |
 | API directories             | same Next Move contract                               | endpoint/auth/OpenAPI actually available             |
 | Startup/revenue directories | outcome/cost/open metrics                             | denominator-backed data; TrustMRR only after revenue |
@@ -49,3 +49,25 @@ Correction/removal needed:
 Do not post identical copy everywhere, use fake urgency/upvotes/testimonials,
 hide affiliation, promise unavailable coverage, or ask users to share secrets.
 Prioritize places where the initial ICP genuinely asks about distribution.
+
+## Reusable listing copy
+
+Category:
+
+> The social and search trend intelligence API for founders and their AI agents.
+
+Repository/directory description:
+
+> Open-source social media and search trend intelligence API: paste a product
+> URL and get one evidence-backed Next Move.
+
+Founder message:
+
+> I was spending hours searching social media and search demand for something
+> relevant to distribute. TrendsFast now gives my agents one evidence-backed
+> Next Move from a product URL.
+
+CTA:
+
+> Drop your product URL. I’ll run a free founder-reviewed trend and distribution
+> scan.

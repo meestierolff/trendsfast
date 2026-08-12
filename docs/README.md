@@ -21,8 +21,8 @@ connectivity, deployment, security approval, billing, or customer outcomes.
   [runbook](operations/RUNBOOK.md), and
   [deployment procedure](operations/DEPLOYMENT.md), plus the
   [environment reference](operations/ENVIRONMENT.md)
-- [Local pre-release verification record](operations/LOCAL_VERIFICATION_2026-08-11.md)
-- [Legal alpha templates](legal/README.md)
+- [Integrated local verification record](operations/LOCAL_VERIFICATION_2026-08-11.md)
+- [Legal drafting templates](legal/README.md)
 - [Distribution assets](distribution/FOUNDER_STORY_REDDIT.md)
 
 ## Truth vocabulary
@@ -32,11 +32,15 @@ connectivity, deployment, security approval, billing, or customer outcomes.
 - `FIXTURE_VERIFIED`: deterministic local behavior passed at an identified SHA.
 - `READ_BACK_PENDING` / `UNVERIFIED`: code/config may exist, but no target
   production read-back record is available.
-- `BETA`: verified but deliberately limited/experimental product maturity; it
-  must not conceal a pending read-back.
+- `BETA`: an internal maturity state for a verified but deliberately limited
+  path; it is not public marketing and must not conceal a pending read-back.
 - `DEGRADED`: a previously usable path is currently missing/reduced.
 - `LEGAL_REVIEW`: implementation/automation is blocked pending permission and
   legal review.
 - `NOT_IMPLEMENTED` / `PLANNED`: no callable product path is claimed.
 
 Only a dated release/read-back report may turn intent into a launch claim.
+
+Public pages project technical source states into **Connected**, **Limited**,
+**Coming soon**, **Unavailable**, or **Permission required**. Engineering and
+operations records retain the exact states above.

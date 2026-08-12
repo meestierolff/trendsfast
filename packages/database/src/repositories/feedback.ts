@@ -4,8 +4,8 @@ import { FeedbackKindSchema, PublicHttpUrlSchema, type FeedbackKind } from "@tre
 import { redactSecrets } from "@trendsfast/core";
 
 import type { TrendsFastDatabase } from "../client";
-import { feedbackEvents, outcomes } from "../schema";
-import { sanitizeAnalyticsProperties } from "./analytics";
+import { analyticsEvents, feedbackEvents, outcomes } from "../schema";
+import { durableAnalyticsDedupeKey, sanitizeAnalyticsProperties } from "./analytics";
 
 export class FeedbackRepository {
   constructor(private readonly db: TrendsFastDatabase) {}
@@ -20,27 +20,64 @@ export class FeedbackRepository {
   }) {
     const kind = FeedbackKindSchema.parse(input.kind);
     return this.db.transaction(async (tx) => {
-      const [event] = await tx
+      const values = {
+        nextMoveId: input.nextMoveId,
+        deliveryTokenId: input.deliveryTokenId ?? null,
+        kind,
+        freeText: input.freeText ? redactSecrets(input.freeText).slice(0, 2_000) : null,
+        visitorFingerprintHash: input.visitorFingerprintHash ?? null,
+        metadata: input.metadata ? sanitizeAnalyticsProperties(input.metadata) : null,
+      };
+      const inserted = await tx
         .insert(feedbackEvents)
-        .values({
-          nextMoveId: input.nextMoveId,
-          deliveryTokenId: input.deliveryTokenId ?? null,
-          kind,
-          freeText: input.freeText ? redactSecrets(input.freeText).slice(0, 2_000) : null,
-          visitorFingerprintHash: input.visitorFingerprintHash ?? null,
-          metadata: input.metadata ? sanitizeAnalyticsProperties(input.metadata) : null,
-        })
+        .values(values)
+        .onConflictDoNothing(
+          input.deliveryTokenId ? { target: feedbackEvents.deliveryTokenId } : undefined,
+        )
         .returning();
-      if (!event) throw new Error("Could not record feedback");
+      let event = inserted[0];
+      const created = event !== undefined;
+      if (!event && input.deliveryTokenId) {
+        [event] = await tx
+          .select()
+          .from(feedbackEvents)
+          .where(eq(feedbackEvents.deliveryTokenId, input.deliveryTokenId))
+          .limit(1);
+      }
+      if (!event || event.nextMoveId !== input.nextMoveId) {
+        throw new Error("Could not record feedback");
+      }
 
-      if (kind === "USED_OR_PUBLISHED") {
+      if (created && kind === "USED_OR_PUBLISHED") {
         await tx.insert(outcomes).values({
           nextMoveId: input.nextMoveId,
           kind: "USED",
           verified: false,
         });
       }
-      return event;
+      const analyticsNames = [
+        "feedback_submitted",
+        ...(event.kind === "WOULD_USE"
+          ? (["move_would_use"] as const)
+          : event.kind === "USED_OR_PUBLISHED"
+            ? (["move_used"] as const)
+            : event.kind === "REQUEST_ANOTHER_SCAN"
+              ? (["repeat_scan_requested"] as const)
+              : []),
+      ] as const;
+      await tx
+        .insert(analyticsEvents)
+        .values(
+          analyticsNames.map((name) => ({
+            name,
+            nextMoveId: event.nextMoveId,
+            dedupeKey: durableAnalyticsDedupeKey(name, "feedback", event.id),
+            properties: { kind: event.kind },
+            occurredAt: event.createdAt,
+          })),
+        )
+        .onConflictDoNothing();
+      return { event, created };
     });
   }
 

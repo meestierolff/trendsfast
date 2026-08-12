@@ -11,6 +11,7 @@ test("ops requires founder authentication", async ({ page }) => {
 test("founder reviews, approves, and privately delivers a persisted scan", async ({
   page,
 }, testInfo) => {
+  test.setTimeout(60_000);
   const opsToken = process.env.OPS_TOKEN;
   test.skip(!opsToken, "OPS_TOKEN is required for the founder delivery journey.");
   if (!opsToken) return;
@@ -42,15 +43,23 @@ test("founder reviews, approves, and privately delivers a persisted scan", async
 
   await page.goto(`/ops/${scanId}`);
   await expect(page.getByText("REVIEW PENDING", { exact: true })).toBeVisible();
-  const verifyButton = page.getByRole("button", { name: "Verify receipt" }).first();
-  await expect(verifyButton).toBeVisible();
-  const verificationResponse = page.waitForResponse(
-    (candidate) =>
-      candidate.url().includes("/actions/verify-evidence") &&
-      candidate.request().method() === "POST",
-  );
-  await verifyButton.click();
-  expect((await verificationResponse).status()).toBe(200);
+  const verifyButtons = page.getByRole("button", { name: "Verify receipt" });
+  await expect(verifyButtons.first()).toBeVisible();
+  let verifiedReceiptCount = 0;
+  while ((await verifyButtons.count()) > 0) {
+    const countBeforeVerification = await verifyButtons.count();
+    const verificationResponse = page.waitForResponse(
+      (candidate) =>
+        candidate.url().includes("/actions/verify-evidence") &&
+        candidate.request().method() === "POST",
+    );
+    await verifyButtons.first().click();
+    expect((await verificationResponse).status()).toBe(200);
+    await expect.poll(() => verifyButtons.count()).toBe(countBeforeVerification - 1);
+    verifiedReceiptCount += 1;
+    expect(verifiedReceiptCount).toBeLessThanOrEqual(10);
+  }
+  expect(verifiedReceiptCount).toBeGreaterThan(0);
 
   const approvalResponse = page.waitForResponse(
     (candidate) =>

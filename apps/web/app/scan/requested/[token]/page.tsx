@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { getScanStatusByToken } from "@/lib/scan-view-service";
+import { getServerAnalyticsContext } from "@/lib/server-analytics-context";
 import { ScanStatusPoller } from "../../../../components/scan-status-poller";
 
 import "../../scan.css";
@@ -20,7 +21,7 @@ export default async function RequestedScanPage({
   params: Promise<{ token: string }>;
 }) {
   const { token } = await params;
-  const status = await getScanStatusByToken(token);
+  const status = await getScanStatusByToken(token, await getServerAnalyticsContext());
 
   if (!status.found) notFound();
 

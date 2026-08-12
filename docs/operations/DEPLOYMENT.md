@@ -4,14 +4,20 @@ This is an unexecuted runbook for the intended Vercel + hosted PostgreSQL
 deployment. It does not prove that accounts, DNS, credentials, migrations,
 providers, or `trendsfast.com` are configured.
 
+Observed external state on 2026-08-12: no TrendsFast Supabase or Vercel project
+exists, and `trendsfast.com` returns `NXDOMAIN`. Those are launch blockers, not
+instructions to infer or create infrastructure.
+
 Do not execute this as a public launch while the current known gates remain
 open: live website/provider/model read-backs, scheduled retention and an
 authenticated privacy-request workflow, a reviewed policy for explicit retry
 after an uncertain provider effect or charge, model actual-usage reconciliation
 and operator price verification, release browser/accessibility/security
 acceptance, deployed public-capability lookup throttling, and approved legal
-documents. Billing routes are absent and must remain disabled. The
-manual-evidence adapter also has no callable entry surface.
+documents. Manual evidence and API-key founder operations exist, but require
+release-SHA acceptance. Billing, usage, monitoring, and expanded analytics work
+is in progress and must remain disabled/unclaimed until its separate matrix
+passes.
 
 ## 1. Preflight
 
@@ -43,6 +49,9 @@ APP_URL=https://trendsfast.com
 PROVIDER_CREDENTIAL_MODE=fixture
 PUBLIC_SCAN_PROCESSING=inline
 BILLING_ENABLED=false
+PAID_MONITORING_ENABLED=false
+FOUNDING_100_ENABLED=false
+CLOUD_TRIAL_ENABLED=false
 STRIPE_MODE=test
 DATAFAST_ENABLED=false
 ```
@@ -72,15 +81,18 @@ has an explicit production-safe fixture contract and has been reviewed. Record
 migration version and output with credentials redacted. Verify the new schema
 using read-only checks and application health before traffic.
 
-The current schema has eight ordered migrations, `0000` through `0007`,
-including processing fences, PostgreSQL-backed authentication-admission buckets,
-and persisted API request cost reservations. Migration `0007` backfills existing
-rows with reservation `0`. If production already has queued API work, drain it
-or operationally backfill conservative reservations before enabling concurrent
-traffic; otherwise old queued work is absent from the new fail-safe reservation
-total. Run `pnpm db:purge` only from a reviewed, single-owner scheduled job with
-alerts and retained aggregate counts; the web application does not schedule
-retention itself.
+The current local working tree contains 15 migration files from `0000` through
+latest `0016`, with intentional `0009`/`0010` numbering gaps. An isolated
+PostgreSQL 16 replay passed with all 15 migration hashes matched, the fixture
+seed passed twice, and the strict hosted-schema verifier matched 34/34 public
+tables plus its exact enums, indexes, constraints, and effective/default ACL
+denial for `PUBLIC`, `anon`, and `authenticated`. That is local evidence, not a
+hosted-database read-back. Freeze the release, repeat the full replay and
+verifier at its immutable SHA, record the exact ledger/version, and verify
+forward compatibility before traffic. Run
+`pnpm db:purge` only from a reviewed, single-owner scheduled job with alerts and
+retained aggregate counts; the web application does not schedule retention
+itself.
 
 ## 4. Vercel deployment
 

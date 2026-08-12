@@ -50,14 +50,15 @@ For every provider:
 - [ ] Set `XAI_MAX_TOOL_CALLS_PER_SCAN=2` (lower is allowed).
 - [ ] Read back one bounded 72-hour query; confirm original X URLs and returned
       metadata are stored, with tool/token cost.
-- [ ] Keep the source `BETA_UNVERIFIED` until that production record exists.
+- [ ] Keep the internal source state `BETA_UNVERIFIED` and its public label
+      `Coming soon` until that production record exists.
 
 ## DataForSEO Google Trends
 
 - [ ] Founder creates/funds DataForSEO credentials and verifies the exact Google
       Trends API surface and allowed use.
 - [ ] Set `DATAFORSEO_LOGIN`, `DATAFORSEO_PASSWORD`, and
-      `DATAFORSEO_GOOGLE_TRENDS_MODE=live` for on-demand alpha scans.
+      `DATAFORSEO_GOOGLE_TRENDS_MODE=live` for on-demand scans.
 - [ ] Use no more than five closely related keywords.
 - [ ] Verify a genuine rising time series for the candidate query and
       related/rising query provenance; flat, declining, or unrelated series must
@@ -115,16 +116,20 @@ For every provider:
       8,192-token output caps.
 - [ ] Prove the system rejects model-proposed evidence URLs/metrics/source claims
       and any added, dropped, or duplicate deterministic evidence ID.
-- [ ] Reconcile provider-reported actual token usage/cost to the conservative
-      pre-call reservation. Until implemented and evidenced, retain
-      `unknown_not_settled` and do not publish the reservation as actual cost.
+- [ ] Verify against an authorized read-back that provider/model attempts reserve
+      durably before I/O and valid provider-reported usage settles the
+      conservative reservation. Missing or invalid usage must remain
+      `unknown_not_settled`; never publish a reservation as actual cost.
 
 ## Manual evidence and Reddit
 
-- [ ] Implement and authorize a callable manual-evidence entry route or ops
-      control before describing the adapter as available to founders.
+- [ ] Verify the callable founder-authenticated manual-evidence ops route and
+      its audit trail before describing the path as available to founders.
 - [ ] Manual records require reviewer identity, timestamp, original public URL,
       excerpt, visible metric qualifier, reason, and `MANUAL_FOUNDER_EVIDENCE`.
+- [ ] Treat manual evidence as supplemental: it must not qualify approval or
+      change deterministic evidence counts without an explicit recompute and
+      rebind workflow.
 - [ ] Do not automate Reddit access, use `.json`, scrape, or imply commercial
       permission. Status remains `LEGAL_REVIEW` until documented permission and
       founder/legal approval exist.
@@ -154,4 +159,4 @@ notes: <limitations-no-payloads-or-secrets>
 ```
 
 Only `pass` from the intended production environment supports a public status
-upgrade. There are no such records committed for this alpha snapshot.
+upgrade. There are no such records committed for the active development tree.

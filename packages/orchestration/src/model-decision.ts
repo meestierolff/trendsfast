@@ -2,8 +2,14 @@ import type { ProjectContext, Signal } from "@trendsfast/schemas";
 import type { ProviderMeasurement } from "@trendsfast/providers";
 
 import { decideDeterministically } from "./decision";
-import { createStructuredSynthesizer, type ModelClient, type ReserveModelCost } from "./synthesis";
-import type { DecisionDraft } from "./state-machine";
+import {
+  createStructuredSynthesizer,
+  ModelCostSettlementError,
+  type ModelClient,
+  type ReserveModelCost,
+  type SettleModelCost,
+} from "./synthesis";
+import { StaleProcessingClaimError, type DecisionDraft } from "./state-machine";
 
 /**
  * Runs the versioned deterministic ranking and quality floor first, then gives
@@ -21,6 +27,7 @@ export function createModelAssistedDecision(client: ModelClient) {
     now: Date;
     deadline?: Date;
     reserveModelCost?: ReserveModelCost;
+    settleModelCost?: SettleModelCost;
   }): Promise<DecisionDraft> => {
     const ranked = await decideDeterministically(input);
     try {
@@ -42,7 +49,12 @@ export function createModelAssistedDecision(client: ModelClient) {
         allowedSignalIds: ranked.evidenceSignalIds,
         now: input.now,
         ...(input.deadline ? { deadline: input.deadline } : {}),
-        ...(input.reserveModelCost ? { reserveModelCost: input.reserveModelCost } : {}),
+        ...(input.reserveModelCost && input.settleModelCost
+          ? {
+              reserveModelCost: input.reserveModelCost,
+              settleModelCost: input.settleModelCost,
+            }
+          : {}),
       });
       if (proposal.action !== ranked.move.action) {
         throw new Error("Model synthesis changed the action selected by the quality floor");
@@ -68,7 +80,10 @@ export function createModelAssistedDecision(client: ModelClient) {
         promptVersion: synthesizer.promptVersion,
         confidenceRationale: proposal.confidenceRationale,
       };
-    } catch {
+    } catch (error) {
+      if (error instanceof ModelCostSettlementError || error instanceof StaleProcessingClaimError) {
+        throw error;
+      }
       return {
         ...ranked,
         limitations: [

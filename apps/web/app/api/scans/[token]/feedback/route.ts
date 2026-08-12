@@ -44,24 +44,21 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   }
   const repositories = getRepositories();
   const visitorFingerprintHash = privateVisitorFingerprint(request);
-  await repositories.feedback.record({
+  const recorded = await repositories.feedback.record({
     nextMoveId: identity.nextMoveId,
     deliveryTokenId: identity.deliveryTokenId,
     kind: kind.data,
     ...(visitorFingerprintHash === undefined ? {} : { visitorFingerprintHash }),
   });
-  await repositories.analytics
-    .append({
-      name:
-        kind.data === "USED_OR_PUBLISHED"
-          ? "move_marked_used"
-          : kind.data === "REQUEST_ANOTHER_SCAN"
-            ? "second_scan_requested"
-            : "scan_feedback_submitted",
-      scanRequestId: identity.scanRequestId,
-      nextMoveId: identity.nextMoveId,
-      properties: { kind: kind.data },
-    })
-    .catch(() => undefined);
-  return NextResponse.json({ recorded: true }, { status: 201, headers: PRIVATE_RESPONSE_HEADERS });
+  const recordedKind = recorded.event.kind;
+  if (!recorded.created && recordedKind !== kind.data) {
+    return NextResponse.json(
+      { error: "Feedback was already recorded for this result." },
+      { status: 409, headers: PRIVATE_RESPONSE_HEADERS },
+    );
+  }
+  return NextResponse.json(
+    { recorded: true, duplicate: !recorded.created },
+    { status: recorded.created ? 201 : 200, headers: PRIVATE_RESPONSE_HEADERS },
+  );
 }

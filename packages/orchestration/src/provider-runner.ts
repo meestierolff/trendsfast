@@ -65,6 +65,8 @@ export function createProviderRunner(input: {
           budget: new ProviderBudget(budget.remainingUsd),
           circuitBreaker,
           deadline: budget.deadline,
+          beforeAttempt: budget.reserveAttempt,
+          afterAttempt: budget.settleAttempt,
         },
       );
     },

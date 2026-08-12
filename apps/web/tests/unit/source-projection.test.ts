@@ -32,6 +32,13 @@ function record(
   };
 }
 
+const currentProduction = {
+  deploymentEnvironment: "production" as const,
+  releaseSha: "9afad5e123456789",
+  deploymentHost: "trendsfast.example",
+  deploymentId: "deployment_123",
+};
+
 describe("public source projection", () => {
   it.each(["local", "preview"] as const)(
     "does not upgrade a %s read-back to Connected",
@@ -48,7 +55,7 @@ describe("public source projection", () => {
   );
 
   it("upgrades only an identified production read-back", () => {
-    const website = projectPublicSourceStatuses([record("production")]).find(
+    const website = projectPublicSourceStatuses([record("production")], currentProduction).find(
       (source) => source.slug === "website",
     );
     expect(website).toMatchObject({
@@ -58,8 +65,25 @@ describe("public source projection", () => {
     });
   });
 
+  it("never presents a degraded production read-back as Connected", () => {
+    const degraded = {
+      ...record("production"),
+      healthStatus: "DEGRADED",
+    };
+    const website = projectPublicSourceStatuses([degraded], currentProduction).find(
+      (source) => source.slug === "website",
+    );
+    expect(website).toMatchObject({
+      publicLabel: "Limited",
+      productionVerified: false,
+      technicalState: "DEGRADED",
+    });
+  });
+
   it("never projects a private canonical target or raw failure message", () => {
-    const serialized = JSON.stringify(projectPublicSourceStatuses([record("production")]));
+    const serialized = JSON.stringify(
+      projectPublicSourceStatuses([record("production")], currentProduction),
+    );
     expect(serialized).not.toContain("private-founder.example");
     expect(serialized).not.toContain("failureMessage");
     expect(serialized).toContain('"canonicalUrlCount":1');
@@ -72,7 +96,7 @@ describe("public source projection", () => {
       checkedAt: new Date("2026-08-11T13:00:00.000Z"),
       completedAt: new Date("2026-08-11T13:00:00.000Z"),
     };
-    const website = projectPublicSourceStatuses([production, preview]).find(
+    const website = projectPublicSourceStatuses([production, preview], currentProduction).find(
       (source) => source.slug === "website",
     );
     expect(website).toMatchObject({
@@ -90,7 +114,9 @@ describe("public source projection", () => {
       state: "DEGRADED" as const,
       readbackVerified: false,
     };
-    const source = projectPublicSourceStatuses([manual]).find((item) => item.slug === "manual");
+    const source = projectPublicSourceStatuses([manual], currentProduction).find(
+      (item) => item.slug === "manual",
+    );
     expect(source).toMatchObject({
       publicLabel: "Limited",
       productionVerified: false,
@@ -107,7 +133,7 @@ describe("public source projection", () => {
       failureCode: "PROVIDER_HEALTH_FAILED",
       failureMessage: "Bearer secret-that-must-not-be-public",
     };
-    const website = projectPublicSourceStatuses([failed]).find(
+    const website = projectPublicSourceStatuses([failed], currentProduction).find(
       (source) => source.slug === "website",
     );
     expect(website).toMatchObject({
@@ -116,5 +142,23 @@ describe("public source projection", () => {
       lastVerifiedAt: "2026-08-11T12:00:00.000Z",
     });
     expect(JSON.stringify(website)).not.toContain("secret-that-must-not-be-public");
+  });
+
+  it("does not carry Connected truth across a different release or deployment", () => {
+    const priorRelease = record("production");
+    const nextDeployment = {
+      ...currentProduction,
+      releaseSha: "newrelease1234567",
+      deploymentId: "deployment_456",
+    };
+    const website = projectPublicSourceStatuses([priorRelease], nextDeployment).find(
+      (source) => source.slug === "website",
+    );
+    expect(website).toMatchObject({
+      publicLabel: "Coming soon",
+      productionVerified: false,
+      technicalState: "UNVERIFIED",
+      readBackEvidence: null,
+    });
   });
 });

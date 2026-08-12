@@ -99,6 +99,23 @@ type ExecuteProviderOptions = {
   budget: ProviderBudget;
   circuitBreaker: ProviderCircuitBreaker;
   deadline?: Date;
+  beforeAttempt?: (input: ProviderAttemptReservation) => Promise<void>;
+  afterAttempt?: (input: ProviderAttemptSettlement) => Promise<void>;
+};
+
+export type ProviderAttemptReservation = {
+  provider: ProviderSlug;
+  attempt: number;
+  estimatedCostUsd: number;
+  calls: number;
+  quotaUnits: number;
+};
+
+export type ProviderAttemptSettlement = ProviderAttemptReservation & {
+  actualCostUsd?: number;
+  actualQuotaUnits: number;
+  status: ProviderRunResult["status"];
+  finishedAt: string;
 };
 
 function errorRecord(error: unknown): ProviderRunError {
@@ -234,6 +251,7 @@ export async function executeProvider(
   let lastError: unknown;
   let attempts = 0;
   let reservedUsd = Math.max(0, estimate.estimatedUsd);
+  let reservedCalls = 0;
   const maximumAttempts = Math.max(1, adapter.metadata.retryPolicy.maxAttempts);
   for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
     const executionDeadlineMs = Math.min(
@@ -249,6 +267,24 @@ export async function executeProvider(
       break;
     }
     if (attempt > 1) {
+      if (reservedCalls + estimate.calls > adapter.metadata.maxCallsPerScan) {
+        const stopped = terminalResult(adapter, context, "QUOTA_EXCEEDED", estimate, {
+          code: "PROVIDER_RETRY_CALL_LIMIT",
+          message: `${adapter.metadata.publicName} retry would exceed the per-scan call limit`,
+          retryable: false,
+        });
+        return {
+          ...stopped,
+          calls: reservedCalls,
+          attempts: attempt - 1,
+          quota: { used: 0 },
+          cost: { estimatedUsd: reservedUsd },
+          limitations: [
+            ...stopped.limitations,
+            "Usage from one or more failed provider attempts is unknown; call count is a conservative reservation and actual cost and quota totals are intentionally omitted.",
+          ],
+        };
+      }
       if (!budget.reserve(estimate.estimatedUsd)) {
         const stopped = terminalResult(adapter, context, "BUDGET_EXCEEDED", estimate, {
           code: "PROVIDER_RETRY_COST_LIMIT",
@@ -257,67 +293,39 @@ export async function executeProvider(
         });
         return {
           ...stopped,
-          calls: estimate.calls * (attempt - 1),
+          calls: reservedCalls,
           attempts: attempt - 1,
-          quota: { used: estimate.quotaUnits * (attempt - 1) },
-          cost: { estimatedUsd: reservedUsd, actualUsd: reservedUsd },
+          quota: { used: 0 },
+          cost: { estimatedUsd: reservedUsd },
+          limitations: [
+            ...stopped.limitations,
+            "Usage from one or more failed provider attempts is unknown; call count is a conservative reservation and actual cost and quota totals are intentionally omitted.",
+          ],
         };
       }
       reservedUsd += Math.max(0, estimate.estimatedUsd);
     }
+    await options.beforeAttempt?.({
+      provider: adapter.metadata.slug,
+      attempt,
+      estimatedCostUsd: Math.max(0, estimate.estimatedUsd),
+      calls: Math.max(0, estimate.calls),
+      quotaUnits: Math.max(0, estimate.quotaUnits),
+    });
     attempts = attempt;
+    reservedCalls += Math.max(0, estimate.calls);
+    let result: ProviderRunResult;
     try {
       const startedAtMs = context.now().getTime();
       const providerDeadlineMs = startedAtMs + adapter.metadata.timeoutMs;
       const attemptDeadlineMs = Math.min(providerDeadlineMs, executionDeadlineMs);
-      const result = await collectWithDeadline(
+      result = await collectWithDeadline(
         adapter,
         parsed.data,
         context,
         new Date(attemptDeadlineMs),
         executionDeadlineMs <= providerDeadlineMs,
       );
-      circuitBreaker.recordSuccess(adapter.metadata.slug);
-      const withinBudget = budget.reconcile(estimate.estimatedUsd, result.cost.actualUsd);
-      const priorAttemptEstimate = Math.max(0, reservedUsd - estimate.estimatedUsd);
-      const totalActualUsd =
-        result.cost.actualUsd === undefined
-          ? undefined
-          : priorAttemptEstimate + Math.max(0, result.cost.actualUsd);
-      const boundedResult: ProviderRunResult = {
-        ...result,
-        calls: result.calls + estimate.calls * (attempt - 1),
-        attempts: attempt,
-        quota: {
-          ...result.quota,
-          used: result.quota.used + estimate.quotaUnits * (attempt - 1),
-        },
-        cost: {
-          estimatedUsd: reservedUsd,
-          ...(totalActualUsd === undefined ? {} : { actualUsd: totalActualUsd }),
-        },
-      };
-      if (!withinBudget) {
-        return {
-          ...boundedResult,
-          status: "BUDGET_EXCEEDED",
-          signals: [],
-          measurements: [],
-          limitations: [
-            ...boundedResult.limitations,
-            "Provider-reported actual cost exceeded the hard scan ceiling; collected data was discarded.",
-          ],
-          errors: [
-            ...boundedResult.errors,
-            {
-              code: "PROVIDER_ACTUAL_COST_LIMIT",
-              message: "Provider-reported actual cost exceeded the hard scan ceiling",
-              retryable: false,
-            },
-          ],
-        };
-      }
-      return boundedResult;
     } catch (error) {
       lastError = error;
       const retryable = error instanceof ProviderError && error.retryable;
@@ -334,7 +342,68 @@ export async function executeProvider(
         break;
       }
       await context.sleep(delay);
+      continue;
     }
+
+    await options.afterAttempt?.({
+      provider: adapter.metadata.slug,
+      attempt,
+      estimatedCostUsd: Math.max(0, estimate.estimatedUsd),
+      calls: Math.max(0, estimate.calls),
+      quotaUnits: Math.max(0, estimate.quotaUnits),
+      ...(result.cost.actualUsd === undefined
+        ? {}
+        : { actualCostUsd: Math.max(0, result.cost.actualUsd) }),
+      actualQuotaUnits: Math.max(0, result.quota.used),
+      status: result.status,
+      finishedAt: result.finishedAt,
+    });
+    circuitBreaker.recordSuccess(adapter.metadata.slug);
+    const withinBudget = budget.reconcile(estimate.estimatedUsd, result.cost.actualUsd);
+    const priorAttemptUsageUnknown = attempt > 1;
+    const boundedResult: ProviderRunResult = {
+      ...result,
+      calls: priorAttemptUsageUnknown
+        ? reservedCalls - estimate.calls + result.calls
+        : result.calls,
+      attempts: attempt,
+      quota: { ...result.quota, used: result.quota.used },
+      cost: {
+        estimatedUsd: reservedUsd,
+        ...(priorAttemptUsageUnknown || result.cost.actualUsd === undefined
+          ? {}
+          : { actualUsd: Math.max(0, result.cost.actualUsd) }),
+      },
+      limitations: [
+        ...result.limitations,
+        ...(priorAttemptUsageUnknown
+          ? [
+              "Usage from one or more failed provider attempts is unknown; call count includes a conservative reservation, quota reflects only provider-reported usage, and aggregate actual cost is intentionally omitted.",
+            ]
+          : []),
+      ],
+    };
+    if (!withinBudget) {
+      return {
+        ...boundedResult,
+        status: "BUDGET_EXCEEDED",
+        signals: [],
+        measurements: [],
+        limitations: [
+          ...boundedResult.limitations,
+          "Provider-reported actual cost exceeded the hard scan ceiling; collected data was discarded.",
+        ],
+        errors: [
+          ...boundedResult.errors,
+          {
+            code: "PROVIDER_ACTUAL_COST_LIMIT",
+            message: "Provider-reported actual cost exceeded the hard scan ceiling",
+            retryable: false,
+          },
+        ],
+      };
+    }
+    return boundedResult;
   }
 
   circuitBreaker.recordFailure(adapter.metadata.slug, context.now());
@@ -345,13 +414,20 @@ export async function executeProvider(
     status: failure.code === "UPSTREAM_HTTP_429" ? "QUOTA_EXCEEDED" : "FAILED",
     signals: [],
     measurements: [],
-    calls: estimate.calls * attempts,
+    calls: reservedCalls,
     attempts,
-    quota: { used: estimate.quotaUnits * attempts },
-    cost: { estimatedUsd: reservedUsd, actualUsd: attempts === 0 ? 0 : reservedUsd },
+    quota: { used: 0 },
+    cost: { estimatedUsd: reservedUsd, ...(attempts === 0 ? { actualUsd: 0 } : {}) },
     startedAt: timestamp,
     finishedAt: timestamp,
-    limitations: [failure.message],
+    limitations: [
+      failure.message,
+      ...(attempts > 0
+        ? [
+            "Usage from the failed provider attempt is unknown; call count is a conservative reservation and actual cost and quota totals are intentionally omitted.",
+          ]
+        : []),
+    ],
     errors: [failure],
   };
 }

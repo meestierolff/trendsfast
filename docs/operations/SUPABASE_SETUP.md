@@ -3,6 +3,9 @@
 TrendsFast uses Supabase only as hosted PostgreSQL. It does not depend on
 Supabase Auth, Storage, Realtime, Edge Functions, or the browser Data API.
 
+Observed state on 2026-08-12: no TrendsFast Supabase project exists. This is an
+unexecuted provisioning guide, not hosted-database evidence.
+
 ## Connections
 
 Create separate preview and production projects. Store two server-only URLs per

@@ -44,6 +44,13 @@ export default function TermsPage() {
             evade rate limits, probe secrets, resell raw provider data, or use the service for
             unlawful surveillance or spam.
           </p>
+          <h2>Managed-plan usage</h2>
+          <p>
+            Paid monitoring is not publicly enabled yet. If it is enabled after the launch gates, an
+            on-demand refresh counts when accepted even when the result is WAIT or the scan later
+            fails. Scheduled WAIT decisions also count as scheduled research. The displayed daily,
+            billing-period, project, history, and delivery limits apply before confirmation.
+          </p>
         </div>
       </section>
     </>
