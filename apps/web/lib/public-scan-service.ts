@@ -2,9 +2,15 @@ import { anonymizeAddress, normalizePublicSubmission } from "./request-security"
 
 export class PublicScanError extends Error {
   constructor(
-    readonly code: "INVALID_URL" | "ABUSE_REJECTED" | "RATE_LIMITED" | "TURNSTILE_FAILED",
+    readonly code:
+      | "INVALID_URL"
+      | "ABUSE_REJECTED"
+      | "RATE_LIMITED"
+      | "TURNSTILE_FAILED"
+      | "TODAYS_FOUNDER_REVIEW_CAPACITY_REACHED",
     message: string,
     readonly status: 400 | 429 = code === "RATE_LIMITED" ? 429 : 400,
+    readonly retryAfterSeconds?: number,
   ) {
     super(message);
   }
@@ -18,10 +24,16 @@ export type PublicScanRepository = {
     anonymousSessionHash?: string;
     since: Date;
     dailyLimit: number;
+    globalSince: Date;
+    globalDailyLimit: number;
+    globalDailyBudgetUsd: number;
+    costReservationUsd: number;
     now: Date;
   }): Promise<
     | { status: "CREATED" | "REUSED"; scanRequestId: string; publicToken: string }
     | { status: "RATE_LIMITED" }
+    | { status: "GLOBAL_CAPACITY_REACHED" }
+    | { status: "GLOBAL_BUDGET_REACHED" }
   >;
 };
 
@@ -67,6 +79,9 @@ export async function acceptPublicScan(
     repository: PublicScanRepository;
     fingerprintPepper: string;
     dailyLimit: number;
+    globalDailyLimit: number;
+    globalDailyBudgetUsd: number;
+    costReservationUsd: number;
     turnstile?: TurnstileVerifier;
     anonymousSessionHash?: string;
     now?: Date;
@@ -93,6 +108,8 @@ export async function acceptPublicScan(
   const fingerprintHash = anonymizeAddress(input.address, dependencies.fingerprintPepper);
   const now = dependencies.now ?? new Date();
   const since = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const globalSince = new Date(now);
+  globalSince.setUTCHours(0, 0, 0, 0);
   const admission = await dependencies.repository.admitPublicRequest({
     submittedUrl: normalizedUrl,
     normalizedUrl,
@@ -102,10 +119,25 @@ export async function acceptPublicScan(
       : {}),
     since,
     dailyLimit: dependencies.dailyLimit,
+    globalSince,
+    globalDailyLimit: dependencies.globalDailyLimit,
+    globalDailyBudgetUsd: dependencies.globalDailyBudgetUsd,
+    costReservationUsd: dependencies.costReservationUsd,
     now,
   });
   if (admission.status === "RATE_LIMITED") {
     throw new PublicScanError("RATE_LIMITED", "The free-scan daily limit has been reached.");
+  }
+  if (
+    admission.status === "GLOBAL_CAPACITY_REACHED" ||
+    admission.status === "GLOBAL_BUDGET_REACHED"
+  ) {
+    throw new PublicScanError(
+      "TODAYS_FOUNDER_REVIEW_CAPACITY_REACHED",
+      "Today's free founder-reviewed scan slots are full.",
+      429,
+      Math.max(1, Math.ceil((globalSince.getTime() + 86_400_000 - now.getTime()) / 1_000)),
+    );
   }
   return {
     scanRequestId: admission.scanRequestId,

@@ -45,7 +45,6 @@ vi.mock("../../lib/server-database", () => ({
   }),
 }));
 
-import { BillingCheckoutConflictError } from "@trendsfast/database";
 import { createCsrfToken, issueOpsSession } from "../../lib/ops-session";
 import { POST as checkout } from "../../app/api/ops/billing/checkout/route";
 import { POST as portal } from "../../app/api/ops/billing/portal/route";
@@ -123,183 +122,14 @@ describe("founder-ops billing routes", () => {
     expect(mocks.createCheckout).not.toHaveBeenCalled();
   });
 
-  it("creates and binds Checkout inside the project-scoped database admission", async () => {
+  it("keeps the legacy founder-ops Checkout path permanently closed", async () => {
     const response = await checkout(request("/api/ops/billing/checkout"));
-    expect(response.status).toBe(201);
+    expect(response.status).toBe(410);
     expect(await response.json()).toEqual({
-      ok: true,
-      url: "https://checkout.stripe.com/c/pay",
-    });
-    expect(mocks.createCheckout).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId, actorId: expect.stringMatching(/^founder:/) }),
-    );
-    expect(mocks.reserveProjectCheckout).toHaveBeenCalledWith(
-      expect.objectContaining({
-        projectId,
-        initiatedBy: expect.stringMatching(/^founder:/),
-      }),
-    );
-    expect(mocks.createCheckout).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId, reservationId: "reservation_1" }),
-    );
-    expect(mocks.bindProjectCheckout).toHaveBeenCalledWith(
-      expect.objectContaining({
-        reservationId: "reservation_1",
-        stripeCheckoutSessionId: "cs_test_1",
-      }),
-    );
-  });
-
-  it("returns conflict without calling Stripe for an open Checkout or nonterminal subscription", async () => {
-    mocks.reserveProjectCheckout.mockRejectedValueOnce(
-      new BillingCheckoutConflictError("CHECKOUT_ALREADY_OPEN"),
-    );
-    const response = await checkout(request("/api/ops/billing/checkout"));
-    expect(response.status).toBe(409);
-    expect(await response.json()).toEqual({
-      error: "This project already has an open Checkout or Founder subscription.",
+      error: "Checkout starts only from a private delivered Next Move.",
     });
     expect(mocks.createCheckout).not.toHaveBeenCalled();
-  });
-
-  it("reuses a bound reservation without opening another Stripe session", async () => {
-    mocks.reserveProjectCheckout.mockResolvedValueOnce({
-      created: false,
-      reservation: {
-        id: "reservation_existing",
-        projectId,
-        stripeCheckoutSessionId: "cs_test_existing",
-        requestedStripeCustomerId: null,
-        createdAt: new Date(),
-        expiresAt: new Date(Date.now() + 60 * 60 * 1_000),
-      },
-    });
-    mocks.retrieveCheckout.mockResolvedValueOnce({
-      id: "cs_test_existing",
-      status: "open",
-      url: "https://checkout.stripe.com/c/existing",
-    });
-    const response = await checkout(request("/api/ops/billing/checkout"));
-    expect(response.status).toBe(201);
-    expect(mocks.createCheckout).not.toHaveBeenCalled();
-    expect(mocks.bindProjectCheckout).not.toHaveBeenCalled();
-  });
-
-  it("reconciles a read-back expired session before reserving one replacement", async () => {
-    mocks.reserveProjectCheckout
-      .mockResolvedValueOnce({
-        created: false,
-        reservation: {
-          id: "reservation_expired",
-          projectId,
-          stripeCheckoutSessionId: "cs_test_expired",
-          requestedStripeCustomerId: null,
-          createdAt: new Date(Date.now() - 2 * 60 * 60 * 1_000),
-          expiresAt: new Date(Date.now() - 60_000),
-        },
-      })
-      .mockResolvedValueOnce({
-        created: true,
-        reservation: {
-          id: "reservation_replacement",
-          projectId,
-          stripeCheckoutSessionId: null,
-          requestedStripeCustomerId: null,
-          createdAt: new Date(),
-          expiresAt: new Date(Date.now() + 60 * 60 * 1_000),
-        },
-      });
-    mocks.createCheckout.mockResolvedValueOnce({ id: "cs_test_replacement" });
-    mocks.retrieveCheckout
-      .mockResolvedValueOnce({ id: "cs_test_expired", status: "expired", url: null })
-      .mockResolvedValueOnce({
-        id: "cs_test_replacement",
-        status: "open",
-        url: "https://checkout.stripe.com/c/replacement",
-      });
-    const response = await checkout(request("/api/ops/billing/checkout"));
-    expect(response.status).toBe(201);
-    expect(mocks.expireProjectCheckout).toHaveBeenCalledWith(
-      expect.objectContaining({ reservationId: "reservation_expired" }),
-    );
-    expect(mocks.createCheckout).toHaveBeenCalledTimes(1);
-  });
-
-  it("expires an unbound attempt only after Stripe reservation search finds nothing", async () => {
-    mocks.reserveProjectCheckout
-      .mockResolvedValueOnce({
-        created: false,
-        reservation: {
-          id: "reservation_unbound_expired",
-          projectId,
-          stripeCheckoutSessionId: null,
-          requestedStripeCustomerId: null,
-          createdAt: new Date(Date.now() - 2 * 60 * 60 * 1_000),
-          expiresAt: new Date(Date.now() - 60_000),
-        },
-      })
-      .mockResolvedValueOnce({
-        created: true,
-        reservation: {
-          id: "reservation_after_unbound",
-          projectId,
-          stripeCheckoutSessionId: null,
-          requestedStripeCustomerId: null,
-          createdAt: new Date(),
-          expiresAt: new Date(Date.now() + 60 * 60 * 1_000),
-        },
-      });
-    mocks.createCheckout.mockResolvedValueOnce({ id: "cs_test_after_unbound" });
-    mocks.retrieveCheckout.mockResolvedValueOnce({
-      id: "cs_test_after_unbound",
-      status: "open",
-      url: "https://checkout.stripe.com/c/after-unbound",
-    });
-    const response = await checkout(request("/api/ops/billing/checkout"));
-    expect(response.status).toBe(201);
-    expect(mocks.findCheckoutForReservation).toHaveBeenCalledWith(
-      expect.objectContaining({ reservationId: "reservation_unbound_expired" }),
-    );
-    expect(mocks.expireUnboundProjectCheckout).toHaveBeenCalledWith(
-      expect.objectContaining({ reservationId: "reservation_unbound_expired" }),
-    );
-    expect(mocks.createCheckout).toHaveBeenCalledTimes(1);
-  });
-
-  it("binds and reuses the remote session found for an expired unbound attempt", async () => {
-    mocks.reserveProjectCheckout.mockResolvedValueOnce({
-      created: false,
-      reservation: {
-        id: "reservation_unknown_effect",
-        projectId,
-        stripeCheckoutSessionId: null,
-        requestedStripeCustomerId: null,
-        createdAt: new Date(Date.now() - 2 * 60 * 60 * 1_000),
-        expiresAt: new Date(Date.now() - 60_000),
-      },
-    });
-    mocks.findCheckoutForReservation.mockResolvedValueOnce({
-      id: "cs_test_unknown_effect",
-      status: "open",
-      url: "https://checkout.stripe.com/c/unknown-effect",
-    });
-    mocks.retrieveCheckout.mockResolvedValueOnce({
-      id: "cs_test_unknown_effect",
-      status: "open",
-      url: "https://checkout.stripe.com/c/unknown-effect",
-    });
-
-    const response = await checkout(request("/api/ops/billing/checkout"));
-
-    expect(response.status).toBe(201);
-    expect(mocks.createCheckout).not.toHaveBeenCalled();
-    expect(mocks.expireUnboundProjectCheckout).not.toHaveBeenCalled();
-    expect(mocks.bindProjectCheckout).toHaveBeenCalledWith(
-      expect.objectContaining({
-        reservationId: "reservation_unknown_effect",
-        stripeCheckoutSessionId: "cs_test_unknown_effect",
-      }),
-    );
+    expect(mocks.reserveProjectCheckout).not.toHaveBeenCalled();
   });
 
   it("opens Customer Portal only for the customer bound to the authorized project", async () => {

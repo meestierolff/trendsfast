@@ -7,6 +7,7 @@ import { CostRepository } from "./costs";
 import { DeliveryRepository } from "./delivery";
 import { FeedbackRepository } from "./feedback";
 import { FounderUsageRepository } from "./founder-usage";
+import { FounderGrantRepository } from "./founder-grants";
 import { FounderLaunchInterestRepository } from "./founder-launch-interest";
 import { ScanRepository } from "./lifecycle";
 import { ReviewRepository } from "./review";
@@ -20,6 +21,7 @@ export * from "./analytics";
 export * from "./auth-admission";
 export * from "./billing";
 export * from "./founder-usage-model";
+export * from "./founder-grants";
 export * from "./founder-launch-interest";
 export * from "./monitoring-model";
 export * from "./monitoring";
@@ -42,12 +44,13 @@ export function createRepositories(
   return {
     analytics: new AnalyticsRepository(db),
     authAdmission: new AuthAdmissionRepository(db),
-    billing: new BillingRepository(db),
+    billing: new BillingRepository(db, options.apiKeyPepper),
     apiKeys: new ApiKeyRepository(db, options.apiKeyPepper),
     costs: new CostRepository(db),
     delivery: new DeliveryRepository(db),
     feedback: new FeedbackRepository(db),
     founderLaunchInterests: new FounderLaunchInterestRepository(db),
+    founderGrants: new FounderGrantRepository(db),
     founderUsage: new FounderUsageRepository(db),
     manualEvidence: new ManualEvidenceRepository(db),
     monitoring: new MonitoringRepository(db),

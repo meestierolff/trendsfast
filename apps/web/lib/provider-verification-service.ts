@@ -1,8 +1,8 @@
 import "server-only";
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
-import { loadEnv } from "@trendsfast/config";
+import { loadEnv, resolveProviderCosts, resolvedProviderCostEnvironment } from "@trendsfast/config";
 import {
   createProviderContext,
   createProviderRegistry,
@@ -24,6 +24,7 @@ const queryRoles: Record<Exclude<ProviderSlug, "website" | "manual">, ProviderQu
 };
 
 export async function runConfiguredProviderVerification(input: {
+  attemptId: string;
   provider: Exclude<ProviderSlug, "manual">;
   initiatedBy: string;
   productUrl?: string;
@@ -37,14 +38,6 @@ export async function runConfiguredProviderVerification(input: {
   const startedAt = new Date();
   const repository = getRepositories().providerVerifications;
   const deployment = deploymentProvenance();
-  const durable = await repository.begin({
-    source: input.provider,
-    provider: adapter.metadata.publicName,
-    credentialMode: env.PROVIDER_CREDENTIAL_MODE,
-    ...deployment,
-    initiatedBy: input.initiatedBy,
-    startedAt,
-  });
   const request =
     input.provider === "website"
       ? input.productUrl
@@ -79,19 +72,64 @@ export async function runConfiguredProviderVerification(input: {
             ],
           }
         : undefined;
+  const context = createProviderContext({
+    credentialMode: env.PROVIDER_CREDENTIAL_MODE,
+    env: { ...process.env, ...resolvedProviderCostEnvironment(env) },
+  });
+  const costs = resolveProviderCosts(env);
+  const providerEstimate = request
+    ? adapter.estimate(request, context)
+    : { estimatedUsd: 0, calls: 0, quotaUnits: 0 };
+  const hasCredentials = adapter.metadata.requiredEnvironmentVariables.every((name) =>
+    context.env[name]?.trim(),
+  );
+  const healthCheckEstimatedCostUsd =
+    input.provider === "youtube" && hasCredentials ? costs.youtubeQuotaUnitUsd : 0;
+  const healthCheckQuotaUnits = input.provider === "youtube" && hasCredentials ? 1 : 0;
+  const maximumCostUsd = costs.maximumProviderCostUsdPerScan;
+  const maximumCollectReservationUsd =
+    providerEstimate.estimatedUsd * Math.max(1, adapter.metadata.retryPolicy.maxAttempts);
+  const estimatedCostReservationUsd =
+    healthCheckEstimatedCostUsd + maximumCollectReservationUsd;
+  const requestHash = createHash("sha256")
+    .update(
+      JSON.stringify({
+        provider: input.provider,
+        productUrl: input.productUrl ?? null,
+        query: input.query ?? null,
+        market: input.market ?? null,
+        language: input.language ?? null,
+      }),
+    )
+    .digest("hex");
+  const admission = await repository.admitAttempt({
+    attemptId: input.attemptId,
+    requestHash,
+    source: input.provider,
+    provider: adapter.metadata.publicName,
+    credentialMode: env.PROVIDER_CREDENTIAL_MODE,
+    ...deployment,
+    initiatedBy: input.initiatedBy,
+    estimatedCostReservationUsd,
+    maximumCostUsd,
+    startedAt,
+  });
+  if (!admission.admitted) {
+    return { ...admission.record, reused: !admission.created };
+  }
+
   try {
     const result = await verifyProviderReadback({
       adapter,
-      context: createProviderContext({
-        credentialMode: env.PROVIDER_CREDENTIAL_MODE,
-        env: process.env,
-      }),
+      context,
       ...(request ? { request } : {}),
-      maximumCostUsd: env.MAX_PROVIDER_COST_USD_PER_SCAN,
+      maximumCostUsd,
+      healthCheckEstimatedCostUsd,
+      healthCheckQuotaUnits,
       deadline: new Date(startedAt.getTime() + Math.min(60_000, env.PROVIDER_TIMEOUT_MS * 2)),
     });
-    return repository.complete({
-      id: durable.id,
+    const record = await repository.complete({
+      id: admission.record.id,
       state: result.state,
       healthStatus: result.healthStatus,
       readbackVerified: result.readbackVerified,
@@ -105,17 +143,20 @@ export async function runConfiguredProviderVerification(input: {
       ...(result.failureMessage === undefined ? {} : { failureMessage: result.failureMessage }),
       checkedAt: new Date(result.checkedAt),
     });
+    return { ...record, reused: false };
   } catch (error) {
-    await repository.complete({
-      id: durable.id,
+    const record = await repository.complete({
+      id: admission.record.id,
       state: "FAILED",
       healthStatus: "FAILED",
       readbackVerified: false,
       failureCode: "VERIFICATION_RUN_FAILED",
       failureMessage:
         error instanceof Error ? error.message : "Provider verification failed unexpectedly.",
-      limitations: ["The bounded provider verification did not complete."],
+      limitations: [
+        "The bounded provider verification did not complete. Its conservative pre-call reservation remains unsettled because external usage may be unknown.",
+      ],
     });
-    throw error;
+    return { ...record, reused: false };
   }
 }

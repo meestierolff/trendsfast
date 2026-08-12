@@ -19,11 +19,11 @@ export function OpsBillingManager(input: {
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function openSession(projectId: string, kind: "checkout" | "portal") {
-    setPending(`${projectId}:${kind}`);
+  async function openPortal(projectId: string) {
+    setPending(`${projectId}:portal`);
     setError(null);
     try {
-      const response = await fetch(`/api/ops/billing/${kind}`, {
+      const response = await fetch("/api/ops/billing/portal", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -62,21 +62,10 @@ export function OpsBillingManager(input: {
               type="button"
               disabled={
                 !input.checkoutAvailable ||
-                project.entitlementActive ||
-                pending === `${project.id}:checkout`
-              }
-              onClick={() => void openSession(project.id, "checkout")}
-            >
-              Open test checkout
-            </button>
-            <button
-              type="button"
-              disabled={
-                !input.checkoutAvailable ||
                 !project.hasCustomer ||
                 pending === `${project.id}:portal`
               }
-              onClick={() => void openSession(project.id, "portal")}
+              onClick={() => void openPortal(project.id)}
             >
               Customer Portal
             </button>

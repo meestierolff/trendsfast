@@ -81,6 +81,7 @@ export const NextMoveAcceptedResponseSchema = z
     id: IdentifierSchema,
     status: z.enum(["QUEUED", "RUNNING", "REVIEW_REQUIRED"]),
     status_url: z.string().trim().min(1).max(2_048),
+    poll_after_seconds: z.literal(30),
   })
   .strict();
 export type NextMoveAcceptedResponse = z.infer<typeof NextMoveAcceptedResponseSchema>;

@@ -10,6 +10,7 @@ import {
   apiAuthAdmissionBuckets,
   apiKeyAuthEvents,
   apiKeyManagementEvents,
+  apiKeyManagementActionEnum,
   apiKeys,
   billingCheckoutSessions,
   billingPaymentStates,
@@ -19,11 +20,14 @@ import {
   deliveryTokens,
   evidenceReceipts,
   feedbackEvents,
+  founderEntitlementGrantEvents,
+  founderEntitlementGrants,
   founderLaunchInterestEvents,
   founderLaunchInterests,
   founderUsageEvents,
   monitoringRuns,
   monitoringSubscriptions,
+  nextMoveRevisions,
   nextMoves,
   opportunities,
   outcomes,
@@ -33,6 +37,7 @@ import {
   providerCostLedger,
   providerVerificationRecords,
   reviewEvents,
+  reviewActionEnum,
   scanRequests,
   scanRuns,
   signalMetricSnapshots,
@@ -75,10 +80,13 @@ const minimumTableNames = [
   "billing_webhook_events",
   "project_entitlements",
   "founder_usage_events",
+  "founder_entitlement_grants",
+  "founder_entitlement_grant_events",
   "monitoring_subscriptions",
   "monitoring_runs",
   "founder_launch_interests",
   "founder_launch_interest_events",
+  "next_move_revisions",
 ];
 
 describe("portable PostgreSQL schema", () => {
@@ -99,6 +107,7 @@ describe("portable PostgreSQL schema", () => {
       billingWebhookEvents,
       opportunities,
       nextMoves,
+      nextMoveRevisions,
       evidenceReceipts,
       reviewEvents,
       deliveryTokens,
@@ -106,6 +115,8 @@ describe("portable PostgreSQL schema", () => {
       founderLaunchInterests,
       founderLaunchInterestEvents,
       founderUsageEvents,
+      founderEntitlementGrants,
+      founderEntitlementGrantEvents,
       monitoringSubscriptions,
       monitoringRuns,
       outcomes,
@@ -255,6 +266,78 @@ describe("portable PostgreSQL schema", () => {
     expect(migration).toContain("founder_launch_interests_expiry_check");
   });
 
+  it("versions founder review edits, proposals, and evidence in replayable migration 0017", () => {
+    expect(reviewActionEnum.enumValues).toEqual(
+      expect.arrayContaining(["EVIDENCE_VERIFIED", "RECOMPUTED_FROM_STORED_EVIDENCE"]),
+    );
+    expect(Object.keys(nextMoves)).toEqual(
+      expect.arrayContaining(["reviewVersion", "proposalStale"]),
+    );
+    expect(Object.keys(evidenceReceipts)).toContain("moveVersion");
+    expect(Object.keys(opportunities)).toContain("moveVersion");
+    expect(Object.keys(nextMoveRevisions)).toEqual(
+      expect.arrayContaining([
+        "nextMoveId",
+        "contextVersionId",
+        "version",
+        "changeKind",
+        "reviewerId",
+        "reason",
+        "before",
+        "after",
+        "promptVersion",
+        "scoreVersion",
+        "retainedEvidenceIds",
+      ]),
+    );
+    expect(getTableConfig(evidenceReceipts).indexes.map((index) => index.config.name)).toContain(
+      "evidence_receipts_move_version_signal_uidx",
+    );
+    expect(getTableConfig(opportunities).indexes.map((index) => index.config.name)).toContain(
+      "opportunities_scan_version_rank_uidx",
+    );
+    expect(getTableConfig(nextMoveRevisions).indexes.map((index) => index.config.name)).toEqual(
+      expect.arrayContaining([
+        "next_move_revisions_move_version_uidx",
+        "next_move_revisions_context_created_idx",
+      ]),
+    );
+    expect(getTableConfig(evidenceReceipts).checks.map((check) => check.name)).toEqual(
+      expect.arrayContaining([
+        "evidence_receipts_move_version_positive_check",
+        "evidence_receipts_verified_review_identity_check",
+      ]),
+    );
+
+    const migration = readFileSync(
+      fileURLToPath(new URL("../migrations/0017_review_edit_bundle.sql", import.meta.url)),
+      "utf8",
+    );
+    expect(migration).toContain('CREATE TABLE "next_move_revisions"');
+    expect(migration).toContain('DROP INDEX "evidence_receipts_move_signal_uidx"');
+    expect(migration).toContain('DROP INDEX "opportunities_scan_rank_uidx"');
+    expect(migration).toContain('ADD COLUMN "move_version" integer DEFAULT 1 NOT NULL');
+    expect(migration).toContain('ADD COLUMN "review_version" integer DEFAULT 1 NOT NULL');
+    expect(migration).toContain('ADD COLUMN "proposal_stale" boolean DEFAULT false NOT NULL');
+    expect(migration).toContain("0017 requires every previously verified evidence receipt");
+    expect(migration).toContain('"reviewed_by" IS NULL');
+    expect(migration).toContain('"verified_at" IS NULL');
+    expect(migration).not.toContain('SET "reviewed_by"');
+    expect(migration).not.toContain('SET "verified_at"');
+
+    const verifier = readFileSync(
+      fileURLToPath(new URL("../../../scripts/db/verify-hosted-schema.ts", import.meta.url)),
+      "utf8",
+    );
+    expect(verifier).toContain('"next_move_revisions"');
+    expect(verifier).toContain('"evidence_receipts_move_version_signal_uidx"');
+    expect(verifier).toContain('"opportunities_scan_version_rank_uidx"');
+    expect(verifier).toContain('"evidence_receipts_verified_review_identity_check"');
+    expect(verifier).toContain('"next_moves.review_version"');
+    expect(verifier).not.toContain('"evidence_receipts_move_signal_uidx"');
+    expect(verifier).not.toContain('"opportunities_scan_rank_uidx"');
+  });
+
   it("binds payment truth to service periods and prevents duplicate paid enrollment in 0015", () => {
     expect(Object.keys(billingPaymentStates)).toEqual(
       expect.arrayContaining(["periodStart", "periodEnd"]),
@@ -289,6 +372,44 @@ describe("portable PostgreSQL schema", () => {
     expect(migration).toContain(`"created_at" + interval '24 hours'`);
     expect(migration).toContain("billing_checkout_project_open_uidx");
     expect(migration).toContain("subscriptions_project_nonterminal_uidx");
+  });
+
+  it("reserves 0019 for token-bound Checkout claims and renewal-safe issued keys", () => {
+    expect(Object.keys(billingCheckoutSessions)).toEqual(
+      expect.arrayContaining([
+        "checkoutClaimHash",
+        "checkoutClaimExpiresAt",
+        "checkoutClaimConsumedAt",
+        "issuedApiKeyId",
+      ]),
+    );
+    expect(apiKeyManagementActionEnum.enumValues).toContain("RENEWED");
+    expect(
+      getTableConfig(billingCheckoutSessions).indexes.map((index) => index.config.name),
+    ).toEqual(
+      expect.arrayContaining([
+        "billing_checkout_claim_hash_uidx",
+        "billing_checkout_issued_api_key_uidx",
+      ]),
+    );
+
+    const migration = readFileSync(
+      fileURLToPath(new URL("../migrations/0019_flawless_sandman.sql", import.meta.url)),
+      "utf8",
+    );
+    expect(migration).toContain("ADD VALUE 'RENEWED'");
+    expect(migration).toContain('ADD COLUMN "checkout_claim_hash"');
+    expect(migration).toContain('ADD COLUMN "issued_api_key_id"');
+    expect(migration).toContain("billing_checkout_claim_shape_check");
+    expect(migration).toContain("interval '30 minutes'");
+    expect(migration).toContain("interval '24 hours'");
+    expect(migration).toContain("billing_checkout_claim_consumption_check");
+    expect(migration).toContain(
+      '"checkout_claim_consumed_at" IS NULL AND "billing_checkout_sessions"."issued_api_key_id" IS NULL',
+    );
+    expect(migration).toContain(
+      '"checkout_claim_consumed_at" IS NOT NULL AND "billing_checkout_sessions"."issued_api_key_id" IS NOT NULL',
+    );
   });
 
   it("keeps the same external signal independent across scan source runs", () => {

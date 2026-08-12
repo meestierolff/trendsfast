@@ -28,13 +28,10 @@ export class FeedbackRepository {
         visitorFingerprintHash: input.visitorFingerprintHash ?? null,
         metadata: input.metadata ? sanitizeAnalyticsProperties(input.metadata) : null,
       };
-      const inserted = await tx
-        .insert(feedbackEvents)
-        .values(values)
-        .onConflictDoNothing(
-          input.deliveryTokenId ? { target: feedbackEvents.deliveryTokenId } : undefined,
-        )
-        .returning();
+      const insert = tx.insert(feedbackEvents).values(values);
+      const inserted = input.deliveryTokenId
+        ? await insert.onConflictDoNothing({ target: feedbackEvents.deliveryTokenId }).returning()
+        : await insert.onConflictDoNothing().returning();
       let event = inserted[0];
       const created = event !== undefined;
       if (!event && input.deliveryTokenId) {

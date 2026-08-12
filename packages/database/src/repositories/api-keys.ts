@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, gt, gte, lte, or, sum } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, gte, inArray, lte, or, sql, sum } from "drizzle-orm";
 
 import {
   createApiKey,
@@ -15,6 +15,8 @@ import {
   apiKeyAuthEvents,
   apiKeyManagementEvents,
   apiKeys,
+  billingCheckoutSessions,
+  founderEntitlementGrants,
   projectEntitlements,
   scanRequests,
   scanRuns,
@@ -25,7 +27,12 @@ async function requireActiveFounderEntitlement(
   projectId: string | undefined,
   now: Date,
 ): Promise<void> {
-  if (!projectId) throw new Error("Live API keys require a paid project entitlement");
+  if (!projectId) {
+    throw new Error(
+      "Live API keys require a paid project entitlement or founder design-partner grant",
+    );
+  }
+  await db.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${projectId}, 0))`);
   const [entitlement] = await db
     .select({ projectId: projectEntitlements.projectId })
     .from(projectEntitlements)
@@ -38,8 +45,27 @@ async function requireActiveFounderEntitlement(
       ),
     )
     .limit(1);
-  if (!entitlement) throw new Error("Live API keys require a paid project entitlement");
+  if (entitlement) return;
+  const [grant] = await db
+    .select({ projectId: founderEntitlementGrants.projectId })
+    .from(founderEntitlementGrants)
+    .where(
+      and(
+        eq(founderEntitlementGrants.projectId, projectId),
+        lte(founderEntitlementGrants.createdAt, now),
+        gt(founderEntitlementGrants.expiresAt, now),
+        sql`${founderEntitlementGrants.revokedAt} IS NULL`,
+      ),
+    )
+    .limit(1);
+  if (!grant) {
+    throw new Error(
+      "Live API keys require a paid project entitlement or founder design-partner grant",
+    );
+  }
 }
+
+export type ApiRequestKind = "CREATE" | "STATUS" | "OTHER";
 
 export const API_KEY_SCOPES = ["next_move:read", "next_move:write"] as const;
 export type ApiKeyScope = (typeof API_KEY_SCOPES)[number];
@@ -91,11 +117,11 @@ function safeScopes(input: string[] | undefined): ApiKeyScope[] {
 
 function assertLimits(input: { rateLimitPerHour?: number; providerCostLimitUsd?: number }) {
   const rate = input.rateLimitPerHour ?? 20;
-  const cost = input.providerCostLimitUsd ?? 5;
+  const cost = input.providerCostLimitUsd;
   if (!Number.isSafeInteger(rate) || rate < 1 || rate > 10_000) {
     throw new Error("API key hourly rate limit is invalid");
   }
-  if (!Number.isFinite(cost) || cost < 0 || cost > 10_000) {
+  if (cost === undefined || !Number.isFinite(cost) || cost < 0 || cost > 10_000) {
     throw new Error("API key provider-cost limit is invalid");
   }
   return { rate, cost };
@@ -235,6 +261,7 @@ export class ApiKeyRepository {
     rawKey: string;
     requesterFingerprintHash?: string;
     requestId?: string;
+    requestKind?: ApiRequestKind;
   }): Promise<ApiAuthResult> {
     const parsed = parseApiKey(input.rawKey);
     const [record] = parsed
@@ -264,6 +291,7 @@ export class ApiKeyRepository {
       outcome,
       requesterFingerprintHash: input.requesterFingerprintHash ?? null,
       requestId: input.requestId ?? null,
+      requestKind: input.requestKind ?? "OTHER",
     });
 
     if (outcome !== "SUCCESS" || !record) {
@@ -279,6 +307,7 @@ export class ApiKeyRepository {
     outcome: "RATE_LIMITED" | "COST_LIMITED";
     requesterFingerprintHash?: string;
     requestId?: string;
+    requestKind?: ApiRequestKind;
   }) {
     await this.db.insert(apiKeyAuthEvents).values({
       apiKeyId: input.apiKeyId,
@@ -286,20 +315,29 @@ export class ApiKeyRepository {
       outcome: input.outcome,
       requesterFingerprintHash: input.requesterFingerprintHash ?? null,
       requestId: input.requestId ?? null,
+      requestKind: input.requestKind ?? "OTHER",
     });
   }
 
   async usageSince(input: { apiKeyId: string; since: Date }) {
-    const [auth] = await this.db
-      .select({ value: count() })
-      .from(apiKeyAuthEvents)
-      .where(
-        and(
-          eq(apiKeyAuthEvents.apiKeyId, input.apiKeyId),
-          eq(apiKeyAuthEvents.outcome, "SUCCESS"),
-          gte(apiKeyAuthEvents.occurredAt, input.since),
-        ),
-      );
+    const countKind = async (requestKind: ApiRequestKind) => {
+      const [auth] = await this.db
+        .select({ value: count() })
+        .from(apiKeyAuthEvents)
+        .where(
+          and(
+            eq(apiKeyAuthEvents.apiKeyId, input.apiKeyId),
+            eq(apiKeyAuthEvents.outcome, "SUCCESS"),
+            eq(apiKeyAuthEvents.requestKind, requestKind),
+            gte(apiKeyAuthEvents.occurredAt, input.since),
+          ),
+        );
+      return auth?.value ?? 0;
+    };
+    const [createRequests, statusRequests] = await Promise.all([
+      countKind("CREATE"),
+      countKind("STATUS"),
+    ]);
     const [cost] = await this.db
       .select({
         estimatedCostUsd: sum(scanRuns.estimatedCostUsd),
@@ -309,10 +347,88 @@ export class ApiKeyRepository {
       .innerJoin(scanRequests, eq(scanRuns.scanRequestId, scanRequests.id))
       .where(and(eq(scanRequests.apiKeyId, input.apiKeyId), gte(scanRuns.createdAt, input.since)));
     return {
-      successfulRequests: auth?.value ?? 0,
+      successfulRequests: createRequests + statusRequests,
+      createRequests,
+      statusRequests,
       estimatedCostUsd: Number(cost?.estimatedCostUsd ?? 0),
       actualCostUsd: Number(cost?.actualCostUsd ?? 0),
     };
+  }
+
+  /**
+   * Converts the current successful authentication into a rate-limited audit
+   * outcome when it falls outside the rolling-hour allowance. Locking the key
+   * makes create and status admission exact across application instances.
+   */
+  async admitAuthenticatedRequest(input: {
+    apiKeyId: string;
+    requestId: string;
+    requestKind: Exclude<ApiRequestKind, "OTHER">;
+    since: Date;
+    maximum: number;
+  }): Promise<boolean> {
+    if (!input.requestId || input.requestId.length > 160) {
+      throw new Error("API rate admission requires a bounded request ID");
+    }
+    if (!Number.isSafeInteger(input.maximum) || input.maximum < 1) {
+      throw new Error("API rate admission requires a positive maximum");
+    }
+    return this.db.transaction(async (tx) => {
+      const [key] = await tx
+        .select({ id: apiKeys.id })
+        .from(apiKeys)
+        .where(eq(apiKeys.id, input.apiKeyId))
+        .limit(1)
+        .for("update");
+      if (!key) throw new Error("API rate admission requires an existing key");
+      const [current] = await tx
+        .select({ id: apiKeyAuthEvents.id, outcome: apiKeyAuthEvents.outcome })
+        .from(apiKeyAuthEvents)
+        .where(
+          and(
+            eq(apiKeyAuthEvents.apiKeyId, input.apiKeyId),
+            eq(apiKeyAuthEvents.requestId, input.requestId),
+            eq(apiKeyAuthEvents.requestKind, input.requestKind),
+          ),
+        )
+        .limit(1)
+        .for("update");
+      if (!current || current.outcome !== "SUCCESS") return false;
+      const [usage] = await tx
+        .select({ value: count() })
+        .from(apiKeyAuthEvents)
+        .where(
+          and(
+            eq(apiKeyAuthEvents.apiKeyId, input.apiKeyId),
+            eq(apiKeyAuthEvents.outcome, "SUCCESS"),
+            eq(apiKeyAuthEvents.requestKind, input.requestKind),
+            gte(apiKeyAuthEvents.occurredAt, input.since),
+          ),
+        );
+      if ((usage?.value ?? 0) <= input.maximum) return true;
+      await tx
+        .update(apiKeyAuthEvents)
+        .set({ outcome: "RATE_LIMITED" })
+        .where(and(eq(apiKeyAuthEvents.id, current.id), eq(apiKeyAuthEvents.outcome, "SUCCESS")));
+      return false;
+    });
+  }
+
+  async failedAuthenticationAttemptsSince(input: {
+    requesterFingerprintHash: string;
+    since: Date;
+  }): Promise<number> {
+    const [result] = await this.db
+      .select({ value: count() })
+      .from(apiKeyAuthEvents)
+      .where(
+        and(
+          eq(apiKeyAuthEvents.requesterFingerprintHash, input.requesterFingerprintHash),
+          inArray(apiKeyAuthEvents.outcome, ["NOT_FOUND", "INVALID", "REVOKED", "EXPIRED"]),
+          gte(apiKeyAuthEvents.occurredAt, input.since),
+        ),
+      );
+    return result?.value ?? 0;
   }
 
   async revoke(id: string, actorId = "system:repository") {
@@ -396,6 +512,18 @@ export class ApiKeyRepository {
       } else if (before.status !== "ACTIVE" || expired) {
         throw new Error("Only an active, unexpired API key can be rotated");
       }
+      const [checkoutBinding] = await tx
+        .select({
+          id: billingCheckoutSessions.id,
+          projectId: billingCheckoutSessions.projectId,
+        })
+        .from(billingCheckoutSessions)
+        .where(eq(billingCheckoutSessions.issuedApiKeyId, before.id))
+        .limit(1)
+        .for("update");
+      if (checkoutBinding && checkoutBinding.projectId !== before.projectId) {
+        throw new Error("Checkout API-key binding does not match its project");
+      }
       if (input.expiresAt === null && before.expiresAt !== null) {
         throw new Error("Replacement expiry cannot be removed");
       }
@@ -427,6 +555,19 @@ export class ApiKeyRepository {
           .update(apiKeys)
           .set({ status: "REVOKED", revokedAt: issuedAt })
           .where(and(eq(apiKeys.id, before.id), eq(apiKeys.status, "ACTIVE")));
+      }
+      if (checkoutBinding) {
+        const [transferred] = await tx
+          .update(billingCheckoutSessions)
+          .set({ issuedApiKeyId: replacement.id, updatedAt: issuedAt })
+          .where(
+            and(
+              eq(billingCheckoutSessions.id, checkoutBinding.id),
+              eq(billingCheckoutSessions.issuedApiKeyId, before.id),
+            ),
+          )
+          .returning({ id: billingCheckoutSessions.id });
+        if (!transferred) throw new Error("Checkout API-key replacement lost its binding lock");
       }
       await tx.insert(apiKeyManagementEvents).values({
         projectId: before.projectId,

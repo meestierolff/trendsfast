@@ -7,25 +7,22 @@ Live billing remains disabled until the founder explicitly approves the exact
 deployment, catalog, policies, and rollback after reviewing this evidence.
 The active development tree contains test-mode billing and monitoring work, but
 no final application test-mode journey, live catalog, deployment, or approval
-is recorded. A redacted test catalog verifier passed for product
-`prod_V3SAWlzw4po9Vw`, recurring price
-`price_1U3LGBDzHjCqsazv1xkoxKhA`, coupon
-`trendsfast_founding_100_12_months`, and disabled promotion
-`promo_1U3LHgDzHjCqsazvf4vgUGB9`; that does not advance this gate. A Stripe test
-key exposed in local CLI output must be revoked/rotated before further work.
-This gate therefore cannot advance beyond implementation review.
+is recorded. No current sandbox/live Product ID or Price ID is recorded. A
+Stripe test key exposed in local CLI output must be revoked/rotated before any
+catalog or application verification. This gate therefore cannot advance beyond
+code-local implementation review.
 
 `FOUNDING_100_ENABLED` and `CLOUD_TRIAL_ENABLED` remain false through this gate;
-neither promotion nor trial is implied by general billing approval.
+no promotion, coupon, trial, or alternate plan is implied by general billing
+approval.
 
 ## Product and customer promise
 
 - [ ] Founder approves product name, `$39/month` price, currency, interval,
       included monitored product, checks, history, API access, support, and what
       “daily” means operationally.
-- [ ] Founder resolves the disabled Founding 100 test catalog's 50% / `$19.50`
-      amount against the product brief's `$19` language before any promotion is
-      activated or described publicly.
+- [ ] The Stripe catalog contains exactly one recurring `$39 USD/month` Founder
+      Price and no active coupon, promotion code, trial, or alternate plan.
 - [ ] Product can actually provide every paid promise; `WAIT`, provider outages,
       review delays, limits, and source availability are disclosed.
 - [ ] Checkout, success, cancel, portal, downgrade/cancel, failed payment, and

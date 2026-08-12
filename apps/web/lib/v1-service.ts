@@ -1,6 +1,6 @@
 import "server-only";
 
-import { loadEnv } from "@trendsfast/config";
+import { loadEnv, resolveProviderCosts } from "@trendsfast/config";
 import { normalizeProductUrl } from "@trendsfast/database";
 import {
   NextMoveStatusResponseSchema,
@@ -61,6 +61,7 @@ async function responseFor(
       id: status.request.publicId,
       status: status.request.state,
       status_url: statusUrl(status.request.publicId),
+      poll_after_seconds: 30,
     });
   }
   if (
@@ -121,22 +122,42 @@ async function responseFor(
   });
 }
 
-async function enforceRateLimit(principal: ApiPrincipal) {
+async function enforceRateLimit(principal: ApiPrincipal, requestKind: "CREATE" | "STATUS") {
   const repositories = getRepositories();
+  const env = loadEnv();
   const usage = await repositories.apiKeys.usageSince({
     apiKeyId: principal.apiKeyId,
     since: new Date(Date.now() - 3_600_000),
   });
-  if (usage.successfulRequests <= (principal.rateLimitPerHour ?? 20)) return;
-  await repositories.apiKeys.recordLimited({
-    apiKeyId: principal.apiKeyId,
-    presentedPrefix: principal.visiblePrefix ?? "unknown",
-    outcome: "RATE_LIMITED",
-    ...(principal.requestId ? { requestId: principal.requestId } : {}),
-    ...(principal.requesterFingerprintHash
-      ? { requesterFingerprintHash: principal.requesterFingerprintHash }
-      : {}),
-  });
+  const configuredLimit =
+    requestKind === "CREATE"
+      ? Math.min(
+          principal.rateLimitPerHour ?? env.API_CREATE_RATE_LIMIT_PER_HOUR,
+          env.API_CREATE_RATE_LIMIT_PER_HOUR,
+        )
+      : env.API_STATUS_RATE_LIMIT_PER_HOUR;
+  const used = requestKind === "CREATE" ? usage.createRequests : usage.statusRequests;
+  const admitted = principal.requestId
+    ? await repositories.apiKeys.admitAuthenticatedRequest({
+        apiKeyId: principal.apiKeyId,
+        requestId: principal.requestId,
+        requestKind,
+        since: new Date(Date.now() - 3_600_000),
+        maximum: configuredLimit,
+      })
+    : used <= configuredLimit;
+  if (admitted) return;
+  if (!principal.requestId) {
+    await repositories.apiKeys.recordLimited({
+      apiKeyId: principal.apiKeyId,
+      presentedPrefix: principal.visiblePrefix ?? "unknown",
+      outcome: "RATE_LIMITED",
+      requestKind,
+      ...(principal.requesterFingerprintHash
+        ? { requesterFingerprintHash: principal.requesterFingerprintHash }
+        : {}),
+    });
+  }
   throw new ApiServiceError("RATE_LIMITED", "The API key hourly request limit was reached.");
 }
 
@@ -156,9 +177,33 @@ export function createV1Service(input: { schedule(publicId: string): void }): V1
       const env = loadEnv();
       const pepper = env.API_KEY_PEPPER ?? env.SESSION_SECRET;
       if (!pepper || pepper.length < 32) return false;
-      return getRepositories().authAdmission.admit({
+      const repositories = getRepositories();
+      const fingerprintHash = anonymizeAddress(clientAddress(request.headers), pepper);
+      const since = new Date(Date.now() - 3_600_000);
+      if (
+        (await repositories.apiKeys.failedAuthenticationAttemptsSince({
+          requesterFingerprintHash: fingerprintHash,
+          since,
+        })) >= env.API_AUTH_FAILURE_LIMIT_PER_HOUR
+      ) {
+        return "AUTH_FAILURE_LIMITED" as const;
+      }
+      return repositories.authAdmission.admit({
         namespace: "v1",
+        fingerprintHash,
+      });
+    },
+    async recordAuthenticationFailure(request) {
+      const env = loadEnv();
+      const pepper = env.API_KEY_PEPPER ?? env.SESSION_SECRET;
+      if (!pepper || pepper.length < 32) return false;
+      const maximum = env.API_AUTH_FAILURE_LIMIT_PER_HOUR;
+      return getRepositories().authAdmission.admit({
+        namespace: "v1-failure",
         fingerprintHash: anonymizeAddress(clientAddress(request.headers), pepper),
+        windowMs: 3_600_000,
+        maxAttemptsPerFingerprint: maximum,
+        maxAttemptsGlobal: Math.max(maximum, maximum * 100),
       });
     },
     async authenticate(rawKey, metadata) {
@@ -170,6 +215,7 @@ export function createV1Service(input: { schedule(publicId: string): void }): V1
           : undefined;
       const authenticated = await getRepositories().apiKeys.authenticate({
         rawKey,
+        requestKind: metadata?.requestKind ?? "OTHER",
         ...(requesterFingerprintHash ? { requesterFingerprintHash } : {}),
         ...(metadata?.requestId ? { requestId: metadata.requestId } : {}),
       });
@@ -188,7 +234,7 @@ export function createV1Service(input: { schedule(publicId: string): void }): V1
     },
 
     async createOrReuse({ principal, idempotencyKey, request }) {
-      await enforceRateLimit(principal);
+      await enforceRateLimit(principal, "CREATE");
       const repositories = getRepositories();
       const prior = await repositories.scans.resolveApiIdempotency({
         apiKeyId: principal.apiKeyId,
@@ -218,8 +264,7 @@ export function createV1Service(input: { schedule(publicId: string): void }): V1
         ...(principal.requesterFingerprintHash
           ? { requesterFingerprintHash: principal.requesterFingerprintHash }
           : {}),
-        costReservationUsd:
-          env.PROVIDER_CREDENTIAL_MODE === "fixture" ? 0 : env.MAX_PROVIDER_COST_USD_PER_SCAN,
+        costReservationUsd: resolveProviderCosts(env).maximumProviderCostUsdPerScan,
         since: new Date(now.getTime() - 3_600_000),
         now,
       });
@@ -237,6 +282,9 @@ export function createV1Service(input: { schedule(publicId: string): void }): V1
           "COST_LIMITED",
           "The API key provider-cost limit would be exceeded.",
         );
+      }
+      if (admitted.status === "KEY_INACTIVE") {
+        throw new ApiServiceError("FORBIDDEN", "The API key is no longer active.");
       }
       if (admitted.status === "USAGE_LIMITED") {
         throw new ApiServiceError(
@@ -267,7 +315,7 @@ export function createV1Service(input: { schedule(publicId: string): void }): V1
     },
 
     async getStatus({ principal, id }) {
-      await enforceRateLimit(principal);
+      await enforceRateLimit(principal, "STATUS");
       return responseFor(principal, id);
     },
   };

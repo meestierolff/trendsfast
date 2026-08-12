@@ -270,6 +270,8 @@ export async function resolveReadyScanIdentity(token: string): Promise<{
   scanRequestId: string;
   nextMoveId: string;
   deliveryTokenId: string;
+  projectId: string;
+  deliveryExpiresAt: Date;
 } | null> {
   const resolved = await readyRecordByToken(token, false);
   if (!resolved || !readyView(resolved.record)) return null;
@@ -277,5 +279,7 @@ export async function resolveReadyScanIdentity(token: string): Promise<{
     scanRequestId: resolved.scanRequestId,
     nextMoveId: resolved.record.move.id,
     deliveryTokenId: resolved.record.token.id,
+    projectId: resolved.record.project.id,
+    deliveryExpiresAt: resolved.record.token.expiresAt,
   };
 }

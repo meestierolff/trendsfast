@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
 import Stripe from "stripe";
 
@@ -14,10 +14,88 @@ export type SubscriptionProjectionStatus =
   | "paused";
 export type PaymentProjectionState = "unknown" | "paid" | "failed";
 
+export const STRIPE_API_VERSION = "2026-07-29.dahlia" as const;
+export const CHECKOUT_CLAIM_COOKIE = "tf_checkout_claim";
+export const CHECKOUT_CLAIM_GRACE_MS = 30 * 60 * 1_000;
+
+export function checkoutClaimExpiresAt(checkoutExpiresAt: Date): Date {
+  if (Number.isNaN(checkoutExpiresAt.getTime())) throw new Error("STRIPE_CHECKOUT_TIME_INVALID");
+  return new Date(checkoutExpiresAt.getTime() + CHECKOUT_CLAIM_GRACE_MS);
+}
+
+export function createCheckoutClaim(): { rawClaim: string; claimHash: string } {
+  const rawClaim = randomBytes(32).toString("base64url");
+  return {
+    rawClaim,
+    claimHash: `sha256:${createHash("sha256").update(rawClaim, "utf8").digest("hex")}`,
+  };
+}
+
+export function checkoutClaimHash(rawClaim: string): string | null {
+  if (!/^[A-Za-z0-9_-]{43}$/.test(rawClaim)) return null;
+  return `sha256:${createHash("sha256").update(rawClaim, "utf8").digest("hex")}`;
+}
+
+export function verifyCheckoutClaim(rawClaim: string, encodedHash: string): boolean {
+  const candidate = checkoutClaimHash(rawClaim);
+  if (!candidate) return false;
+  const candidateBytes = Buffer.from(candidate, "utf8");
+  const expectedBytes = Buffer.from(encodedHash, "utf8");
+  return (
+    candidateBytes.length === expectedBytes.length && timingSafeEqual(candidateBytes, expectedBytes)
+  );
+}
+
+export function checkoutClaimCookie(rawClaim: string, expiresAt: Date): string {
+  if (!checkoutClaimHash(rawClaim) || Number.isNaN(expiresAt.getTime())) {
+    throw new Error("STRIPE_CHECKOUT_CLAIM_INVALID");
+  }
+  return [
+    `${CHECKOUT_CLAIM_COOKIE}=${encodeURIComponent(rawClaim)}`,
+    "Path=/",
+    `Expires=${expiresAt.toUTCString()}`,
+    "HttpOnly",
+    "SameSite=Lax",
+    "Secure",
+    "Priority=High",
+  ].join("; ");
+}
+
+export function clearCheckoutClaimCookie(): string {
+  return [
+    `${CHECKOUT_CLAIM_COOKIE}=`,
+    "Path=/",
+    "Max-Age=0",
+    "Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+    "HttpOnly",
+    "SameSite=Lax",
+    "Secure",
+    "Priority=High",
+  ].join("; ");
+}
+
+export function readCheckoutClaimCookie(header: string | null): string | null {
+  if (!header) return null;
+  for (const part of header.split(";")) {
+    const [name, ...encoded] = part.trim().split("=");
+    if (name !== CHECKOUT_CLAIM_COOKIE) continue;
+    try {
+      const value = decodeURIComponent(encoded.join("="));
+      return checkoutClaimHash(value) ? value : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 export function billingAvailability(input: {
   billingEnabled: boolean;
   paidMonitoringEnabled: boolean;
   mode: StripeMode;
+  providerCredentialMode: "fixture" | "managed" | "byok";
+  liveEnablementApproved?: boolean;
+  deploymentEnvironment?: "local" | "preview" | "production";
 }) {
   if (!input.billingEnabled) {
     return {
@@ -33,7 +111,39 @@ export function billingAvailability(input: {
       reason: "MONITORING_DISABLED" as const,
     };
   }
-  if (input.mode !== "test") {
+  if (input.mode === "test" && input.providerCredentialMode !== "fixture") {
+    return {
+      enabled: true as const,
+      checkoutAvailable: false as const,
+      reason: "SANDBOX_FIXTURE_MODE_REQUIRED" as const,
+    };
+  }
+  if (input.mode === "live" && input.providerCredentialMode === "fixture") {
+    return {
+      enabled: true as const,
+      checkoutAvailable: false as const,
+      reason: "LIVE_PROVIDER_MODE_REQUIRED" as const,
+    };
+  }
+  if (input.deploymentEnvironment === "production" && input.mode !== "live") {
+    return {
+      enabled: true as const,
+      checkoutAvailable: false as const,
+      reason: "PRODUCTION_LIVE_MODE_REQUIRED" as const,
+    };
+  }
+  if (
+    input.deploymentEnvironment !== undefined &&
+    input.deploymentEnvironment !== "production" &&
+    input.mode === "live"
+  ) {
+    return {
+      enabled: true as const,
+      checkoutAvailable: false as const,
+      reason: "LIVE_PRODUCTION_DEPLOYMENT_REQUIRED" as const,
+    };
+  }
+  if (input.mode === "live" && !input.liveEnablementApproved) {
     return {
       enabled: true as const,
       checkoutAvailable: false as const,
@@ -175,26 +285,48 @@ export function stripeCheckoutIdempotencyKey(input: {
   return `tf_checkout_${digest}`;
 }
 
+/** Stable across retries, but sourced from the random reservation UUID. */
+export function stripeIntegrationIdentifier(reservationId: string): string {
+  if (!reservationId) throw new Error("STRIPE_CHECKOUT_RESERVATION_INVALID");
+  const alphabet = "abcdefghijklmnopqrstuvwxyz";
+  const bytes = createHash("sha256").update(`integration\0${reservationId}`).digest();
+  const suffix = [...bytes.subarray(0, 8)]
+    .map((value) => alphabet[value % alphabet.length])
+    .join("");
+  return `trendsfast_founder_${suffix}`;
+}
+
 export function createStripeBilling(input: {
   billingEnabled: boolean;
   paidMonitoringEnabled: boolean;
   mode: StripeMode;
+  providerCredentialMode: "fixture" | "managed" | "byok";
   secretKey?: string;
   webhookSecret?: string;
   founderCloudPriceId?: string;
   appUrl: string;
+  liveEnablementApproved?: boolean;
+  deploymentEnvironment?: "local" | "preview" | "production";
   stripe?: StripeBillingClient;
 }) {
   const availability = billingAvailability({
     billingEnabled: input.billingEnabled,
     paidMonitoringEnabled: input.paidMonitoringEnabled,
     mode: input.mode,
+    providerCredentialMode: input.providerCredentialMode,
+    ...(input.deploymentEnvironment ? { deploymentEnvironment: input.deploymentEnvironment } : {}),
+    ...(input.liveEnablementApproved === undefined
+      ? {}
+      : { liveEnablementApproved: input.liveEnablementApproved }),
   });
   if (input.secretKey && !stripeSecretMatchesMode(input.secretKey, input.mode)) {
     throw new Error("STRIPE_SECRET_MODE_MISMATCH");
   }
   const stripe =
-    input.stripe ?? (input.secretKey ? (new Stripe(input.secretKey) as StripeBillingClient) : null);
+    input.stripe ??
+    (input.secretKey
+      ? (new Stripe(input.secretKey, { apiVersion: STRIPE_API_VERSION }) as StripeBillingClient)
+      : null);
   const appUrl = cleanAppUrl(input.appUrl);
 
   return {
@@ -218,12 +350,13 @@ export function createStripeBilling(input: {
       return stripe.checkout.sessions.create(
         {
           mode: "subscription",
+          integration_identifier: stripeIntegrationIdentifier(checkout.reservationId),
           line_items: [{ price: input.founderCloudPriceId, quantity: 1 }],
           client_reference_id: checkout.projectId,
           metadata: {
             project_id: checkout.projectId,
             checkout_reservation_id: checkout.reservationId,
-            scope: "founder_ops",
+            scope: "delivered_result",
           },
           subscription_data: {
             metadata: {
@@ -237,8 +370,8 @@ export function createStripeBilling(input: {
             : checkout.customerEmail
               ? { customer_email: checkout.customerEmail }
               : {}),
-          success_url: `${appUrl}/ops/billing?checkout=returned`,
-          cancel_url: `${appUrl}/ops/billing?checkout=canceled`,
+          success_url: `${appUrl}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
+          cancel_url: `${appUrl}/billing/canceled`,
           expires_at: Math.floor(checkout.expiresAt.getTime() / 1_000),
           allow_promotion_codes: false,
         },

@@ -1,85 +1,33 @@
-# Stripe test-mode setup
+# Stripe sandbox-to-live setup
 
-> **Status: billing and paid monitoring are disabled.** Test-mode implementation
-> is in progress. This guide does not authorize live charges or represent an
-> active offer.
+> **Fail-closed status:** billing and paid monitoring remain disabled. The previously used sandbox
+> credential is compromised until the founder confirms revocation and rotation. Do not use it for
+> verification or API calls.
 
-The active development tree contains fail-closed Checkout/Portal, signed webhook
-projection, founder usage, and monitoring work. The integrated local migration,
-test, build, and browser results are recorded in the
-[launch checklist](../operations/LAUNCH_CHECKLIST.md), but they are not tied to
-an immutable release SHA and do not include a deployed scheduled or application
-Checkout/webhook/entitlement journey. A redacted Stripe test-mode catalog
-verifier has passed; that narrower evidence is recorded below.
+The only supported billing provider is Stripe. TrendsFast uses Stripe Billing, hosted Checkout
+Sessions, one recurring Price, signed webhooks, and Stripe Customer Portal. Redirects never grant
+entitlement, and TrendsFast does not store card data.
 
-The only permitted billing provider is Stripe. Do not add RevenueCat, Paddle,
-Lemon Squeezy, Polar, or a separate entitlement abstraction.
+The code-local integration uses Stripe Node `^22.4.0` with explicit API version
+`2026-07-29.dahlia`. No current sandbox/live Product ID or Price ID is recorded, and no Stripe API
+mutation or application customer journey was run on 2026-08-12 because credential rotation is a
+hard prerequisite.
 
-## Intended catalog
+## Catalog
 
 - Product: `TrendsFast Founder`
-- Recurring hypothesis: `$39 USD / month`
-- Verified test product: `prod_V3SAWlzw4po9Vw`
-- Verified test recurring price: `price_1U3LGBDzHjCqsazv1xkoxKhA`
-- Verified test coupon: `trendsfast_founding_100_12_months`
-- Verified disabled test promotion: `promo_1U3LHgDzHjCqsazvf4vgUGB9`
-- Internal entitlement: `founder_cloud`
-- Quantity: one project / monitored product
+- Price: `$39 USD / month`
 - Lookup key: `trendsfast_founder_monthly`
-- Limits: one scheduled research run/day, ten accepted on-demand
-  refreshes/billing month, up to one new delivered Next Move/day, a
-  project-scoped API key, unlimited agents/clients on that key, result polling
-  that does not consume a research run, 30-day history, and managed provider
-  accounts
+- Internal entitlement: `founder_cloud`
+- Quantity/project limit: one
+- Scheduled runs: one per UTC day
+- Accepted on-demand runs: ten per billing period
+- Newly delivered Next Moves: at most one per UTC day
+- API: one project-scoped read/write key; polling does not consume research allowance
+- History: 30 days
 
-Scheduled `WAIT` results are valid and included. An accepted on-demand request
-consumes one refresh regardless of its outcome. “Unlimited” never describes
-scan creation, projects, provider fan-out, or model usage.
-
-The disabled Founding 100 test setup is 50% off for 12 months with at most 100
-redemptions: `$19.50/month` on the `$39` price. The product brief also contains
-`$19/month` language. That discrepancy is an unresolved founder catalog/copy
-decision; do not round, change, or expose either amount until it is resolved and
-the disabled catalog is deliberately updated. This is preparation, not a public
-offer.
-
-The amount and terms require founder/legal/tax review before they appear as an
-active offer. Price IDs and amounts must be resolved server-side; never trust a
-browser-supplied product, price, customer, or entitlement.
-
-The test bootstrap ran idempotently and the test verifier passed for the safe
-identifiers above. The coupon is 50% for 12 months with at most 100 redemptions,
-which is `$19.50` against `$39`; the separate `$19` brief language remains an
-unresolved founder decision. Both `FOUNDING_100_ENABLED` and
-`CLOUD_TRIAL_ENABLED` remain false, so neither amount is public. A local Stripe
-test key appeared in CLI output and must be revoked/rotated before further
-Stripe work. Never copy its value into this document, an issue, or a log.
-
-## Test-mode account steps
-
-The founder must complete or reverify these in the correct Stripe test
-workspace. The catalog bootstrap/verifier has run, but the remaining account and
-application journey gates are still open:
-
-1. Confirm account ownership, team access, MFA, statement descriptor, business
-   details, and test-mode separation.
-2. Revoke/rotate the test key exposed in local CLI output and retain only
-   redacted evidence of the rotation.
-3. Before rerunning `pnpm stripe:bootstrap-test`, review the script and current
-   Stripe CLI account. It idempotently creates/verifies the test product, monthly
-   price, coupon, and inactive promotion. Record only safe IDs; put any runtime
-   price configuration in the deployment secret store, not browser code.
-4. Rerun `pnpm stripe:verify-test` after rotation and retain its redacted output.
-5. **After** the application webhook route and projection pass locally,
-   configure a test webhook endpoint. Subscribe only to
-   events that implementation actually handles, normally:
-   `checkout.session.completed`, `customer.subscription.created`,
-   `customer.subscription.updated`, `customer.subscription.deleted`, and
-   relevant invoice payment outcomes.
-6. Configure Customer Portal cancellation/update behavior to match the reviewed
-   terms. Do not expose unsupported plan switching.
-7. Use Stripe CLI forwarding or deterministic signed fixtures locally. Never
-   commit CLI webhook secrets.
+Promotion codes, coupons, trials, and alternate plans are disabled. Prices and limits remain
+server-authoritative.
 
 ## Environment
 
@@ -89,69 +37,94 @@ PAID_MONITORING_ENABLED=false
 FOUNDING_100_ENABLED=false
 CLOUD_TRIAL_ENABLED=false
 STRIPE_MODE=test
+STRIPE_SANDBOX_KEY_ROTATED=NO
+I_UNDERSTAND_LIVE_STRIPE=
+STRIPE_LIVE_ENABLEMENT_APPROVED=
 STRIPE_SECRET_KEY=
 STRIPE_WEBHOOK_SECRET=
 STRIPE_FOUNDER_CLOUD_PRICE_ID=
+STRIPE_PORTAL_LOGIN_URL=
+API_PROVIDER_COST_LIMIT_USD_PER_HOUR=
 CRON_SECRET=
 ```
 
-Keep all four feature flags false during setup. Checkout is available only when
-the billing and paid-monitoring flags are both true and the remaining
-configuration is valid. The prepared promotion and later no-card trial remain
-separately disabled. Public pricing CTAs must remain the paid launch list while
-disabled—no dead checkout button.
+`STRIPE_SECRET_KEY`, webhook secret, and the API provider-cost budget are server-only. The Customer
+Portal URL must be the Stripe-hosted no-code login URL at
+`https://billing.stripe.com/p/login/...`; arbitrary customer IDs are never accepted from a public
+route.
 
-## Server-side flow
+## Sandbox operator sequence
 
-Target contract; implementation must still pass the complete release matrix:
+1. In Stripe Dashboard, revoke the exposed sandbox key, create a replacement with the least
+   permissions needed, remove the old CLI login, and run `stripe login` for the intended sandbox
+   account.
+2. Set `STRIPE_SANDBOX_KEY_ROTATED=YES` only after confirming that rotation. Every sandbox helper
+   exits before identity/API access without this exact acknowledgement.
+3. Run `stripe --version` locally. The expected reviewed CLI version is `1.45.2` or a compatible
+   newer stable version.
+4. Run `pnpm stripe:bootstrap-sandbox`. It checks account identity without printing it, searches by
+   stable catalog metadata, creates or reuses exactly one Product and Price with idempotency keys,
+   and prints safe IDs only.
+5. Run `pnpm stripe:verify-sandbox` and store only redacted evidence.
+6. Set `STRIPE_WEBHOOK_SECRET_FILE` to a new file in an existing secure directory outside the
+   repository, then run `pnpm stripe:test-webhook`. One listener both forwards supported events and
+   supplies the captured signing secret; terminal output is redacted. Move the value into the local
+   secret store and delete the temporary file when no longer needed.
+7. Complete the entire sandbox journey: successful Checkout, duplicate and out-of-order events,
+   wrong mode/Price, failed invoice, cancellation, success replay, missing/expired claim, duplicate
+   Checkout, exactly-once key issuance, entitlement loss, monitoring pause, and Portal login.
 
-1. Authenticate/authorize the project owner before creating Checkout or Portal
-   sessions.
-2. Select the allowlisted server-side price and include a stable internal
-   account/project reference in Stripe metadata.
-3. Reuse or create the server-mapped Stripe customer; never accept a customer ID
-   from the browser.
-4. Use idempotency keys for Stripe mutations.
-5. Redirect only to allowlisted canonical success/cancel URLs.
-6. Verify every webhook from the unmodified raw body before parsing.
-7. Insert the Stripe event ID under a unique constraint before applying it.
-8. Project subscription state locally and compute entitlements server-side.
-9. Treat browser success pages as informational; webhooks are authoritative.
-10. Portal sessions are short-lived and created only after authorization.
+The listener forwards only:
 
-Do not store card details. Store only provider IDs, status, relevant periods,
-cancellation flags, price mapping, entitlement projection, and audit times.
+```text
+checkout.session.completed
+customer.subscription.created
+customer.subscription.updated
+customer.subscription.deleted
+invoice.paid
+invoice.payment_failed
+```
 
-## Tests required before review
+CLI forwarding is local verification, never a deployed webhook configuration. Preview and
+production each need their own registered endpoint and signing secret.
 
-- Billing-disabled UI/API has no checkout call or broken CTA.
-- Test secret and price ID cannot run under `STRIPE_MODE=live`, and vice versa.
-- Checkout/portal creation rejects unauthenticated and cross-account requests.
-- Browser-supplied price/customer/return URL is ignored or rejected.
-- Valid webhook verifies; bad, missing, replayed, or wrong-secret signature fails.
-- Duplicate/out-of-order events converge idempotently.
-- Active/trialing/past-due/canceled/incomplete states project conservatively.
-- Entitlement activates only for a paid current subscription period; stale or
-  mismatched invoice periods fail closed.
-- Concurrent duplicate Checkout creation converges to one durable open
-  reservation or an explicit reconciliation error before another provider call.
-- Cancellation and renewal boundaries match reviewed terms.
-- Logs and analytics contain no secret, raw signature, or payment details.
-- Deterministic fixtures or a Stripe test clock cover renewal and cancellation.
+## Customer Portal
 
-The completed integrated local run is evidence for the working tree, and the
-redacted catalog verifier is evidence only for the four Stripe test resources
-listed above. Keep the route-specific matrix open until the final release SHA,
-post-rotation verifier, signed endpoint delivery, Checkout/Portal/entitlement
-journey, scheduled run, and end-to-end result are attached. Do not infer an item
-from file presence, catalog presence, or the aggregate test count alone.
+Activate Stripe’s no-code Portal login and enable only reviewed functionality: payment-method
+updates, invoice history, subscription status, and cancellation. Do not expose unsupported plan
+switching. Customer-facing users authenticate through Stripe’s e-mailed login link. Founder
+operations may create a Portal Session only for the Stripe customer already bound to the authorized
+project.
+
+## Tax and terms
+
+Do not enable `automatic_tax`, collect tax, or claim tax readiness until the founder and tax adviser
+confirm registrations and the founder approves VAT/sales-tax treatment, invoices, refunds,
+cancellation, renewal, consumer rights, privacy, and terms. Stripe Tax configuration cannot decide
+whether TrendsFast is legally registered where required.
+
+## Live catalog and runtime gates
+
+`pnpm stripe:bootstrap-live` and `pnpm stripe:verify-live` require both exact acknowledgements:
+
+```env
+I_UNDERSTAND_LIVE_STRIPE=YES
+STRIPE_LIVE_ENABLEMENT_APPROVED=YES
+```
+
+They can create/verify only the live Product and Price and stop before Checkout or a charge.
+Application configuration separately rejects live billing unless production mode and both
+acknowledgements are present; it also rejects test-mode billing in production and live mode outside
+production. Sandbox Checkout is additionally fixture-only and can issue only a `tf_test_` key;
+managed/BYOK provider modes keep it closed, so test cards can never authorize paid upstream calls.
+Live production Checkout requires a non-fixture provider mode and is the only path that can issue a
+`tf_live_` key. Keep runtime billing flags false until sandbox/deployed webhook,
+dogfood review, legal/refund/tax, monitoring, and controlled-payment gates have passed.
 
 ## Verification evidence
 
-Record test account/workspace identifier (non-secret), build SHA, product/price
-IDs (safe identifiers only if policy allows), webhook events, fixture/test-clock
-scenario, test result, and reviewer. A successful test-mode flow is still not
-live enablement. Continue with [LIVE_ENABLEMENT_GATE.md](LIVE_ENABLEMENT_GATE.md).
-
-`scripts/stripe/bootstrap-live.sh` must never run automatically. It requires the
-explicit `I_UNDERSTAND_LIVE_STRIPE=YES` acknowledgement and every live gate.
+Record only the account/workspace identifier, environment, release SHA, safe Product/Price IDs,
+webhook event IDs, redacted fixture/test-clock scenario, result, timestamp, and reviewer. Never
+record secret keys, webhook secrets, raw Checkout claims, customer e-mail, private delivery tokens,
+or raw API keys. A passing catalog verifier is narrower than an application-level
+Checkout/webhook/entitlement/Portal journey and is never evidence of live enablement.

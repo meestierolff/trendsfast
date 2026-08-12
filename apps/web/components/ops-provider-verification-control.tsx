@@ -1,12 +1,13 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 
 export function OpsProviderVerificationControl({ csrfToken }: { csrfToken: string }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const attempt = useRef<{ payload: string; id: string } | null>(null);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -15,27 +16,41 @@ export function OpsProviderVerificationControl({ csrfToken }: { csrfToken: strin
     setPending(true);
     setNotice(null);
     try {
+      const requestPayload = JSON.stringify({
+        productUrl: String(form.get("productUrl") ?? "").trim() || undefined,
+        query: String(form.get("query") ?? "").trim() || undefined,
+        market: String(form.get("market") ?? "").trim() || undefined,
+        language: String(form.get("language") ?? "").trim() || undefined,
+      });
+      const attemptPayload = `${provider}\n${requestPayload}`;
+      if (!attempt.current || attempt.current.payload !== attemptPayload) {
+        attempt.current = { payload: attemptPayload, id: crypto.randomUUID() };
+      }
       const response = await fetch(`/api/ops/providers/${encodeURIComponent(provider)}/verify`, {
         method: "POST",
         credentials: "same-origin",
         cache: "no-store",
-        headers: { "content-type": "application/json", "x-csrf-token": csrfToken },
-        body: JSON.stringify({
-          productUrl: String(form.get("productUrl") ?? "").trim() || undefined,
-          query: String(form.get("query") ?? "").trim() || undefined,
-          market: String(form.get("market") ?? "").trim() || undefined,
-          language: String(form.get("language") ?? "").trim() || undefined,
-        }),
+        headers: {
+          "content-type": "application/json",
+          "x-csrf-token": csrfToken,
+          "idempotency-key": attempt.current.id,
+        },
+        body: requestPayload,
       });
       const payload = (await response.json().catch(() => null)) as {
         ok?: boolean;
         error?: string;
         state?: string;
       } | null;
+      if (payload?.state && payload.state !== "RUNNING") attempt.current = null;
       if (!response.ok || !payload?.ok) {
         throw new Error(payload?.error ?? "Provider verification failed.");
       }
-      setNotice(`Durable verification completed with technical state ${payload.state}.`);
+      setNotice(
+        payload.state === "RUNNING"
+          ? "This durable verification attempt is already running. Submit again to read its final state without starting another provider call."
+          : `Durable verification completed with technical state ${payload.state}.`,
+      );
       router.refresh();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Provider verification failed.");

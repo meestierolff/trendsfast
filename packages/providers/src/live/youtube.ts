@@ -9,6 +9,7 @@ import {
   elapsedMilliseconds,
   fetchJson,
   providerResult,
+  requiredNonnegativeEnvironment,
   unconfiguredResult,
 } from "./common";
 
@@ -31,10 +32,17 @@ export function createYouTubeAdapter(): ProviderAdapter {
         maximum,
         request.queries.filter((query) => query.provider === "youtube").length,
       );
+      const quotaUnits = searches + (searches > 0 ? 1 : 0);
+      if (quotaUnits > 0 && !context) throw new Error("YouTube estimation requires runtime costs");
+      const configured = Boolean(context?.env.YOUTUBE_API_KEY?.trim());
       return {
-        calls: searches + (searches > 0 ? 1 : 0),
-        estimatedUsd: 0,
-        quotaUnits: searches + (searches > 0 ? 1 : 0),
+        calls: quotaUnits,
+        estimatedUsd:
+          quotaUnits *
+          (context && configured
+            ? requiredNonnegativeEnvironment(context, "YOUTUBE_INTERNAL_QUOTA_VALUE_USD")
+            : 0),
+        quotaUnits,
       };
     },
     collect: async (request, context) => {
@@ -50,6 +58,10 @@ export function createYouTubeAdapter(): ProviderAdapter {
       if (!hasRequiredCredentials(metadata.requiredEnvironmentVariables, context)) {
         return unconfiguredResult("youtube", metadata.requiredEnvironmentVariables, context);
       }
+      const quotaValueUsd = requiredNonnegativeEnvironment(
+        context,
+        "YOUTUBE_INTERNAL_QUOTA_VALUE_USD",
+      );
       const startedAt = context.now().toISOString();
       const apiKey = context.env.YOUTUBE_API_KEY!.trim();
       const references = new Map<string, SearchReference>();
@@ -131,7 +143,7 @@ export function createYouTubeAdapter(): ProviderAdapter {
           searchQueries: queries.length,
           generalUnits: ids.length > 0 ? 1 : 0,
         },
-        estimatedUsd: 0,
+        estimatedUsd: quotaUsed * quotaValueUsd,
         actualUsd: 0,
         startedAt,
         finishedAt: context.now().toISOString(),

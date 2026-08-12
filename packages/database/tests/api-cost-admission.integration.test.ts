@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { afterAll, describe, expect, it } from "vitest";
 
 import { apiKeys, createDatabaseFromEnv, createRepositories, scanRequests } from "../src/index";
@@ -152,5 +152,55 @@ databaseDescribe("atomic API-key hourly cost admission", () => {
       projectedCostUsd: 0.55,
       maximumCostUsd: 0.5,
     });
+  });
+
+  it("rejects a key revoked after authentication and at the exact expiry boundary", async () => {
+    const revokedMaterial = await repositories.apiKeys.issue({
+      name: `revoked-admission-${randomUUID()}`,
+      environment: "test",
+      rateLimitPerHour: 100,
+      providerCostLimitUsd: 1,
+    });
+    apiKeyIds.push(revokedMaterial.record.id);
+    await expect(
+      repositories.apiKeys.authenticate({ rawKey: revokedMaterial.rawKey }),
+    ).resolves.toMatchObject({ ok: true });
+    await repositories.apiKeys.revoke(revokedMaterial.record.id, "integration:revoke-race");
+
+    const revoked = await repositories.scans.admitApiRequest({
+      apiKeyId: revokedMaterial.record.id,
+      idempotencyKey: randomUUID(),
+      request: { product_url: `https://revoked-${randomUUID()}.example` },
+      costReservationUsd: 0.25,
+      ...window(),
+    });
+    expect(revoked).toEqual({ status: "KEY_INACTIVE" });
+
+    const boundary = new Date(Date.now() + 60_000);
+    const expiringMaterial = await repositories.apiKeys.issue({
+      name: `expired-admission-${randomUUID()}`,
+      environment: "test",
+      rateLimitPerHour: 100,
+      providerCostLimitUsd: 1,
+      expiresAt: boundary,
+    });
+    apiKeyIds.push(expiringMaterial.record.id);
+    const expired = await repositories.scans.admitApiRequest({
+      apiKeyId: expiringMaterial.record.id,
+      idempotencyKey: randomUUID(),
+      request: { product_url: `https://expired-${randomUUID()}.example` },
+      costReservationUsd: 0.25,
+      since: new Date(boundary.getTime() - 3_600_000),
+      now: boundary,
+    });
+    expect(expired).toEqual({ status: "KEY_INACTIVE" });
+
+    const requests = await client.db
+      .select()
+      .from(scanRequests)
+      .where(
+        inArray(scanRequests.apiKeyId, [revokedMaterial.record.id, expiringMaterial.record.id]),
+      );
+    expect(requests).toHaveLength(0);
   });
 });

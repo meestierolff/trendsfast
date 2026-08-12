@@ -1,116 +1,133 @@
-# 013 — Stripe readiness
+# 013 — Delivered-result Stripe conversion
 
-Status: test-mode billing, founder usage, and paid-monitoring implementation is
-in progress; billing and paid monitoring remain disabled. A Stripe test catalog
-and its redacted verifier exist, but no application checkout/webhook/entitlement
-journey or live-mode flow has been externally verified.
+Status: code-local implementation and deterministic tests are present. Billing and paid
+monitoring remain disabled; the previously exposed sandbox credential must be revoked and replaced
+before any Stripe CLI/API verification. No live Stripe resource, charge, or customer journey is
+claimed by this document.
 
 ## User problem
 
-Future recurring monitoring needs a simple entitlement without making the
-open-source engine dependent on payment infrastructure.
-
-## Scope
-
-Target scope: one test product/price, founder-authorized Checkout/Portal,
-signed/idempotent webhooks, Customer Portal, conservative local subscription
-projection, `founder_cloud`, durable plan usage, one bounded daily monitoring
-claim, disabled state, and deterministic/integration tests.
-
-## Non-goals
-
-Live charges, credits/tokens, multiple plans, usage billing, another billing
-provider, tax/legal automation, or a paid promise before operations work.
+A founder who has already received a useful private result can buy one bounded monitoring plan,
+receive one project-scoped API key, and manage billing through Stripe without creating a general
+TrendsFast customer dashboard.
 
 ## Product contract
 
-Future hypothesis: Founder at $39/month for one monitored product, one scheduled
-research run per day, ten on-demand refreshes per billing month, up to one new
-delivered Next Move per day, a project-scoped API key, unlimited agents/clients
-using that key, result polling that does not consume a research run, 30-day
-history, and managed provider accounts. Next Moves are delivered only when the
-quality floor passes; scheduled `WAIT` results are valid and included. An
-accepted on-demand request consumes one refresh regardless of its outcome. This
-is not an active offer, and “unlimited” never describes scan creation. When
-disabled, there is no checkout call or dead paid CTA.
+The single launch catalog entry is `TrendsFast Founder` at `$39 USD/month`: one monitored product,
+one scheduled run per UTC day, ten accepted on-demand runs per billing period, at most one newly
+delivered Next Move per UTC day, read/write Next Move API access, polling outside research
+allowances, and 30-day history. No coupon, promotion code, trial, alternate plan, or “unlimited
+scans” claim is enabled.
 
-## API contract
+The exact delivered-result CTA is `Monitor this product — $39/month`. It is rendered only when
+both billing and paid monitoring are enabled; live mode additionally requires both explicit live
+acknowledgements.
 
-Authenticated server creates allowlisted sessions; browser cannot choose price,
-customer, entitlement, or redirect. Webhook verifies raw-body signature and
-deduplicates event ID.
+## Authoritative Stripe choices
 
-## Data model
+The implementation follows the installed repository skills:
 
-Store Stripe customer/subscription IDs, local account mapping, status/period/
-cancel fields, processed event IDs, and entitlement projection—no card details.
+- `.agents/skills/stripe-best-practices/SKILL.md` and its billing, payments, security, and tax
+  references;
+- `.agents/skills/stripe-docs/SKILL.md`;
+- `.agents/skills/upgrade-stripe/SKILL.md`.
 
-## Provider/legal constraints
+Stripe Node is pinned compatibly to `^22.4.0`, with API version
+`2026-07-29.dahlia`. Subscriptions use Stripe Billing and hosted Checkout Sessions with Prices,
+not Plans or hand-built recurring PaymentIntents. Payment methods are left to Stripe Dashboard
+configuration. `automatic_tax` remains off until the founder and tax adviser confirm every
+required registration; code readiness is not tax approval.
 
-Founder owns Stripe and must approve VAT/tax, invoicing, refunds, cancellation,
-renewal, consumer rights, privacy, terms, and live catalog.
+## Checkout ownership and recovery
 
-## Security considerations
+Checkout starts only from an active, unexpired private delivery capability and resolves its exact
+local project. TrendsFast generates a random 256-bit claim, stores only its SHA-256 hash on the
+unique checkout reservation, and sets the raw capability in a Secure, HttpOnly, SameSite=Lax
+cookie. The private result token is never sent to Stripe.
 
-Test/live separation, secret redaction, webhook signatures, idempotency,
-out-of-order events, tenant authorization, server-derived catalog.
+The Stripe request uses one allowlisted recurring Price, quantity one, `mode=subscription`, a
+non-secret project client reference, stable project/reservation/plan metadata, and a stable
+idempotency key. Its integration identifier has the required random eight-letter installation
+suffix. Neither `payment_method_types` nor automatic tax is forced in code.
 
-## Tests written first
+The claim remains usable for a bounded 30-minute webhook/redirect grace after the Stripe Session
+expires, while the complete claim lifetime stays within 24 hours. Checkout fails before a Stripe
+mutation unless the verified delivery capability covers that full window. An unbound local
+reservation is deliberately recoverable. A retry presents the same claim cookie,
+searches Stripe by the non-secret reservation metadata, binds an already-created remote Session,
+and therefore does not create a duplicate after an unknown provider effect or local bind failure.
+The cancel URL contains no result token. The no-store/no-referrer cancel page returns through local
+browser history to the private result without disclosing the capability to Stripe or a referrer.
 
-All tests listed in `docs/billing/STRIPE_SETUP.md`, especially disabled state,
-signature/replay/order, cross-tenant, and entitlement revocation.
+## Webhook authority and one-time key
 
-## Implementation
+The success redirect never grants access or calls the checkout “paid.” It binds the returned
+Session ID to the hashed local claim and waits until signed, raw-body webhooks project an active
+subscription and paid invoice for the exact current period and allowlisted Price.
 
-Keep Stripe behind `packages/billing` and `BILLING_ENABLED=false`; follow the
-test setup without creating live resources automatically.
+Only then can one transaction insert the project-scoped live key, append its redacted management
+audit, and consume/bind the claim. The raw key is returned once and never stored or e-mailed.
+Refresh, replay, concurrent issuance, or transaction failure cannot create a second durable key.
+The claim cookie is cleared after successful issuance and in the already-consumed terminal state,
+but retained while webhook projection is still recoverable.
 
-### Current implementation truth
+The key has read/write Next Move scopes, one project, the paid create limit, the explicitly
+configured `API_PROVIDER_COST_LIMIT_USD_PER_HOUR`, and an expiry at the authoritative entitlement
+period end. A signed active and
+paid renewal extends only that claim-issued key. A terminal subscription end revokes only that key
+with a management audit. A temporary invoice failure makes entitlement inactive without
+irreversibly revoking a key that may recover. Founder-grant or unrelated keys are never selected by
+this lifecycle.
 
-The active development tree contains fail-closed work for founder-authorized
-test Checkout/Portal routes, a bounded raw-body webhook route, Stripe event
-normalization and idempotent PostgreSQL projection, founder-plan usage records,
-current-period entitlement checks, durable duplicate-Checkout guards, and a
-secret-protected bounded monitoring cron. Availability requires both
-`BILLING_ENABLED=true` and `PAID_MONITORING_ENABLED=true`.
+## Customer Portal
 
-Paid-monitoring configuration also rejects a lease shorter than the scan
-deadline plus 30 seconds, or a worst-case sequential batch where
-`MAX_SCAN_DURATION_SECONDS * MONITORING_CRON_BATCH_SIZE + 30 > 300`. The default
-`240 * 1 + 30` fits. This fail-closed arithmetic is not evidence that scheduling
-has been deployed or that a production run completes in time.
+Founder operations can create a short-lived Portal Session only after founder authentication and
+only for the Stripe customer already bound to the authorized local project. The customer-facing
+path is Stripe’s hosted no-code Portal login URL, configured server-side and validated to the
+`https://billing.stripe.com/p/login/...` origin/path. There is no unauthenticated local endpoint
+that accepts a customer ID.
 
-The integrated local working tree passed its clean 15-file migration replay
-through `0016` with all 15 hashes matched, strict 34/34-table and ACL
-verification, full database-enabled 449-test suite, typecheck, lint, Drizzle
-check, final optimized webpack production build, and 60-check browser suite as
-recorded in the
-[launch checklist](../operations/LAUNCH_CHECKLIST.md). That is `LOCAL_PASS`, not
-release evidence. The Stripe test verifier passed for product
-`prod_V3SAWlzw4po9Vw`, price `price_1U3LGBDzHjCqsazv1xkoxKhA`, coupon
-`trendsfast_founding_100_12_months`, and disabled promotion
-`promo_1U3LHgDzHjCqsazvf4vgUGB9`. A test key exposed in local CLI output must be
-rotated and is intentionally not recorded. No immutable final SHA/remote CI,
-external webhook delivery, application Checkout/Portal journey, deployed
-scheduled run, live charge, or paid customer journey is claimed.
+## Operator scripts and safety gates
+
+The supported commands are:
+
+```text
+pnpm stripe:bootstrap-sandbox
+pnpm stripe:verify-sandbox
+pnpm stripe:test-webhook
+pnpm stripe:bootstrap-live
+pnpm stripe:verify-live
+```
+
+All sandbox helpers fail before identity or API access unless
+`STRIPE_SANDBOX_KEY_ROTATED=YES`. They use the non-secret `stripe whoami --format json` identity
+check without printing its response. Catalog bootstrap uses stable metadata, lookup key, and
+idempotency keys; it creates or reuses only Product and Price and prints only safe resource IDs.
+
+The webhook helper starts one CLI listener. A streaming redaction filter captures that same
+listener’s signing secret into a new mode-0600 file outside the repository and redacts it from
+terminal output. It never assumes a secret from a different listener invocation.
+
+Live bootstrap and verification additionally require both
+`I_UNDERSTAND_LIVE_STRIPE=YES` and `STRIPE_LIVE_ENABLEMENT_APPROVED=YES`. Catalog bootstrap stops
+without creating a Checkout or charge. Runtime live Checkout remains a separate gated decision.
 
 ## Verification
 
-Keep deterministic fixtures/test clock and Stripe test mode only, then require
-explicit live-gate approval. The verified test catalog does not replace an
-application-level Checkout/Portal/webhook/entitlement journey or any
-deployed/live verification.
+Unit coverage includes SDK/API request shape, live fail-closed behavior, token-bound claim cookies,
+unknown-effect Checkout recovery, success replay, cookie clearing, and operator-script gates. A
+real-PostgreSQL test injects failure between key insertion and claim binding, then checks rollback,
+concurrent refresh, renewal extension, temporary payment failure, terminal revocation, and audits.
 
-## Limitations
+External verification remains blocked until the sandbox key is rotated. After rotation, the
+sandbox matrix must cover hosted Checkout, signed duplicate/out-of-order events, wrong price/mode,
+failed invoice, cancellation, one-time issuance/replay, monitoring pause, and both Portal identity
+paths. Production webhooks require a separately configured endpoint and secret; CLI forwarding is
+never production configuration.
 
-Pricing is a hypothesis; tax/legal/support behavior is unresolved until reviewed.
+## Rollout and rollback
 
-## Rollout
-
-Free founder scans first. Test partners only after the free path and all test
-gates pass.
-
-## Rollback
-
-Disable new Checkout without deleting subscriptions/events; reconcile through
-signed provider state.
+Keep `BILLING_ENABLED=false` and `PAID_MONITORING_ENABLED=false` until the sandbox journey,
+deployed webhooks, customer Portal, legal/refund terms, and tax-registration review all pass. Roll
+back by disabling new Checkout while retaining subscriptions, webhook receipts, entitlements, and
+audits for reconciliation.

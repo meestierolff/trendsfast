@@ -1,4 +1,5 @@
 import { FeedbackControls } from "./feedback-controls";
+import { DeliveredMonitoringCta } from "./delivered-monitoring-cta";
 import { NextMoveCard, type NextMoveCardModel } from "./next-move-card";
 import { TrackedEvidenceLink } from "./tracked-evidence-link";
 import {
@@ -158,7 +159,15 @@ function EvidenceReceipt({
   );
 }
 
-export function ScanResultView({ token, result }: { token: string; result: ReadyScanResultView }) {
+export function ScanResultView({
+  token,
+  result,
+  monitoringCheckoutAvailable = false,
+}: {
+  token: string;
+  result: ReadyScanResultView;
+  monitoringCheckoutAvailable?: boolean;
+}) {
   const productUrl = safeHttpUrl(result.product.url);
   const freshest = freshestObservation(result.evidence);
   const signatureMove: NextMoveCardModel = {
@@ -373,6 +382,8 @@ export function ScanResultView({ token, result }: { token: string; result: Ready
         </div>
         <code>auto_publish={String(result.autoPublish)}</code>
       </section>
+
+      {monitoringCheckoutAvailable ? <DeliveredMonitoringCta token={token} /> : null}
 
       <FeedbackControls token={token} />
     </div>

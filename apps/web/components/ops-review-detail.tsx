@@ -63,6 +63,8 @@ export type OpsReviewDetailView = {
     language: string;
     credibleClaims: readonly string[];
     credibleTopics: readonly string[];
+    suitableChannels: readonly string[];
+    availableFormats: readonly string[];
     assumptions: readonly string[];
   } | null;
   move: {
@@ -85,6 +87,10 @@ export type OpsReviewDetailView = {
     independentSourceCount: number;
     saturation: string;
     limitations: readonly string[];
+    reviewVersion: number;
+    proposalStale: boolean;
+    promptVersion: string;
+    scoreVersion: string;
     founderReviewed: boolean;
     autoPublish: boolean;
     validUntil: OpsDate;
@@ -712,6 +718,7 @@ export function OpsReviewDetail({
                       scanId={detail.request.publicId}
                       csrfToken={csrfToken}
                       receiptId={receipt.id}
+                      reviewVersion={detail.move?.reviewVersion ?? 1}
                       canReview={canReviewEvidence}
                       verified={receipt.verified}
                       availability={receipt.availability}
@@ -738,6 +745,36 @@ export function OpsReviewDetail({
               moveAction: detail.move.action,
               founderReviewed: detail.move.founderReviewed,
               autoPublish: detail.move.autoPublish,
+              editableMove: {
+                reviewVersion: detail.move.reviewVersion,
+                proposalStale: detail.move.proposalStale,
+                topic: detail.move.topic,
+                angle: detail.move.angle,
+                channel: detail.move.channel,
+                format: detail.move.format,
+                hook: detail.move.hook,
+                outline: detail.move.outline,
+                cta: detail.move.cta,
+                whyNow: detail.move.whyNow,
+                limitations: detail.move.limitations,
+                validUntil: new Date(detail.move.validUntil).toISOString(),
+                confidenceRationale: detail.move.confidenceRationale ?? "",
+              },
+            }
+          : {})}
+        {...(detail.context
+          ? {
+              editableContext: {
+                productName: detail.context.name,
+                audience: detail.context.audience,
+                problem: detail.context.problem,
+                desiredOutcome: detail.context.desiredOutcome,
+                credibleClaims: detail.context.credibleClaims,
+                credibleTopics: detail.context.credibleTopics,
+                suitableChannels: detail.context.suitableChannels,
+                availableFormats: detail.context.availableFormats,
+                assumptions: detail.context.assumptions,
+              },
             }
           : {})}
       />

@@ -6,6 +6,12 @@ Supabase Auth, Storage, Realtime, Edge Functions, or the browser Data API.
 Observed state on 2026-08-12: no TrendsFast Supabase project exists. This is an
 unexecuted provisioning guide, not hosted-database evidence.
 
+The current local PostgreSQL evidence is narrower: all 18 migrations through
+`0019` (with intentional `0009`/`0010` gaps) and their hashes passed, the seed
+passed twice, and strict verification matched 37/37 public tables plus expected
+columns, enums, indexes, constraints, and browser/default ACL denial. Repeat all
+of that against each hosted environment; do not copy the local result forward.
+
 ## Connections
 
 Create separate preview and production projects. Store two server-only URLs per
@@ -28,11 +34,13 @@ selected driver configuration against the chosen pooler before production.
 3. Configure network restrictions where the deployment topology permits them.
 4. Put the pooled URL in the Vercel runtime environment and retain the direct URL
    only in the controlled release/migration environment.
-5. From the exact release SHA, run `pnpm install --frozen-lockfile` and then
-   `DIRECT_DATABASE_URL=... DATABASE_URL=... pnpm db:migrate`.
+5. From the exact release SHA, run `pnpm install --frozen-lockfile` and then run
+   `pnpm db:migrate` with both URLs set; migration must select
+   `DIRECT_DATABASE_URL`, never the transaction pooler.
 6. Never run `pnpm db:seed` against hosted preview or production.
-7. Run `pnpm db:verify-hosted` with `DIRECT_DATABASE_URL` set. Save the redacted
-   JSON result with the release record.
+7. Run `STRICT_HOSTED_SCHEMA=1 pnpm db:verify-hosted` with
+   `DIRECT_DATABASE_URL` set. Save the redacted JSON result with the release
+   record.
 
 The verifier reads catalog metadata only: PostgreSQL version, the Drizzle
 migration ledger, public table names, enum names, index names, and constraint
@@ -60,7 +68,7 @@ Environment:
 Release SHA:
 Supabase project reference (non-secret):
 PostgreSQL version:
-Migration count/latest timestamp:
+Migration count/latest migration/hash:
 Missing/extra tables:
 Missing enums/indexes/constraints:
 Backup/restore evidence:

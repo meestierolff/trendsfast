@@ -1,5 +1,5 @@
 import { after, NextResponse } from "next/server";
-import { loadEnv } from "@trendsfast/config";
+import { loadEnv, resolveProviderCosts } from "@trendsfast/config";
 import { readBoundedJsonBody } from "../../../lib/bounded-json";
 import {
   analyticsSessionCookie,
@@ -80,6 +80,9 @@ export async function POST(request: Request) {
         repository: repositories.scans,
         fingerprintPepper,
         dailyLimit: env.PUBLIC_SCAN_DAILY_LIMIT,
+        globalDailyLimit: env.PUBLIC_SCAN_GLOBAL_DAILY_LIMIT,
+        globalDailyBudgetUsd: env.PUBLIC_SCAN_GLOBAL_DAILY_BUDGET_USD,
+        costReservationUsd: resolveProviderCosts(env).maximumProviderCostUsdPerScan,
         ...(analyticsSession
           ? { anonymousSessionHash: analyticsSession.anonymousSessionHash }
           : {}),
@@ -109,7 +112,30 @@ export async function POST(request: Request) {
     return response;
   } catch (error) {
     if (error instanceof PublicScanError) {
-      return NextResponse.json({ error: error.message }, { status: error.status });
+      if (error.code === "TODAYS_FOUNDER_REVIEW_CAPACITY_REACHED") {
+        return NextResponse.json(
+          {
+            error: "TODAYS_FOUNDER_REVIEW_CAPACITY_REACHED",
+            message: "Today's free founder-reviewed scan slots are full.",
+          },
+          {
+            status: 429,
+            headers: {
+              "cache-control": "no-store",
+              "retry-after": String(error.retryAfterSeconds ?? 86_400),
+            },
+          },
+        );
+      }
+      return NextResponse.json(
+        { error: error.message },
+        {
+          status: error.status,
+          ...(error.status === 429
+            ? { headers: { "retry-after": String(error.retryAfterSeconds ?? 86_400) } }
+            : {}),
+        },
+      );
     }
     return NextResponse.json({ error: "The request could not be accepted." }, { status: 500 });
   }

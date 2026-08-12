@@ -74,12 +74,12 @@ optional analytics adapter remains disabled by default, and the public
 open-metrics page must report insufficient data until a reproducible,
 denominator-backed query is reviewed. No external cohort metric is claimed.
 
-The current working tree's actual production-artifact browser run covered the
-launch-interest surface within its 58 passes/two intentional mobile skips, and
-the full database-enabled suite reached 449 passing tests across 85 files. This
-is local implementation evidence only: final remote CI, deployment, scheduler
-operation, external analytics, and real denominator-backed metrics remain
-unverified.
+The database-enabled run for implementation candidate
+`73297a6cfdc99b025990b001b39cef399f4d235e` passed 98 files/512 tests. The final
+production-artifact browser run passed 58 checks with two intentional mobile
+skips, including 24 desktop/mobile axe checks. Branch CI passed at
+`4ec9510f610001285c54947326c65cb79a075f37`; deployment, scheduler operation,
+external analytics, and real denominator-backed metrics remain unverified.
 
 Exact-project deletion removes linked request, key, authentication, analytics,
 and related cascaded records. `pnpm db:purge` removes eligible retained terminal

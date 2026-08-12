@@ -10,6 +10,45 @@ export type ProviderVerificationState =
   "VERIFIED" | "DEGRADED" | "FAILED" | "UNCONFIGURED" | "FIXTURE" | "LEGAL_REVIEW";
 export type ProviderVerificationHealthStatus = "HEALTHY" | "DEGRADED" | "UNCONFIGURED" | "FAILED";
 
+const ATTEMPT_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const REQUEST_HASH_PATTERN = /^[0-9a-f]{64}$/;
+const REQUEST_HASH_LIMITATION_PREFIX = "internal:verification-request-sha256:";
+
+export class ProviderVerificationAttemptConflictError extends Error {
+  constructor() {
+    super("The provider verification attempt ID was reused for different inputs");
+    this.name = "ProviderVerificationAttemptConflictError";
+  }
+}
+
+type ProviderVerificationRecord = typeof providerVerificationRecords.$inferSelect;
+
+function requestHashMarker(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (!REQUEST_HASH_PATTERN.test(normalized)) {
+    throw new Error("Provider verification request hashes must be lowercase SHA-256 values");
+  }
+  return `${REQUEST_HASH_LIMITATION_PREFIX}${normalized}`;
+}
+
+function internalLimitations(values: readonly string[]): string[] {
+  return values.filter((value) => value.startsWith(REQUEST_HASH_LIMITATION_PREFIX));
+}
+
+function publicRecord(record: ProviderVerificationRecord): ProviderVerificationRecord {
+  return {
+    ...record,
+    limitations: record.limitations.filter(
+      (value) => !value.startsWith(REQUEST_HASH_LIMITATION_PREFIX),
+    ),
+  };
+}
+
+function sameNullable(left: string | null, right: string | null | undefined): boolean {
+  return left === (right ?? null);
+}
+
 const terminalStates: ProviderVerificationState[] = [
   "VERIFIED",
   "DEGRADED",
@@ -54,6 +93,122 @@ function boundedLimitations(values: readonly string[]): string[] {
 
 export class ProviderVerificationRepository {
   constructor(private readonly db: TrendsFastDatabase) {}
+
+  /**
+   * Uses the caller's bounded attempt UUID as the durable idempotency boundary.
+   * The reservation and RUNNING record are committed before the caller is
+   * allowed to make a provider call. A concurrent or later replay receives the
+   * original record and never becomes a second effect owner.
+   */
+  async admitAttempt(input: {
+    attemptId: string;
+    requestHash: string;
+    source: typeof providerVerificationRecords.$inferInsert.source;
+    provider: string;
+    credentialMode: "fixture" | "managed" | "byok" | "none";
+    deploymentEnvironment: "local" | "preview" | "production";
+    releaseSha?: string | null;
+    deploymentHost?: string | null;
+    deploymentId?: string | null;
+    initiatedBy: string;
+    estimatedCostReservationUsd: number;
+    maximumCostUsd: number;
+    startedAt?: Date;
+  }): Promise<{
+    record: ProviderVerificationRecord;
+    created: boolean;
+    admitted: boolean;
+  }> {
+    if (!ATTEMPT_ID_PATTERN.test(input.attemptId)) {
+      throw new Error("Provider verification attempt IDs must be UUIDs");
+    }
+    if (
+      !Number.isFinite(input.estimatedCostReservationUsd) ||
+      input.estimatedCostReservationUsd < 0 ||
+      !Number.isFinite(input.maximumCostUsd) ||
+      input.maximumCostUsd < 0
+    ) {
+      throw new Error("Provider verification cost admission requires finite non-negative values");
+    }
+
+    const provider = redactSecrets(input.provider).trim().slice(0, 100);
+    const initiatedBy = redactSecrets(input.initiatedBy).trim().slice(0, 160);
+    if (!provider || !initiatedBy) {
+      throw new Error("Provider verification identity is required");
+    }
+    const marker = requestHashMarker(input.requestHash);
+    const denied = input.estimatedCostReservationUsd > input.maximumCostUsd;
+    const startedAt = input.startedAt ?? new Date();
+
+    return this.db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(providerVerificationRecords)
+        .values({
+          id: input.attemptId,
+          source: input.source,
+          provider,
+          state: denied ? "FAILED" : "RUNNING",
+          credentialMode: input.credentialMode,
+          deploymentEnvironment: input.deploymentEnvironment,
+          releaseSha: input.releaseSha ?? null,
+          deploymentHost: input.deploymentHost ?? null,
+          deploymentId: input.deploymentId ?? null,
+          estimatedCostUsd: denied ? "0" : input.estimatedCostReservationUsd.toFixed(6),
+          actualCostUsd: null,
+          limitations: [
+            marker,
+            ...(denied
+              ? [
+                  "The conservative provider verification reservation exceeded the configured cost ceiling; no provider call was made.",
+                ]
+              : []),
+          ],
+          failureCode: denied ? "VERIFICATION_COST_LIMIT" : null,
+          failureMessage: denied
+            ? "Provider verification was denied before any external effect."
+            : null,
+          initiatedBy,
+          startedAt,
+          checkedAt: denied ? startedAt : null,
+          completedAt: denied ? startedAt : null,
+        })
+        .onConflictDoNothing()
+        .returning();
+      if (created) {
+        return {
+          record: publicRecord(created),
+          created: true,
+          admitted: !denied,
+        };
+      }
+
+      const [existing] = await tx
+        .select()
+        .from(providerVerificationRecords)
+        .where(eq(providerVerificationRecords.id, input.attemptId))
+        .limit(1)
+        .for("update");
+      if (!existing) throw new Error("Provider verification admission lost its attempt record");
+      if (
+        existing.source !== input.source ||
+        existing.provider !== provider ||
+        existing.credentialMode !== input.credentialMode ||
+        existing.deploymentEnvironment !== input.deploymentEnvironment ||
+        !sameNullable(existing.releaseSha, input.releaseSha) ||
+        !sameNullable(existing.deploymentHost, input.deploymentHost) ||
+        !sameNullable(existing.deploymentId, input.deploymentId) ||
+        existing.initiatedBy !== initiatedBy ||
+        !internalLimitations(existing.limitations).includes(marker)
+      ) {
+        throw new ProviderVerificationAttemptConflictError();
+      }
+      return {
+        record: publicRecord(existing),
+        created: false,
+        admitted: false,
+      };
+    });
+  }
 
   async begin(input: {
     source: typeof providerVerificationRecords.$inferInsert.source;
@@ -102,11 +257,10 @@ export class ProviderVerificationRepository {
     completedAt?: Date;
   }) {
     const canonicalUrls = boundedUrls(input.canonicalUrls ?? []);
-    const estimatedCostUsd = input.estimatedCostUsd ?? 0;
     const quotaUsed = input.quotaUsed ?? 0;
     if (
-      !Number.isFinite(estimatedCostUsd) ||
-      estimatedCostUsd < 0 ||
+      (input.estimatedCostUsd !== undefined &&
+        (!Number.isFinite(input.estimatedCostUsd) || input.estimatedCostUsd < 0)) ||
       (input.actualCostUsd !== undefined &&
         (!Number.isFinite(input.actualCostUsd) || input.actualCostUsd < 0)) ||
       !Number.isFinite(quotaUsed) ||
@@ -123,36 +277,55 @@ export class ProviderVerificationRepository {
       throw new Error("Only VERIFIED records may assert a successful read-back");
     }
     const completedAt = input.completedAt ?? new Date();
-    const [record] = await this.db
-      .update(providerVerificationRecords)
-      .set({
-        state: input.state,
-        healthStatus: input.healthStatus ?? null,
-        readbackVerified: input.readbackVerified,
-        canonicalUrls,
-        latencyMs: input.latencyMs ?? null,
-        estimatedCostUsd: estimatedCostUsd.toFixed(6),
-        actualCostUsd: input.actualCostUsd === undefined ? null : input.actualCostUsd.toFixed(6),
-        quotaUsed: quotaUsed.toFixed(4),
-        limitations: boundedLimitations(input.limitations ?? []),
-        failureCode: input.failureCode
-          ? redactSecrets(input.failureCode).trim().slice(0, 100)
-          : null,
-        failureMessage: input.failureMessage
-          ? redactSecrets(input.failureMessage).trim().slice(0, 500)
-          : null,
-        checkedAt: input.checkedAt ?? completedAt,
-        completedAt,
-      })
-      .where(
-        and(
-          eq(providerVerificationRecords.id, input.id),
-          eq(providerVerificationRecords.state, "RUNNING"),
-        ),
-      )
-      .returning();
-    if (!record) throw new Error("Provider verification is no longer running");
-    return record;
+    return this.db.transaction(async (tx) => {
+      const [existing] = await tx
+        .select()
+        .from(providerVerificationRecords)
+        .where(eq(providerVerificationRecords.id, input.id))
+        .limit(1)
+        .for("update");
+      if (!existing || existing.state !== "RUNNING") {
+        throw new Error("Provider verification is no longer running");
+      }
+      const estimatedCostUsd = input.estimatedCostUsd ?? Number(existing.estimatedCostUsd);
+      if (!Number.isFinite(estimatedCostUsd) || estimatedCostUsd < 0) {
+        throw new Error("Provider verification accounting is invalid");
+      }
+      const limitations = [
+        ...internalLimitations(existing.limitations),
+        ...boundedLimitations(input.limitations ?? []),
+      ];
+      const [record] = await tx
+        .update(providerVerificationRecords)
+        .set({
+          state: input.state,
+          healthStatus: input.healthStatus ?? null,
+          readbackVerified: input.readbackVerified,
+          canonicalUrls,
+          latencyMs: input.latencyMs ?? null,
+          estimatedCostUsd: estimatedCostUsd.toFixed(6),
+          actualCostUsd: input.actualCostUsd === undefined ? null : input.actualCostUsd.toFixed(6),
+          quotaUsed: quotaUsed.toFixed(4),
+          limitations,
+          failureCode: input.failureCode
+            ? redactSecrets(input.failureCode).trim().slice(0, 100)
+            : null,
+          failureMessage: input.failureMessage
+            ? redactSecrets(input.failureMessage).trim().slice(0, 500)
+            : null,
+          checkedAt: input.checkedAt ?? completedAt,
+          completedAt,
+        })
+        .where(
+          and(
+            eq(providerVerificationRecords.id, input.id),
+            eq(providerVerificationRecords.state, "RUNNING"),
+          ),
+        )
+        .returning();
+      if (!record) throw new Error("Provider verification is no longer running");
+      return publicRecord(record);
+    });
   }
 
   async record(input: {
@@ -196,15 +369,16 @@ export class ProviderVerificationRepository {
   }
 
   async latestBySource() {
-    return this.db
+    const records = await this.db
       .selectDistinctOn([providerVerificationRecords.source])
       .from(providerVerificationRecords)
       .where(inArray(providerVerificationRecords.state, terminalStates))
       .orderBy(providerVerificationRecords.source, desc(providerVerificationRecords.completedAt));
+    return records.map(publicRecord);
   }
 
   async latestProductionBySource() {
-    return this.db
+    const records = await this.db
       .selectDistinctOn([providerVerificationRecords.source])
       .from(providerVerificationRecords)
       .where(
@@ -214,15 +388,17 @@ export class ProviderVerificationRepository {
         ),
       )
       .orderBy(providerVerificationRecords.source, desc(providerVerificationRecords.completedAt));
+    return records.map(publicRecord);
   }
 
   async list(input: { source?: SourceSlug; limit?: number } = {}) {
     const limit = Math.min(Math.max(input.limit ?? 100, 1), 500);
-    return this.db
+    const records = await this.db
       .select()
       .from(providerVerificationRecords)
       .where(input.source ? eq(providerVerificationRecords.source, input.source) : undefined)
       .orderBy(desc(providerVerificationRecords.createdAt))
       .limit(limit);
+    return records.map(publicRecord);
   }
 }

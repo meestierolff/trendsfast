@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { loadEnv } from "@trendsfast/config";
 
 import { OpsApiKeyManager } from "../../../components/ops-api-key-manager";
+import { OpsDesignPartnerGrantManager } from "../../../components/ops-design-partner-grant-manager";
 import { getRepositories } from "../../../lib/server-database";
 import { getOpsPageAuthorization } from "../_auth";
 
@@ -20,10 +21,11 @@ export default async function OpsKeysPage() {
   const authorization = await getOpsPageAuthorization();
   if (!authorization) redirect("/ops");
   const repositories = getRepositories();
-  const [projects, keys, events] = await Promise.all([
+  const [projects, keys, events, grants] = await Promise.all([
     repositories.scanData.listProjects({ activeOnly: true, limit: 200 }),
     repositories.apiKeys.list({ limit: 200 }),
     repositories.apiKeys.listManagementEvents({ limit: 200 }),
+    repositories.founderGrants.list({ limit: 200 }),
   ]);
   const environment = loadEnv().PROVIDER_CREDENTIAL_MODE === "fixture" ? "test" : "live";
 
@@ -46,7 +48,7 @@ export default async function OpsKeysPage() {
       <OpsApiKeyManager
         projects={projects.map((project) => ({
           id: project.id,
-          name: project.name,
+          name: project.name ?? new URL(project.url).hostname,
           url: project.url,
         }))}
         keys={keys.map((key) => ({
@@ -66,6 +68,23 @@ export default async function OpsKeysPage() {
         }))}
         csrfToken={authorization.csrfToken}
         environment={environment}
+      />
+      <OpsDesignPartnerGrantManager
+        projects={projects.map((project) => ({
+          id: project.id,
+          name: project.name ?? new URL(project.url).hostname,
+          url: project.url,
+        }))}
+        initialGrants={grants.map((grant) => ({
+          id: grant.id,
+          projectId: grant.projectId,
+          issuedBy: grant.issuedBy,
+          createdAt: grant.createdAt.toISOString(),
+          expiresAt: grant.expiresAt.toISOString(),
+          revokedAt: grant.revokedAt?.toISOString() ?? null,
+          revokedBy: grant.revokedBy,
+        }))}
+        csrfToken={authorization.csrfToken}
       />
     </section>
   );

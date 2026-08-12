@@ -39,11 +39,18 @@ const currentProduction = {
   deploymentId: "deployment_123",
 };
 
+const nonProduction = {
+  deploymentEnvironment: "local" as const,
+  releaseSha: null,
+  deploymentHost: null,
+  deploymentId: null,
+};
+
 describe("public source projection", () => {
   it.each(["local", "preview"] as const)(
     "does not upgrade a %s read-back to Connected",
     (environment) => {
-      const website = projectPublicSourceStatuses([record(environment)]).find(
+      const website = projectPublicSourceStatuses([record(environment)], nonProduction).find(
         (source) => source.slug === "website",
       );
       expect(website).toMatchObject({

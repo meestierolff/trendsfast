@@ -8,7 +8,7 @@ import {
   boundedIntegerEnvironment,
   elapsedMilliseconds,
   fetchJson,
-  numericEnvironment,
+  requiredNonnegativeEnvironment,
   providerResult,
   unconfiguredResult,
 } from "./common";
@@ -30,9 +30,12 @@ export function createTavilyAdapter(): ProviderAdapter {
         maximum,
         request.queries.filter((query) => query.provider === "tavily").length,
       );
-      const perCredit = context
-        ? numericEnvironment(context, "TAVILY_ESTIMATED_COST_USD_PER_CREDIT", 0.01)
-        : 0.01;
+      if (calls > 0 && !context) throw new Error("Tavily estimation requires runtime costs");
+      const configured = Boolean(context?.env.TAVILY_API_KEY?.trim());
+      const perCredit =
+        context && calls > 0 && configured
+          ? requiredNonnegativeEnvironment(context, "TAVILY_ESTIMATED_COST_USD_PER_CREDIT")
+          : 0;
       return { calls, estimatedUsd: calls * perCredit, quotaUnits: calls };
     },
     collect: async (request, context) => {
@@ -45,16 +48,12 @@ export function createTavilyAdapter(): ProviderAdapter {
       const queries = request.queries
         .filter((query) => query.provider === "tavily")
         .slice(0, maximumCredits);
-      const estimatedUsd =
-        queries.length * numericEnvironment(context, "TAVILY_ESTIMATED_COST_USD_PER_CREDIT", 0.01);
       if (!hasRequiredCredentials(metadata.requiredEnvironmentVariables, context)) {
-        return unconfiguredResult(
-          "tavily",
-          metadata.requiredEnvironmentVariables,
-          context,
-          estimatedUsd,
-        );
+        return unconfiguredResult("tavily", metadata.requiredEnvironmentVariables, context);
       }
+      const estimatedUsd =
+        queries.length *
+        requiredNonnegativeEnvironment(context, "TAVILY_ESTIMATED_COST_USD_PER_CREDIT");
       const startedAt = context.now().toISOString();
       const signals: CanonicalSignal[] = [];
       let credits = 0;

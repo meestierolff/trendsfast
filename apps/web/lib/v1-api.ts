@@ -33,11 +33,16 @@ export type ApiPrincipal = {
 export type V1ApiDependencies = {
   providerCredentialMode: "fixture" | "managed" | "byok";
   authAttemptLimiter?: InProcessInvalidApiKeyLimiter;
-  admitAuthenticationAttempt?(request: Request): Promise<boolean>;
+  admitAuthenticationAttempt?(request: Request): Promise<boolean | "AUTH_FAILURE_LIMITED">;
   authenticate(
     rawKey: string,
-    metadata?: { requestId: string; request: Request },
+    metadata?: {
+      requestId: string;
+      request: Request;
+      requestKind: "CREATE" | "STATUS" | "OTHER";
+    },
   ): Promise<ApiPrincipal | null>;
+  recordAuthenticationFailure?(request: Request): Promise<boolean>;
   createOrReuse(input: {
     principal: ApiPrincipal;
     idempotencyKey: string;
@@ -59,7 +64,11 @@ export class ApiServiceError extends Error {
 function error(code: string, message: string, status: number) {
   return new Response(JSON.stringify({ error: { code, message } }), {
     status,
-    headers: { "content-type": "application/json", "cache-control": "no-store" },
+    headers: {
+      "content-type": "application/json",
+      "cache-control": "no-store",
+      ...(status === 429 ? { "retry-after": "3600" } : {}),
+    },
   });
 }
 
@@ -209,17 +218,20 @@ export function createV1Api(dependencies: V1ApiDependencies) {
         429,
       );
     }
-    if (
-      dependencies.admitAuthenticationAttempt &&
-      !(await dependencies.admitAuthenticationAttempt(context.req.raw))
-    ) {
+    const durableAdmission = dependencies.admitAuthenticationAttempt
+      ? await dependencies.admitAuthenticationAttempt(context.req.raw)
+      : true;
+    if (durableAdmission !== true) {
       reservation.release();
-      context.header("Retry-After", "60");
+      const authFailureLimited = durableAdmission === "AUTH_FAILURE_LIMITED";
+      context.header("Retry-After", authFailureLimited ? "3600" : "60");
       return context.json(
         {
           error: {
             code: "RATE_LIMITED",
-            message: "Too many authentication attempts. Try again later.",
+            message: authFailureLimited
+              ? "Too many failed authentication attempts. Try again later."
+              : "Too many authentication attempts. Try again later.",
           },
         },
         429,
@@ -227,9 +239,16 @@ export function createV1Api(dependencies: V1ApiDependencies) {
     }
     let principal: ApiPrincipal | null;
     try {
+      const requestKind =
+        context.req.method === "POST" && context.req.path === "/v1/next-move"
+          ? "CREATE"
+          : context.req.method === "GET" && context.req.path.startsWith("/v1/next-moves/")
+            ? "STATUS"
+            : "OTHER";
       principal = await dependencies.authenticate(rawKey, {
         requestId,
         request: context.req.raw,
+        requestKind,
       });
     } catch (caught) {
       reservation.release();
@@ -237,6 +256,21 @@ export function createV1Api(dependencies: V1ApiDependencies) {
     }
     if (!principal) {
       reservation.markInvalid();
+      if (
+        dependencies.recordAuthenticationFailure &&
+        !(await dependencies.recordAuthenticationFailure(context.req.raw))
+      ) {
+        context.header("Retry-After", "3600");
+        return context.json(
+          {
+            error: {
+              code: "RATE_LIMITED",
+              message: "Too many failed authentication attempts. Try again later.",
+            },
+          },
+          429,
+        );
+      }
       return context.json(
         { error: { code: "UNAUTHORIZED", message: "The API key is invalid or revoked." } },
         401,

@@ -1,10 +1,12 @@
 import { after } from "next/server";
 
 import { loadEnv } from "@trendsfast/config";
+import { ReviewVersionConflictError } from "@trendsfast/database";
 
 import { readBoundedJsonBody } from "../../../../../../../lib/bounded-json";
 import { getRepositories } from "../../../../../../../lib/server-database";
 import { runPersistedScan } from "../../../../../../../lib/scan-processing";
+import { recomputeStoredReview } from "../../../../../../../lib/stored-review-recompute";
 import { authorizeOpsActionRequest } from "../../../../_security";
 import { parseOpsAction } from "../../../../_validation";
 
@@ -60,6 +62,7 @@ export async function POST(
       !detail.run ||
       !detail.move ||
       detail.move.state !== "DRAFT" ||
+      detail.move.proposalStale ||
       detail.move.autoPublish
     ) {
       throw new Error("REVIEW_STATE_CONFLICT");
@@ -80,6 +83,8 @@ export async function POST(
         const updated = await repositories.scanData.bindEvidence({
           nextMoveId: move.id,
           signalId: receipt.signalId,
+          evidenceReceiptId: receipt.id,
+          expectedVersion: parsed.data.expectedVersion,
           reason: receipt.reason,
           reviewerId: authorization.reviewerId,
           verified: true,
@@ -97,6 +102,7 @@ export async function POST(
         }
         await repositories.reviews.rejectEvidence({
           evidenceReceiptId: receipt.id,
+          expectedVersion: parsed.data.expectedVersion,
           reviewerId: authorization.reviewerId,
           reason: parsed.data.reason,
         });
@@ -108,9 +114,90 @@ export async function POST(
         const approved = await repositories.reviews.approve({
           nextMoveId: move.id,
           reviewerId: authorization.reviewerId,
+          expectedVersion: parsed.data.expectedVersion,
           ...(parsed.data.note ? { note: parsed.data.note } : {}),
         });
         return json({ ok: true, action: parsed.action, moveState: approved.state });
+      }
+
+      case "edit-and-approve": {
+        const { move } = requireDraftReview();
+        const approved = await repositories.reviews.editAndApprove({
+          nextMoveId: move.id,
+          reviewerId: authorization.reviewerId,
+          expectedVersion: parsed.data.expectedVersion,
+          reason: parsed.data.reason,
+          edits: {
+            topic: parsed.data.topic,
+            angle: parsed.data.angle,
+            channel: parsed.data.channel,
+            format: parsed.data.format,
+            hook: parsed.data.hook,
+            outline: parsed.data.outline,
+            cta: parsed.data.cta,
+            whyNow: parsed.data.whyNow,
+            limitations: parsed.data.limitations,
+            validUntil: new Date(parsed.data.validUntil),
+            confidenceRationale: parsed.data.confidenceRationale,
+          },
+        });
+        return json({
+          ok: true,
+          action: parsed.action,
+          moveState: approved.state,
+          reviewVersion: approved.reviewVersion,
+        });
+      }
+
+      case "correct-context": {
+        const { move } = requireDraftReview();
+        const recomputed = await recomputeStoredReview(repositories, {
+          scanPublicId: scanId,
+          nextMoveId: move.id,
+          reviewerId: authorization.reviewerId,
+          expectedVersion: parsed.data.expectedVersion,
+          reason: parsed.data.reason,
+          contextCorrection: {
+            productName: parsed.data.productName,
+            audience: parsed.data.audience,
+            problem: parsed.data.problem,
+            desiredOutcome: parsed.data.desiredOutcome,
+            credibleClaims: parsed.data.credibleClaims,
+            credibleTopics: parsed.data.credibleTopics,
+            suitableChannels: parsed.data.suitableChannels,
+            availableFormats: parsed.data.availableFormats,
+            assumptions: parsed.data.assumptions,
+          },
+        });
+        return json({
+          ok: true,
+          action: parsed.action,
+          moveState: recomputed.move.state,
+          reviewVersion: recomputed.move.reviewVersion,
+          evidenceReviewRequired: true,
+          providerCallsMade: recomputed.providerCallsMade,
+          modelSynthesisPerformed: recomputed.modelSynthesisPerformed,
+        });
+      }
+
+      case "recompute-stored": {
+        const { move } = requireDraftReview();
+        const recomputed = await recomputeStoredReview(repositories, {
+          scanPublicId: scanId,
+          nextMoveId: move.id,
+          reviewerId: authorization.reviewerId,
+          expectedVersion: parsed.data.expectedVersion,
+          reason: parsed.data.reason,
+        });
+        return json({
+          ok: true,
+          action: parsed.action,
+          moveState: recomputed.move.state,
+          reviewVersion: recomputed.move.reviewVersion,
+          evidenceReviewRequired: true,
+          providerCallsMade: recomputed.providerCallsMade,
+          modelSynthesisPerformed: recomputed.modelSynthesisPerformed,
+        });
       }
 
       case "convert-to-wait": {
@@ -119,6 +206,7 @@ export async function POST(
         const converted = await repositories.reviews.convertToWait({
           nextMoveId: move.id,
           reviewerId: authorization.reviewerId,
+          expectedVersion: parsed.data.expectedVersion,
           reason: parsed.data.reason,
           validUntil,
         });
@@ -126,6 +214,7 @@ export async function POST(
           ok: true,
           action: parsed.action,
           moveState: converted.state,
+          reviewVersion: converted.reviewVersion,
           validUntil: converted.validUntil.toISOString(),
         });
       }
@@ -212,6 +301,12 @@ export async function POST(
       }
     }
   } catch (error) {
+    if (error instanceof ReviewVersionConflictError) {
+      return json(
+        { error: "The recommendation changed after this form loaded. Reload before editing." },
+        409,
+      );
+    }
     if (error instanceof Error && error.message.endsWith("_STATE_CONFLICT")) {
       return json({ error: "The scan changed state and this action is no longer allowed." }, 409);
     }

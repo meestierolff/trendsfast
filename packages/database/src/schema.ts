@@ -87,10 +87,12 @@ export const saturationEnum = pgEnum("saturation", [
 export const reviewActionEnum = pgEnum("review_action", [
   "CONTEXT_EDITED",
   "QUERY_PLAN_EDITED",
+  "EVIDENCE_VERIFIED",
   "EVIDENCE_REJECTED",
   "MANUAL_EVIDENCE_ADDED",
   "SOURCE_RERUN_REQUESTED",
   "SYNTHESIS_RERUN_REQUESTED",
+  "RECOMPUTED_FROM_STORED_EVIDENCE",
   "APPROVED",
   "EDITED_AND_APPROVED",
   "CONVERTED_TO_WAIT",
@@ -125,6 +127,7 @@ export const apiKeyManagementActionEnum = pgEnum("api_key_management_action", [
   "REVOKED",
   "ROTATED",
   "REISSUED",
+  "RENEWED",
 ]);
 export const apiAuthOutcomeEnum = pgEnum("api_auth_outcome", [
   "SUCCESS",
@@ -268,9 +271,7 @@ export const apiKeys = pgTable(
     providerCostLimitUsd: numeric("provider_cost_limit_usd", {
       precision: 10,
       scale: 4,
-    })
-      .default("5.0000")
-      .notNull(),
+    }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
@@ -346,6 +347,12 @@ export const scanRequests = pgTable(
     idempotencyKeyHash: varchar("idempotency_key_hash", { length: 200 }),
     requestPayloadHash: varchar("request_payload_hash", { length: 200 }),
     requesterFingerprintHash: varchar("requester_fingerprint_hash", { length: 200 }),
+    publicCostReservationUsd: numeric("public_cost_reservation_usd", {
+      precision: 10,
+      scale: 6,
+    })
+      .default("0")
+      .notNull(),
     apiCostReservationUsd: numeric("api_cost_reservation_usd", {
       precision: 10,
       scale: 6,
@@ -372,6 +379,10 @@ export const scanRequests = pgTable(
       table.createdAt,
     ),
     check("scan_requests_url_length_check", sql`length(${table.submittedUrl}) <= 2048`),
+    check(
+      "scan_requests_public_cost_reservation_nonnegative_check",
+      sql`${table.publicCostReservationUsd} >= 0`,
+    ),
     check(
       "scan_requests_api_cost_reservation_nonnegative_check",
       sql`${table.apiCostReservationUsd} >= 0`,
@@ -597,6 +608,7 @@ export const opportunities = pgTable(
     scanRunId: uuid("scan_run_id")
       .notNull()
       .references(() => scanRuns.id, { onDelete: "cascade" }),
+    moveVersion: integer("move_version").default(1).notNull(),
     clusterId: uuid("cluster_id").references(() => clusters.id, {
       onDelete: "set null",
     }),
@@ -613,13 +625,18 @@ export const opportunities = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
-    uniqueIndex("opportunities_scan_rank_uidx").on(table.scanRunId, table.rank),
+    uniqueIndex("opportunities_scan_version_rank_uidx").on(
+      table.scanRunId,
+      table.moveVersion,
+      table.rank,
+    ),
     index("opportunities_scan_floor_score_idx").on(
       table.scanRunId,
       table.passesQualityFloor,
       table.totalScore,
     ),
     check("opportunities_rank_positive_check", sql`${table.rank} > 0`),
+    check("opportunities_move_version_positive_check", sql`${table.moveVersion} > 0`),
     check(
       "opportunities_score_range_check",
       sql`${table.totalScore} >= -1 AND ${table.totalScore} <= 1`,
@@ -661,6 +678,8 @@ export const nextMoves = pgTable(
     independentSourceCount: integer("independent_source_count").notNull(),
     saturation: saturationEnum("saturation").notNull(),
     limitations: jsonb("limitations").$type<string[]>().default([]).notNull(),
+    reviewVersion: integer("review_version").default(1).notNull(),
+    proposalStale: boolean("proposal_stale").default(false).notNull(),
     founderReviewed: boolean("founder_reviewed").default(false).notNull(),
     autoPublish: boolean("auto_publish").default(false).notNull(),
     promptVersion: varchar("prompt_version", { length: 100 }).notNull(),
@@ -679,6 +698,7 @@ export const nextMoves = pgTable(
       sql`${table.priority} BETWEEN 0 AND 100 AND ${table.confidence} BETWEEN 0 AND 1`,
     ),
     check("next_moves_sources_nonnegative_check", sql`${table.independentSourceCount} >= 0`),
+    check("next_moves_review_version_positive_check", sql`${table.reviewVersion} > 0`),
     check("next_moves_never_autopublish_check", sql`${table.autoPublish} = false`),
     check(
       "next_moves_review_consistency_check",
@@ -694,6 +714,7 @@ export const evidenceReceipts = pgTable(
     nextMoveId: uuid("next_move_id")
       .notNull()
       .references(() => nextMoves.id, { onDelete: "cascade" }),
+    moveVersion: integer("move_version").default(1).notNull(),
     signalId: uuid("signal_id")
       .notNull()
       .references(() => signals.id, { onDelete: "restrict" }),
@@ -712,11 +733,20 @@ export const evidenceReceipts = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
-    uniqueIndex("evidence_receipts_move_signal_uidx").on(table.nextMoveId, table.signalId),
+    uniqueIndex("evidence_receipts_move_version_signal_uidx").on(
+      table.nextMoveId,
+      table.moveVersion,
+      table.signalId,
+    ),
     index("evidence_receipts_move_availability_idx").on(table.nextMoveId, table.availability),
     check(
       "evidence_receipts_verified_timestamp_check",
       sql`${table.verified} = false OR ${table.verifiedAt} IS NOT NULL`,
+    ),
+    check("evidence_receipts_move_version_positive_check", sql`${table.moveVersion} > 0`),
+    check(
+      "evidence_receipts_verified_review_identity_check",
+      sql`${table.verified} = false OR (${table.reviewedBy} IS NOT NULL AND length(btrim(${table.reviewedBy})) BETWEEN 1 AND 160 AND ${table.verifiedAt} IS NOT NULL)`,
     ),
   ],
 );
@@ -747,6 +777,55 @@ export const reviewEvents = pgTable(
     check(
       "review_events_note_length_check",
       sql`${table.note} IS NULL OR length(${table.note}) <= 4000`,
+    ),
+  ],
+);
+
+/**
+ * Append-only proposal transitions. The mutable current row stays efficient
+ * while every founder edit/recompute preserves its complete before/after
+ * snapshot, versions, context identity, and retained evidence identity.
+ */
+export const nextMoveRevisions = pgTable(
+  "next_move_revisions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    nextMoveId: uuid("next_move_id")
+      .notNull()
+      .references(() => nextMoves.id, { onDelete: "cascade" }),
+    contextVersionId: uuid("context_version_id")
+      .notNull()
+      .references(() => projectContextVersions.id, { onDelete: "restrict" }),
+    version: integer("version").notNull(),
+    changeKind: varchar("change_kind", { length: 40 })
+      .$type<
+        "EDIT_AND_APPROVE" | "CONTEXT_CORRECTION" | "STORED_EVIDENCE_RECOMPUTE" | "CONVERT_TO_WAIT"
+      >()
+      .notNull(),
+    reviewerId: varchar("reviewer_id", { length: 160 }).notNull(),
+    reason: text("reason").notNull(),
+    before: jsonb("before").$type<Record<string, unknown>>().notNull(),
+    after: jsonb("after").$type<Record<string, unknown>>().notNull(),
+    promptVersion: varchar("prompt_version", { length: 100 }).notNull(),
+    scoreVersion: varchar("score_version", { length: 100 }).notNull(),
+    retainedEvidenceIds: jsonb("retained_evidence_ids").$type<string[]>().default([]).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("next_move_revisions_move_version_uidx").on(table.nextMoveId, table.version),
+    index("next_move_revisions_context_created_idx").on(table.contextVersionId, table.createdAt),
+    check("next_move_revisions_version_check", sql`${table.version} > 1`),
+    check(
+      "next_move_revisions_kind_check",
+      sql`${table.changeKind} IN ('EDIT_AND_APPROVE','CONTEXT_CORRECTION','STORED_EVIDENCE_RECOMPUTE','CONVERT_TO_WAIT')`,
+    ),
+    check(
+      "next_move_revisions_reviewer_check",
+      sql`length(btrim(${table.reviewerId})) BETWEEN 1 AND 160`,
+    ),
+    check(
+      "next_move_revisions_reason_check",
+      sql`length(btrim(${table.reason})) BETWEEN 10 AND 4000`,
     ),
   ],
 );
@@ -981,11 +1060,24 @@ export const apiKeyAuthEvents = pgTable(
     outcome: apiAuthOutcomeEnum("outcome").notNull(),
     requesterFingerprintHash: varchar("requester_fingerprint_hash", { length: 200 }),
     requestId: varchar("request_id", { length: 160 }),
+    requestKind: varchar("request_kind", { length: 20 })
+      .$type<"CREATE" | "STATUS" | "OTHER">()
+      .default("OTHER")
+      .notNull(),
     occurredAt: timestamp("occurred_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
     index("api_key_auth_events_key_occurred_idx").on(table.apiKeyId, table.occurredAt),
     index("api_key_auth_events_outcome_occurred_idx").on(table.outcome, table.occurredAt),
+    index("api_key_auth_events_key_kind_occurred_idx").on(
+      table.apiKeyId,
+      table.requestKind,
+      table.occurredAt,
+    ),
+    check(
+      "api_key_auth_events_request_kind_check",
+      sql`${table.requestKind} IN ('CREATE','STATUS','OTHER')`,
+    ),
   ],
 );
 
@@ -1157,6 +1249,12 @@ export const billingCheckoutSessions = pgTable(
       .references(() => projects.id, { onDelete: "cascade" }),
     stripeCheckoutSessionId: varchar("stripe_checkout_session_id", { length: 255 }),
     requestedStripeCustomerId: varchar("requested_stripe_customer_id", { length: 255 }),
+    checkoutClaimHash: varchar("checkout_claim_hash", { length: 71 }),
+    checkoutClaimExpiresAt: timestamp("checkout_claim_expires_at", { withTimezone: true }),
+    checkoutClaimConsumedAt: timestamp("checkout_claim_consumed_at", { withTimezone: true }),
+    issuedApiKeyId: uuid("issued_api_key_id").references(() => apiKeys.id, {
+      onDelete: "restrict",
+    }),
     stripeCustomerId: varchar("stripe_customer_id", { length: 255 }),
     stripeSubscriptionId: varchar("stripe_subscription_id", { length: 255 }),
     state: billingCheckoutStateEnum("state").default("OPEN").notNull(),
@@ -1172,6 +1270,12 @@ export const billingCheckoutSessions = pgTable(
       .where(sql`${table.state} = 'OPEN'`),
     index("billing_checkout_project_state_idx").on(table.projectId, table.state),
     index("billing_checkout_subscription_idx").on(table.stripeSubscriptionId),
+    uniqueIndex("billing_checkout_claim_hash_uidx")
+      .on(table.checkoutClaimHash)
+      .where(sql`${table.checkoutClaimHash} IS NOT NULL`),
+    uniqueIndex("billing_checkout_issued_api_key_uidx")
+      .on(table.issuedApiKeyId)
+      .where(sql`${table.issuedApiKeyId} IS NOT NULL`),
     check("billing_checkout_actor_check", sql`length(${table.initiatedBy}) BETWEEN 1 AND 160`),
     check(
       "billing_checkout_completion_check",
@@ -1184,6 +1288,14 @@ export const billingCheckoutSessions = pgTable(
     check(
       "billing_checkout_binding_check",
       sql`${table.state} <> 'COMPLETED' OR ${table.stripeCheckoutSessionId} IS NOT NULL`,
+    ),
+    check(
+      "billing_checkout_claim_shape_check",
+      sql`(${table.checkoutClaimHash} IS NULL AND ${table.checkoutClaimExpiresAt} IS NULL AND ${table.checkoutClaimConsumedAt} IS NULL AND ${table.issuedApiKeyId} IS NULL) OR (${table.checkoutClaimHash} LIKE 'sha256:%' AND length(${table.checkoutClaimHash}) = 71 AND ${table.checkoutClaimExpiresAt} IS NOT NULL AND ${table.checkoutClaimExpiresAt} > ${table.expiresAt} AND ${table.checkoutClaimExpiresAt} <= ${table.expiresAt} + interval '30 minutes' AND ${table.checkoutClaimExpiresAt} <= ${table.createdAt} + interval '24 hours')`,
+    ),
+    check(
+      "billing_checkout_claim_consumption_check",
+      sql`(${table.checkoutClaimConsumedAt} IS NULL AND ${table.issuedApiKeyId} IS NULL) OR (${table.checkoutClaimConsumedAt} IS NOT NULL AND ${table.issuedApiKeyId} IS NOT NULL AND ${table.checkoutClaimConsumedAt} >= ${table.createdAt})`,
     ),
   ],
 );
@@ -1275,6 +1387,88 @@ export const projectEntitlements = pgTable(
   ],
 );
 
+/** Founder-issued, time-bounded API access; never a Stripe subscription. */
+export const founderEntitlementGrants = pgTable(
+  "founder_entitlement_grants",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    entitlementSource: varchar("entitlement_source", { length: 40 })
+      .$type<"FOUNDER_GRANT">()
+      .default("FOUNDER_GRANT")
+      .notNull(),
+    grantReason: varchar("grant_reason", { length: 40 })
+      .$type<"DESIGN_PARTNER">()
+      .default("DESIGN_PARTNER")
+      .notNull(),
+    issuedBy: varchar("issued_by", { length: 160 }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    revokedBy: varchar("revoked_by", { length: 160 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("founder_entitlement_grants_one_open_project_uidx")
+      .on(table.projectId)
+      .where(sql`${table.revokedAt} IS NULL`),
+    index("founder_entitlement_grants_active_idx").on(table.projectId, table.expiresAt),
+    check(
+      "founder_entitlement_grants_source_reason_check",
+      sql`${table.entitlementSource} = 'FOUNDER_GRANT' AND ${table.grantReason} = 'DESIGN_PARTNER'`,
+    ),
+    check(
+      "founder_entitlement_grants_issuer_check",
+      sql`length(btrim(${table.issuedBy})) BETWEEN 1 AND 160`,
+    ),
+    check(
+      "founder_entitlement_grants_duration_check",
+      sql`${table.expiresAt} > ${table.createdAt} AND ${table.expiresAt} <= ${table.createdAt} + interval '30 days'`,
+    ),
+    check(
+      "founder_entitlement_grants_revocation_check",
+      sql`(${table.revokedAt} IS NULL AND ${table.revokedBy} IS NULL) OR (${table.revokedAt} IS NOT NULL AND ${table.revokedBy} IS NOT NULL AND ${table.revokedAt} >= ${table.createdAt} AND length(btrim(${table.revokedBy})) BETWEEN 1 AND 160)`,
+    ),
+  ],
+);
+
+/** Append-only audit for every founder grant lifecycle mutation. */
+export const founderEntitlementGrantEvents = pgTable(
+  "founder_entitlement_grant_events",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    grantId: uuid("grant_id")
+      .notNull()
+      .references(() => founderEntitlementGrants.id, { onDelete: "restrict" }),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "restrict" }),
+    action: varchar("action", { length: 20 }).$type<"ISSUED" | "REVOKED">().notNull(),
+    actorId: varchar("actor_id", { length: 160 }).notNull(),
+    snapshot: jsonb("snapshot").$type<Record<string, unknown>>().notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("founder_entitlement_grant_events_grant_occurred_idx").on(
+      table.grantId,
+      table.occurredAt,
+    ),
+    index("founder_entitlement_grant_events_project_occurred_idx").on(
+      table.projectId,
+      table.occurredAt,
+    ),
+    check(
+      "founder_entitlement_grant_events_action_check",
+      sql`${table.action} IN ('ISSUED','REVOKED')`,
+    ),
+    check(
+      "founder_entitlement_grant_events_actor_check",
+      sql`length(btrim(${table.actorId})) BETWEEN 1 AND 160`,
+    ),
+  ],
+);
+
 /**
  * Append-only paid-plan usage. Accepted research runs remain charged even if
  * their later decision is WAIT or processing ultimately fails.
@@ -1285,9 +1479,12 @@ export const founderUsageEvents = pgTable(
     id: uuid("id").defaultRandom().primaryKey(),
     projectId: uuid("project_id")
       .notNull()
-      .references(() => projectEntitlements.projectId, { onDelete: "cascade" }),
+      .references(() => projects.id, { onDelete: "cascade" }),
     subscriptionId: uuid("subscription_id").references(() => subscriptions.id, {
-      onDelete: "set null",
+      onDelete: "restrict",
+    }),
+    founderGrantId: uuid("founder_grant_id").references(() => founderEntitlementGrants.id, {
+      onDelete: "restrict",
     }),
     scanRequestId: uuid("scan_request_id").references(() => scanRequests.id, {
       onDelete: "set null",
@@ -1307,6 +1504,11 @@ export const founderUsageEvents = pgTable(
       table.occurredAt,
     ),
     index("founder_usage_scan_kind_idx").on(table.scanRequestId, table.kind),
+    index("founder_usage_grant_idx").on(table.founderGrantId, table.occurredAt),
+    check(
+      "founder_usage_entitlement_source_check",
+      sql`num_nonnulls(${table.subscriptionId}, ${table.founderGrantId}) = 1`,
+    ),
     check("founder_usage_period_check", sql`${table.periodStart} < ${table.periodEnd}`),
     check(
       "founder_usage_occurrence_period_check",
@@ -1403,6 +1605,7 @@ export const databaseSchema = {
   nextMoves,
   evidenceReceipts,
   reviewEvents,
+  nextMoveRevisions,
   deliveryTokens,
   feedbackEvents,
   outcomes,
@@ -1419,6 +1622,8 @@ export const databaseSchema = {
   billingWebhookEvents,
   billingPaymentStates,
   projectEntitlements,
+  founderEntitlementGrants,
+  founderEntitlementGrantEvents,
   founderUsageEvents,
   monitoringSubscriptions,
   monitoringRuns,

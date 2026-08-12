@@ -181,5 +181,11 @@ databaseDescribe("private feedback deduplication", () => {
     expect(durableAnalytics.every((event) => event.properties?.kind === "USED_OR_PUBLISHED")).toBe(
       true,
     );
+
+    const unkeyed = await repositories.feedback.record({
+      nextMoveId: move.id,
+      kind: "WOULD_USE",
+    });
+    expect(unkeyed).toMatchObject({ created: true, event: { deliveryTokenId: null } });
   });
 });

@@ -106,6 +106,7 @@ describe("project, query, and next-move API contracts", () => {
         id: "scan_fixture_1",
         status: "QUEUED",
         status_url: "/v1/next-moves/scan_fixture_1",
+        poll_after_seconds: 30,
       }).status,
     ).toBe("QUEUED");
 

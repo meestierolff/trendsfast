@@ -5,8 +5,10 @@ deployment. It does not prove that accounts, DNS, credentials, migrations,
 providers, or `trendsfast.com` are configured.
 
 Observed external state on 2026-08-12: no TrendsFast Supabase or Vercel project
-exists, and `trendsfast.com` returns `NXDOMAIN`. Those are launch blockers, not
-instructions to infer or create infrastructure.
+exists, the authenticated Vercel team `clarios-projects-05f6a57e` is on a Hobby
+plan, and `trendsfast.com` returns `NXDOMAIN`. The founder must upgrade that team
+to Pro, create the database/project, and later apply only Vercel's exact assigned
+DNS records. These are launch blockers, not permission to infer infrastructure.
 
 Do not execute this as a public launch while the current known gates remain
 open: live website/provider/model read-backs, scheduled retention and an
@@ -46,7 +48,7 @@ For the first deployment keep:
 
 ```env
 APP_URL=https://trendsfast.com
-PROVIDER_CREDENTIAL_MODE=fixture
+PROVIDER_CREDENTIAL_MODE=managed
 PUBLIC_SCAN_PROCESSING=inline
 BILLING_ENABLED=false
 PAID_MONITORING_ENABLED=false
@@ -56,9 +58,15 @@ STRIPE_MODE=test
 DATAFAST_ENABLED=false
 ```
 
+Fixture mode is for local deterministic verification and must not be made
+available on a hosted origin. Configure only the reviewed managed providers,
+their explicit prices, and all cost ceilings before a hosted real scan; missing
+configuration must fail closed.
+
 Generate production `OPS_TOKEN`, `SESSION_SECRET`, and `API_KEY_PEPPER` with at
-least 32 random characters in a secret manager. Set `DATABASE_URL`. Leave
-unverified provider credentials empty. Do not place secrets in
+least 32 random characters in a secret manager. Set pooled `DATABASE_URL` only
+in the runtime and keep `DIRECT_DATABASE_URL` in the controlled migration and
+verification environment. Leave unverified provider credentials empty. Do not place secrets in
 `NEXT_PUBLIC_*`, build arguments, CI output, or shell history.
 
 Before enabling a non-fixture synthesis provider, set both
@@ -69,37 +77,45 @@ provider-verified usage or invoice reconciliation.
 
 ## 3. Database
 
-From a controlled release environment with the production `DATABASE_URL`:
+From a controlled release environment with the production direct and pooled
+connections set separately:
 
 ```bash
 pnpm install --frozen-lockfile
 pnpm db:migrate
+STRICT_HOSTED_SCHEMA=1 pnpm db:verify-hosted
 ```
+
+Load both URLs from the secret manager before these commands without echoing
+them. Controlled migrate/verify work must resolve `DIRECT_DATABASE_URL`; do not
+substitute the transaction pooler.
 
 Do not seed synthetic demo/customer data into production unless the seed command
 has an explicit production-safe fixture contract and has been reviewed. Record
 migration version and output with credentials redacted. Verify the new schema
 using read-only checks and application health before traffic.
 
-The current local working tree contains 15 migration files from `0000` through
-latest `0016`, with intentional `0009`/`0010` numbering gaps. An isolated
-PostgreSQL 16 replay passed with all 15 migration hashes matched, the fixture
-seed passed twice, and the strict hosted-schema verifier matched 34/34 public
-tables plus its exact enums, indexes, constraints, and effective/default ACL
-denial for `PUBLIC`, `anon`, and `authenticated`. That is local evidence, not a
-hosted-database read-back. Freeze the release, repeat the full replay and
-verifier at its immutable SHA, record the exact ledger/version, and verify
-forward compatibility before traffic. Run
+The current local working tree contains 18 migration files through latest
+`0019`, with intentional `0009`/`0010` numbering gaps. An isolated PostgreSQL 16
+replay passed with all 18 migration hashes matched, the fixture seed passed
+twice, and the strict hosted-schema verifier matched 37/37 public tables plus
+its exact columns, enums, indexes, constraints, and effective/default ACL denial
+for `PUBLIC`, `anon`, and `authenticated`. That is local evidence, not a hosted
+database read-back. Freeze the release, repeat the full replay and verifier at
+its immutable SHA using `DIRECT_DATABASE_URL`, record the exact ledger/version,
+and verify pooled runtime connectivity before traffic. Never seed preview or
+production. Run
 `pnpm db:purge` only from a reviewed, single-owner scheduled job with alerts and
 retained aggregate counts; the web application does not schedule retention
 itself.
 
 ## 4. Vercel deployment
 
-Import the verified GitHub repository into Vercel with repository root as the
-project root, pnpm install based on the lockfile, and `pnpm build`. Confirm the
-Node runtime and server-function duration match the repository requirements and
-bounded scan design.
+Import the verified GitHub repository into one founder-owned `trendsfast`
+project with `apps/web` as the Vercel Root Directory while retaining monorepo
+workspace access, a frozen pnpm install, and the application build. Confirm the
+team is on a suitable commercial plan and that Node/runtime/function limits
+match the bounded scan design. Never run migrations from a Vercel build.
 
 Deploy the release SHA to preview first. Run fixture smoke, security headers,
 private-token, durable API/ops admission, processing-fence/unknown-provider

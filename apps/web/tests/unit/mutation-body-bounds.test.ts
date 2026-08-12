@@ -21,6 +21,7 @@ import { createCsrfToken, issueOpsSession } from "../../lib/ops-session";
 import { POST as postOpsAction } from "../../app/api/ops/scans/[scanId]/actions/[action]/route";
 import { POST as postManualEvidence } from "../../app/api/ops/scans/[scanId]/manual-evidence/route";
 import { POST as postApiKeyIssue } from "../../app/api/ops/api-keys/route";
+import { POST as postDesignPartnerGrant } from "../../app/api/ops/design-partner-grants/route";
 import { POST as postApiKeyLifecycle } from "../../app/api/ops/api-keys/[keyId]/[action]/route";
 import { POST as postProviderVerification } from "../../app/api/ops/providers/[provider]/verify/route";
 import { POST as postOpsSession } from "../../app/api/ops/session/route";
@@ -184,6 +185,12 @@ describe("mutation route actual-byte bounds", () => {
       path: "/api/ops/api-keys",
       paddingBytes: 9_000,
       invoke: (request: Request) => postApiKeyIssue(request),
+    },
+    {
+      label: "design-partner grant",
+      path: "/api/ops/design-partner-grants",
+      paddingBytes: 9_000,
+      invoke: (request: Request) => postDesignPartnerGrant(request),
     },
     {
       label: "API key lifecycle",

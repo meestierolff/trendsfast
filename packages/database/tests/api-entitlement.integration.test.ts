@@ -61,6 +61,8 @@ databaseDescribe("paid API entitlement enforcement", () => {
         name: "Founder agent",
         environment: "live",
         scopes: ["next_move:read", "next_move:write"],
+        rateLimitPerHour: 20,
+        providerCostLimitUsd: 5,
         expiresAt: new Date("2027-08-11T12:00:00.000Z"),
       });
 

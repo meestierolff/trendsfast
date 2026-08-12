@@ -2,9 +2,13 @@ import { createHash } from "node:crypto";
 
 import { and, eq, inArray, sql } from "drizzle-orm";
 
+import { createApiKey, redactRecord } from "@trendsfast/core";
+
 import type { TrendsFastDatabase } from "../client";
 import {
   analyticsEvents,
+  apiKeyManagementEvents,
+  apiKeys,
   billingCheckoutSessions,
   billingPaymentStates,
   billingWebhookEvents,
@@ -108,6 +112,18 @@ export class BillingCheckoutConflictError extends Error {
     this.name = "BillingCheckoutConflictError";
   }
 }
+
+export type BillingCheckoutClaimView = {
+  reservationId: string;
+  projectId: string;
+  stripeCheckoutSessionId: string | null;
+  state: "OPEN" | "COMPLETED" | "EXPIRED";
+  claimExpiresAt: Date;
+  claimConsumedAt: Date | null;
+  issuedApiKeyId: string | null;
+  entitlementActive: boolean;
+  entitlementPeriodEnd: Date | null;
+};
 
 function subscriptionStatus(value: BillingSubscriptionStatus) {
   return value.toUpperCase() as
@@ -381,6 +397,69 @@ async function syncEntitlement(
     .returning();
   if (!entitlement) throw new Error("The webhook entitlement projection could not be stored");
 
+  const [checkoutIssuedKey] = await tx
+    .select({
+      checkoutId: billingCheckoutSessions.id,
+      apiKeyId: billingCheckoutSessions.issuedApiKeyId,
+      keyStatus: apiKeys.status,
+      keyExpiresAt: apiKeys.expiresAt,
+    })
+    .from(billingCheckoutSessions)
+    .innerJoin(apiKeys, eq(apiKeys.id, billingCheckoutSessions.issuedApiKeyId))
+    .where(
+      and(
+        eq(billingCheckoutSessions.projectId, input.subscription.projectId),
+        eq(billingCheckoutSessions.stripeSubscriptionId, input.subscription.stripeSubscriptionId),
+      ),
+    )
+    .limit(1)
+    .for("update");
+  if (checkoutIssuedKey?.apiKeyId) {
+    const terminal = ["CANCELED", "INCOMPLETE_EXPIRED"].includes(input.subscription.status);
+    if (
+      active &&
+      checkoutIssuedKey.keyStatus === "ACTIVE" &&
+      input.subscription.currentPeriodEnd &&
+      (!checkoutIssuedKey.keyExpiresAt ||
+        checkoutIssuedKey.keyExpiresAt < input.subscription.currentPeriodEnd)
+    ) {
+      const [extended] = await tx
+        .update(apiKeys)
+        .set({ expiresAt: input.subscription.currentPeriodEnd })
+        .where(and(eq(apiKeys.id, checkoutIssuedKey.apiKeyId), eq(apiKeys.status, "ACTIVE")))
+        .returning();
+      if (extended) {
+        await tx.insert(apiKeyManagementEvents).values({
+          projectId: input.subscription.projectId,
+          apiKeyId: extended.id,
+          action: "RENEWED",
+          actorId: "system:stripe-renewal",
+          before: redactRecord({
+            expiresAt: checkoutIssuedKey.keyExpiresAt?.toISOString() ?? null,
+          }),
+          after: redactRecord({ expiresAt: extended.expiresAt?.toISOString() ?? null }),
+        });
+      }
+    } else if (terminal && checkoutIssuedKey.keyStatus === "ACTIVE") {
+      const revokedAt = input.sourceEvent.createdAt;
+      const [revoked] = await tx
+        .update(apiKeys)
+        .set({ status: "REVOKED", revokedAt })
+        .where(and(eq(apiKeys.id, checkoutIssuedKey.apiKeyId), eq(apiKeys.status, "ACTIVE")))
+        .returning();
+      if (revoked) {
+        await tx.insert(apiKeyManagementEvents).values({
+          projectId: input.subscription.projectId,
+          apiKeyId: revoked.id,
+          action: "REVOKED",
+          actorId: "system:stripe-entitlement-ended",
+          before: redactRecord({ status: "ACTIVE", revokedAt: null }),
+          after: redactRecord({ status: revoked.status, revokedAt: revokedAt.toISOString() }),
+        });
+      }
+    }
+  }
+
   const [monitoring] = await tx
     .select()
     .from(monitoringSubscriptions)
@@ -557,7 +636,10 @@ async function candidateSubscriptionProject(
 }
 
 export class BillingRepository {
-  constructor(private readonly db: TrendsFastDatabase) {}
+  constructor(
+    private readonly db: TrendsFastDatabase,
+    private readonly apiKeyPepper?: string,
+  ) {}
 
   async recordCheckout(input: {
     projectId: string;
@@ -618,6 +700,8 @@ export class BillingRepository {
     initiatedBy: string;
     now: Date;
     expiresAt: Date;
+    checkoutClaimHash?: string;
+    checkoutClaimExpiresAt?: Date;
   }) {
     return this.db.transaction(async (rawTx) => {
       const tx = rawTx as unknown as TrendsFastDatabase;
@@ -632,6 +716,17 @@ export class BillingRepository {
       ) {
         throw new Error("Stripe Checkout expiration must be 30 minutes to 24 hours in the future");
       }
+      const claimConfigured = Boolean(input.checkoutClaimHash || input.checkoutClaimExpiresAt);
+      if (
+        claimConfigured &&
+        (!/^sha256:[a-f0-9]{64}$/.test(input.checkoutClaimHash ?? "") ||
+          !input.checkoutClaimExpiresAt ||
+          input.checkoutClaimExpiresAt <= input.expiresAt ||
+          input.checkoutClaimExpiresAt.getTime() - input.expiresAt.getTime() > 30 * 60 * 1_000 ||
+          input.checkoutClaimExpiresAt.getTime() - input.now.getTime() > 24 * 60 * 60 * 1_000)
+      ) {
+        throw new Error("Stripe Checkout claim must have a bounded post-session grace window");
+      }
       await ensureProject(tx, input.projectId);
       await assertNoPaidEnrollment(tx, input.projectId);
       const [existing] = await tx
@@ -645,7 +740,12 @@ export class BillingRepository {
         )
         .limit(1)
         .for("update");
-      if (existing) return { created: false as const, reservation: existing };
+      if (existing) {
+        if (input.checkoutClaimHash && existing.checkoutClaimHash !== input.checkoutClaimHash) {
+          throw new BillingCheckoutConflictError("CHECKOUT_ALREADY_OPEN");
+        }
+        return { created: false as const, reservation: existing };
+      }
 
       const [customer] = await tx
         .select({ stripeCustomerId: stripeCustomers.stripeCustomerId })
@@ -659,12 +759,101 @@ export class BillingRepository {
           requestedStripeCustomerId: customer?.stripeCustomerId ?? null,
           initiatedBy: input.initiatedBy,
           expiresAt: input.expiresAt,
+          checkoutClaimHash: input.checkoutClaimHash ?? null,
+          checkoutClaimExpiresAt: input.checkoutClaimExpiresAt ?? null,
           createdAt: input.now,
           updatedAt: input.now,
         })
         .returning();
       if (!reservation) throw new Error("The Stripe Checkout reservation could not be created");
       return { created: true as const, reservation };
+    });
+  }
+
+  /**
+   * Finds only the open Checkout started by an exact private-delivery record.
+   * The caller must reconcile the bound/idempotent Stripe reservation before
+   * attempting a claim rotation.
+   */
+  async checkoutForDeliveryClaimRecovery(input: { projectId: string; initiatedBy: string }) {
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        input.projectId,
+      ) ||
+      !/^delivery:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        input.initiatedBy,
+      )
+    ) {
+      throw new Error("Checkout claim recovery requires an exact private delivery binding");
+    }
+    const [reservation] = await this.db
+      .select()
+      .from(billingCheckoutSessions)
+      .where(
+        and(
+          eq(billingCheckoutSessions.projectId, input.projectId),
+          eq(billingCheckoutSessions.initiatedBy, input.initiatedBy),
+          eq(billingCheckoutSessions.state, "OPEN"),
+          sql`${billingCheckoutSessions.checkoutClaimHash} IS NOT NULL`,
+          sql`${billingCheckoutSessions.checkoutClaimExpiresAt} IS NOT NULL`,
+          sql`${billingCheckoutSessions.checkoutClaimConsumedAt} IS NULL`,
+          sql`${billingCheckoutSessions.issuedApiKeyId} IS NULL`,
+        ),
+      )
+      .limit(1);
+    return reservation ?? null;
+  }
+
+  /**
+   * Atomically replaces a lost browser claim only for the same still-open,
+   * delivery-bound, Stripe-bound Checkout. A concurrent recovery must retry
+   * from authoritative state instead of adopting another request's raw claim.
+   */
+  async rotateProjectCheckoutClaim(input: {
+    reservationId: string;
+    projectId: string;
+    initiatedBy: string;
+    stripeCheckoutSessionId: string;
+    expectedCheckoutClaimHash: string;
+    checkoutClaimHash: string;
+    occurredAt: Date;
+  }) {
+    const occurredAtMs = input.occurredAt.getTime();
+    if (
+      !Number.isFinite(occurredAtMs) ||
+      !/^delivery:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        input.initiatedBy,
+      ) ||
+      !/^sha256:[a-f0-9]{64}$/.test(input.expectedCheckoutClaimHash) ||
+      !/^sha256:[a-f0-9]{64}$/.test(input.checkoutClaimHash) ||
+      input.expectedCheckoutClaimHash === input.checkoutClaimHash ||
+      !input.stripeCheckoutSessionId
+    ) {
+      throw new Error("Checkout claim rotation input is invalid");
+    }
+    return this.db.transaction(async (rawTx) => {
+      const tx = rawTx as unknown as TrendsFastDatabase;
+      await ensureProject(tx, input.projectId);
+      const [rotated] = await tx
+        .update(billingCheckoutSessions)
+        .set({ checkoutClaimHash: input.checkoutClaimHash, updatedAt: input.occurredAt })
+        .where(
+          and(
+            eq(billingCheckoutSessions.id, input.reservationId),
+            eq(billingCheckoutSessions.projectId, input.projectId),
+            eq(billingCheckoutSessions.initiatedBy, input.initiatedBy),
+            eq(billingCheckoutSessions.stripeCheckoutSessionId, input.stripeCheckoutSessionId),
+            eq(billingCheckoutSessions.checkoutClaimHash, input.expectedCheckoutClaimHash),
+            eq(billingCheckoutSessions.state, "OPEN"),
+            sql`${billingCheckoutSessions.expiresAt} > ${input.occurredAt}`,
+            sql`${billingCheckoutSessions.checkoutClaimExpiresAt} > ${input.occurredAt}`,
+            sql`${billingCheckoutSessions.checkoutClaimConsumedAt} IS NULL`,
+            sql`${billingCheckoutSessions.issuedApiKeyId} IS NULL`,
+          ),
+        )
+        .returning();
+      if (!rotated) throw new BillingCheckoutConflictError("CHECKOUT_ALREADY_OPEN");
+      return rotated;
     });
   }
 
@@ -791,6 +980,219 @@ export class BillingRepository {
       .where(eq(projectEntitlements.projectId, projectId))
       .limit(1);
     return entitlement ?? null;
+  }
+
+  async checkoutClaimStatus(input: {
+    claimHash: string;
+    stripeCheckoutSessionId: string;
+    now?: Date;
+  }): Promise<BillingCheckoutClaimView | null> {
+    if (!/^sha256:[a-f0-9]{64}$/.test(input.claimHash) || !input.stripeCheckoutSessionId) {
+      return null;
+    }
+    const now = input.now ?? new Date();
+    const [claim] = await this.db
+      .select({
+        reservationId: billingCheckoutSessions.id,
+        projectId: billingCheckoutSessions.projectId,
+        stripeCheckoutSessionId: billingCheckoutSessions.stripeCheckoutSessionId,
+        checkoutStripeSubscriptionId: billingCheckoutSessions.stripeSubscriptionId,
+        state: billingCheckoutSessions.state,
+        claimExpiresAt: billingCheckoutSessions.checkoutClaimExpiresAt,
+        claimConsumedAt: billingCheckoutSessions.checkoutClaimConsumedAt,
+        issuedApiKeyId: billingCheckoutSessions.issuedApiKeyId,
+        entitlementActive: projectEntitlements.active,
+        entitlementPeriodStart: projectEntitlements.periodStart,
+        entitlementPeriodEnd: projectEntitlements.periodEnd,
+        entitlementStripeSubscriptionId: subscriptions.stripeSubscriptionId,
+      })
+      .from(billingCheckoutSessions)
+      .leftJoin(
+        projectEntitlements,
+        eq(projectEntitlements.projectId, billingCheckoutSessions.projectId),
+      )
+      .leftJoin(subscriptions, eq(subscriptions.id, projectEntitlements.subscriptionId))
+      .where(
+        and(
+          eq(billingCheckoutSessions.checkoutClaimHash, input.claimHash),
+          eq(billingCheckoutSessions.stripeCheckoutSessionId, input.stripeCheckoutSessionId),
+        ),
+      )
+      .limit(1);
+    if (!claim?.claimExpiresAt || claim.claimExpiresAt <= now) return null;
+    return {
+      reservationId: claim.reservationId,
+      projectId: claim.projectId,
+      stripeCheckoutSessionId: claim.stripeCheckoutSessionId,
+      state: claim.state,
+      claimExpiresAt: claim.claimExpiresAt,
+      claimConsumedAt: claim.claimConsumedAt,
+      issuedApiKeyId: claim.issuedApiKeyId,
+      entitlementActive:
+        claim.state === "COMPLETED" &&
+        Boolean(
+          claim.stripeCheckoutSessionId &&
+          claim.checkoutStripeSubscriptionId &&
+          claim.entitlementStripeSubscriptionId &&
+          claim.stripeCheckoutSessionId === input.stripeCheckoutSessionId &&
+          claim.entitlementStripeSubscriptionId === claim.checkoutStripeSubscriptionId,
+        ) &&
+        claim.entitlementActive === true &&
+        Boolean(
+          claim.entitlementPeriodStart &&
+          claim.entitlementPeriodStart <= now &&
+          claim.entitlementPeriodEnd &&
+          claim.entitlementPeriodEnd > now,
+        ),
+      entitlementPeriodEnd: claim.entitlementPeriodEnd,
+    };
+  }
+
+  /**
+   * Atomically consumes a verified Checkout claim and issues its one live key.
+   * The caller receives raw key material only when this transaction creates it.
+   */
+  async consumeCheckoutClaim(input: {
+    claimHash: string;
+    stripeCheckoutSessionId: string;
+    environment: "test" | "live";
+    now: Date;
+    rateLimitPerHour: number;
+    providerCostLimitUsd: number;
+  }): Promise<
+    | { status: "WAITING" }
+    | { status: "ALREADY_CONSUMED"; visiblePrefix: string | null }
+    | { status: "ISSUED"; rawKey: string; visiblePrefix: string; expiresAt: Date | null }
+    | { status: "INVALID" }
+  > {
+    if (!/^sha256:[a-f0-9]{64}$/.test(input.claimHash) || !input.stripeCheckoutSessionId) {
+      return { status: "INVALID" };
+    }
+    const expectedSessionPrefix = input.environment === "live" ? "cs_live_" : "cs_test_";
+    if (!input.stripeCheckoutSessionId.startsWith(expectedSessionPrefix)) {
+      return { status: "INVALID" };
+    }
+    return this.db.transaction(async (rawTx) => {
+      const tx = rawTx as unknown as TrendsFastDatabase;
+      const [claim] = await tx
+        .select()
+        .from(billingCheckoutSessions)
+        .where(
+          and(
+            eq(billingCheckoutSessions.checkoutClaimHash, input.claimHash),
+            eq(billingCheckoutSessions.stripeCheckoutSessionId, input.stripeCheckoutSessionId),
+          ),
+        )
+        .limit(1)
+        .for("update");
+      if (!claim || !claim.checkoutClaimExpiresAt || claim.checkoutClaimExpiresAt <= input.now) {
+        return { status: "INVALID" as const };
+      }
+      if (claim.checkoutClaimConsumedAt || claim.issuedApiKeyId) {
+        const [issued] = claim.issuedApiKeyId
+          ? await tx
+              .select({ visiblePrefix: apiKeys.visiblePrefix })
+              .from(apiKeys)
+              .where(eq(apiKeys.id, claim.issuedApiKeyId))
+              .limit(1)
+          : [];
+        return {
+          status: "ALREADY_CONSUMED" as const,
+          visiblePrefix: issued?.visiblePrefix ?? null,
+        };
+      }
+      const [entitlement] = await tx
+        .select({
+          active: projectEntitlements.active,
+          periodStart: projectEntitlements.periodStart,
+          periodEnd: projectEntitlements.periodEnd,
+          stripeSubscriptionId: subscriptions.stripeSubscriptionId,
+        })
+        .from(projectEntitlements)
+        .innerJoin(subscriptions, eq(subscriptions.id, projectEntitlements.subscriptionId))
+        .where(eq(projectEntitlements.projectId, claim.projectId))
+        .limit(1)
+        .for("update");
+      if (
+        claim.state !== "COMPLETED" ||
+        !claim.stripeSubscriptionId ||
+        entitlement?.stripeSubscriptionId !== claim.stripeSubscriptionId ||
+        !entitlement?.active ||
+        !entitlement.periodStart ||
+        !entitlement.periodEnd ||
+        entitlement.periodStart > input.now ||
+        entitlement.periodEnd <= input.now
+      ) {
+        return { status: "WAITING" as const };
+      }
+      if (
+        !Number.isSafeInteger(input.rateLimitPerHour) ||
+        input.rateLimitPerHour < 1 ||
+        input.rateLimitPerHour > 10_000 ||
+        !Number.isFinite(input.providerCostLimitUsd) ||
+        input.providerCostLimitUsd < 0 ||
+        input.providerCostLimitUsd > 10_000
+      ) {
+        throw new Error("Checkout API-key limits are invalid");
+      }
+      const keyMaterial = await createApiKey(input.environment, this.apiKeyPepper);
+      const [issued] = await tx
+        .insert(apiKeys)
+        .values({
+          projectId: claim.projectId,
+          name: "TrendsFast Founder",
+          visiblePrefix: keyMaterial.prefix,
+          secretHash: keyMaterial.secretHash,
+          scopes: ["next_move:read", "next_move:write"],
+          environment: input.environment,
+          rateLimitPerHour: input.rateLimitPerHour,
+          providerCostLimitUsd: String(input.providerCostLimitUsd),
+          createdAt: input.now,
+          expiresAt: entitlement.periodEnd,
+        })
+        .returning();
+      if (!issued) throw new Error("Checkout API-key issuance failed");
+      await tx.insert(apiKeyManagementEvents).values({
+        projectId: claim.projectId,
+        apiKeyId: issued.id,
+        action: "ISSUED",
+        actorId: `checkout:${claim.id}`,
+        after: redactRecord({
+          id: issued.id,
+          projectId: issued.projectId,
+          name: issued.name,
+          visiblePrefix: issued.visiblePrefix,
+          scopes: issued.scopes,
+          environment: issued.environment,
+          status: issued.status,
+          rateLimitPerHour: issued.rateLimitPerHour,
+          providerCostLimitUsd: issued.providerCostLimitUsd,
+          expiresAt: issued.expiresAt?.toISOString() ?? null,
+        }),
+      });
+      const [consumed] = await tx
+        .update(billingCheckoutSessions)
+        .set({
+          checkoutClaimConsumedAt: input.now,
+          issuedApiKeyId: issued.id,
+          updatedAt: input.now,
+        })
+        .where(
+          and(
+            eq(billingCheckoutSessions.id, claim.id),
+            sql`${billingCheckoutSessions.checkoutClaimConsumedAt} IS NULL`,
+            sql`${billingCheckoutSessions.issuedApiKeyId} IS NULL`,
+          ),
+        )
+        .returning({ id: billingCheckoutSessions.id });
+      if (!consumed) throw new Error("Checkout claim consumption lost its atomic reservation");
+      return {
+        status: "ISSUED" as const,
+        rawKey: keyMaterial.rawKey,
+        visiblePrefix: issued.visiblePrefix,
+        expiresAt: issued.expiresAt,
+      };
+    });
   }
 
   async projectWebhook(input: {

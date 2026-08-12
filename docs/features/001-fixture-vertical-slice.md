@@ -1,9 +1,9 @@
 # 001 — Fixture vertical slice
 
-Status: implemented; integrated database/suite/build/browser/HTTP verification
-passed on the current local working tree. Final release-SHA CI and
-external/manual acceptance remain required. Passing fixtures prove local
-behavior only.
+Status: implemented; database integration, static checks, and the webpack build
+passed on the current local working tree. Final clean browser/axe verification,
+release-SHA CI, and external/manual acceptance remain required. Passing
+fixtures prove local behavior only.
 
 ## User problem
 
@@ -67,24 +67,20 @@ database path. Do not branch around evidence/scoring/review contracts in the UI.
 Run clean install, database migrate/seed, `pnpm test`, production build, and
 critical browser path with `PROVIDER_CREDENTIAL_MODE=fixture` and empty keys.
 
-On 2026-08-12, the integrated current working tree replayed all 15 migration
-files through `0016` on isolated PostgreSQL 16, matched all 15 migration hashes,
-seeded the fixture twice, and matched 34/34 public tables plus exact
-enums/indexes/constraints and effective/default ACL denial for `PUBLIC`, `anon`,
-and `authenticated`. With database integration enabled, 85 files/449 tests
-passed; workspace typecheck, lint, Drizzle check, and the final optimized webpack
-production build also passed. The standard Turbopack build was locally blocked
-by sandbox port restrictions. The actual `next start` artifact ran 60 browser
-checks: 58 passed and two mobile checks were intentionally skipped, including 24
-desktop/mobile axe checks and the complete API review/delivery/idempotency
-journey. A local HTTP verifier passed 26 public route/status/content-type checks,
-security-header/secret-marker checks, ops privacy, and two unknown-capability
-privacy probes. A separate manual curl exercise confirmed source projection kept
-all automated sources and manual evidence at **Coming soon**/`UNVERIFIED`, with
-Reddit **Permission required**/`LEGAL_REVIEW`. See the
-[integrated local record](../operations/LOCAL_VERIFICATION_2026-08-11.md).
-These results are `LOCAL_PASS`, not immutable release-SHA, remote-CI, deployed,
-or provider-read-back evidence.
+On 2026-08-12, implementation candidate
+`73297a6cfdc99b025990b001b39cef399f4d235e` replayed all 18 migrations through
+`0019` on isolated PostgreSQL 16, matched every hash, seeded the fixture twice,
+and matched 37/37 public tables plus expected columns, enums, indexes,
+constraints, and browser/default ACL denial. The database-enabled run passed 98
+files/512 tests; the non-database run passed 78 files/455 tests with 20 files/57
+tests skipped. Typecheck, lint, Drizzle check, the 37-entry optimized webpack
+build, 58-pass/two-intentional-skip browser run with 24 axe checks, and 26-route
+plus two-private-probe local deployment verification also passed. The standard
+Turbopack build was locally blocked by sandbox port restrictions. See the
+[integrated local record](../operations/LOCAL_VERIFICATION_2026-08-12.md).
+This is immutable code-local evidence, not deployed or provider-read-back
+evidence. Separate branch CI passed at `4ec9510f610001285c54947326c65cb79a075f37`
+in [run 31585349262](https://github.com/meestierolff/trendsfast/actions/runs/31585349262).
 
 ## Limitations
 

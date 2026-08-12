@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectContext, Signal } from "@trendsfast/schemas";
 import { decideDeterministically } from "../src/decision";
+import { DOGFOOD_FIXTURES } from "../src/dogfood";
 
 const context: ProjectContext = {
   name: "Example",
@@ -157,5 +158,37 @@ describe("deterministic decision engine", () => {
 
     expect(draft.signalClass).toBe("CORROBORATED_SIGNAL");
     expect(draft.whyNow).not.toMatch(/external Google Trends series/i);
+  });
+
+  it("never injects dogfood fixture moves into evidence-derived decisions", async () => {
+    const targets = DOGFOOD_FIXTURES.filter((fixture) =>
+      ["trendsfast", "halio", "ship-to-users"].includes(fixture.slug),
+    );
+
+    for (const fixture of targets) {
+      const draft = await decideDeterministically({
+        context: fixture.context,
+        signals: [
+          signal(
+            `sig_hn_${fixture.slug}`,
+            "hacker_news",
+            `https://news.ycombinator.com/item?id=${fixture.slug.length + 100}`,
+          ),
+          signal(`sig_gh_${fixture.slug}`, "github", `https://github.com/example/${fixture.slug}`),
+        ],
+        measurements: [],
+        coverage: {
+          website: "SUCCEEDED",
+          hacker_news: "SUCCEEDED",
+          github: "SUCCEEDED",
+          google_trends: "SUCCEEDED",
+        },
+        now: new Date("2026-08-11T12:00:00.000Z"),
+      });
+
+      expect(draft.move.topic).not.toBe(fixture.move.topic);
+      expect(draft.move.angle).not.toBe(fixture.move.angle);
+      expect(draft.limitations).not.toEqual(expect.arrayContaining(fixture.limitations));
+    }
   });
 });

@@ -21,7 +21,7 @@ connectivity, deployment, security approval, billing, or customer outcomes.
   [runbook](operations/RUNBOOK.md), and
   [deployment procedure](operations/DEPLOYMENT.md), plus the
   [environment reference](operations/ENVIRONMENT.md)
-- [Integrated local verification record](operations/LOCAL_VERIFICATION_2026-08-11.md)
+- [Integrated local verification record](operations/LOCAL_VERIFICATION_2026-08-12.md)
 - [Legal drafting templates](legal/README.md)
 - [Distribution assets](distribution/FOUNDER_STORY_REDDIT.md)
 

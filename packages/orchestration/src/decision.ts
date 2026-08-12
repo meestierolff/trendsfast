@@ -12,10 +12,9 @@ import {
   type SignalCluster,
   type TrendSignalClass,
 } from "@trendsfast/scoring";
-import { dogfoodFixtureForUrl } from "./dogfood";
 import type { DecisionDraft } from "./state-machine";
 
-export const DETERMINISTIC_PROMPT_VERSION = "deterministic-fixture-v1";
+export const DETERMINISTIC_PROMPT_VERSION = "deterministic-ranking-v2";
 
 function words(values: string[]): string[] {
   return values.flatMap((value) => value.split(/\s+/)).filter(Boolean);
@@ -189,22 +188,15 @@ export async function decideDeterministically(input: {
   const fallback = evaluated[0];
   const action: NextMoveAction = winner?.quality.action ?? "WAIT";
   const chosen = winner ?? fallback;
-  const dogfood = dogfoodFixtureForUrl(input.context.url);
   const topic =
-    dogfood?.move.topic ??
-    chosen?.cluster.representativeTitle ??
-    `No credible ${input.context.category} opportunity yet`;
+    chosen?.cluster.representativeTitle ?? `No credible ${input.context.category} opportunity yet`;
   const angle =
-    dogfood?.move.angle ??
-    (action === "WAIT"
-      ? `Hold distribution until an independent, current signal supports a claim ${input.context.name} can credibly make.`
-      : `Translate the evidence into a product-specific ${input.context.credibleTopics[0] ?? input.context.category} insight for ${input.context.audience}.`);
-  const effectiveAction = action;
-  const channel =
     action === "WAIT"
-      ? (dogfood?.move.channel ?? input.context.suitableChannels[0] ?? "x")
-      : (dogfood?.move.channel ?? input.context.suitableChannels[0] ?? "x");
-  const format = dogfood?.move.format ?? input.context.availableFormats[0] ?? "founder_text";
+      ? `Hold distribution until an independent, current signal supports a claim ${input.context.name} can credibly make.`
+      : `Translate the evidence into a product-specific ${input.context.credibleTopics[0] ?? input.context.category} insight for ${input.context.audience}.`;
+  const effectiveAction = action;
+  const channel = input.context.suitableChannels[0] ?? "x";
+  const format = input.context.availableFormats[0] ?? "founder_text";
   const truth = chosen?.truth ?? {
     signalClass: "INSUFFICIENT_SIGNAL" as const,
     independentSourceCount: 0,
@@ -214,7 +206,6 @@ export async function decideDeterministically(input: {
   const limitations = [
     ...coverageLimitations(input.coverage),
     ...(!winner ? ["No candidate passed the deterministic action quality floor."] : []),
-    ...(dogfood?.limitations ?? []),
     ...(input.signals.some((signal) => signal.provenance.provider.startsWith("fixture:"))
       ? ["Deterministic fixture evidence is not live provider evidence."]
       : []),

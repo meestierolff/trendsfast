@@ -7,6 +7,7 @@ import { loadEnv } from "@trendsfast/config";
 
 import { OpsBillingManager } from "../../../components/ops-billing-manager";
 import { getRepositories } from "../../../lib/server-database";
+import { deploymentProvenance } from "../../../lib/deployment-provenance";
 import { getOpsPageAuthorization } from "../_auth";
 
 import "../ops.css";
@@ -25,6 +26,8 @@ export default async function OpsBillingPage() {
     billingEnabled: env.BILLING_ENABLED,
     paidMonitoringEnabled: env.PAID_MONITORING_ENABLED,
     mode: env.STRIPE_MODE,
+    providerCredentialMode: env.PROVIDER_CREDENTIAL_MODE,
+    deploymentEnvironment: deploymentProvenance().deploymentEnvironment,
   });
   const repositories = getRepositories();
   const projects = await repositories.scanData.listProjects({ activeOnly: true, limit: 100 });
@@ -51,11 +54,11 @@ export default async function OpsBillingPage() {
       </p>
       <div className="ops-detail-hero">
         <div>
-          <p className="ops-kicker">PRIVATE / TEST BILLING</p>
+          <p className="ops-kicker">PRIVATE / STRIPE BILLING</p>
           <h1>Founder billing.</h1>
           <p>
-            Checkout and Customer Portal sessions are project-bound and available only through this
-            authenticated founder control.
+            Customer Portal sessions are project-bound and available through this authenticated
+            founder control. Checkout starts only from a private delivered Next Move.
           </p>
         </div>
       </div>

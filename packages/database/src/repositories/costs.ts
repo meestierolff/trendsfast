@@ -1,4 +1,4 @@
-import { and, eq, sql, sum } from "drizzle-orm";
+import { and, asc, eq, sql, sum } from "drizzle-orm";
 
 import { redactSecrets } from "@trendsfast/core";
 
@@ -368,6 +368,14 @@ export class CostRepository {
       actualCostUsd: Number(totals?.actualCostUsd ?? 0),
       quotaUnits: Number(totals?.quotaUnits ?? 0),
     };
+  }
+
+  async listForScan(scanRunId: string) {
+    return this.db
+      .select()
+      .from(providerCostLedger)
+      .where(eq(providerCostLedger.scanRunId, scanRunId))
+      .orderBy(asc(providerCostLedger.occurredAt));
   }
 
   async committedCostForScan(scanRunId: string): Promise<number> {

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { loadCliEnvironment } from "../src/load-cli-env";
+import { migrationConnectionString } from "../src/migrate";
 
 const original = process.env.TRENDSFAST_ENV_LOADER_TEST;
 let directory: string | undefined;
@@ -26,5 +27,20 @@ describe("database CLI environment loading", () => {
     loadCliEnvironment(directory);
 
     expect(process.env.TRENDSFAST_ENV_LOADER_TEST).toBe("from-local");
+  });
+
+  it("prefers the direct PostgreSQL URL for controlled migrations", () => {
+    expect(
+      migrationConnectionString({
+        DATABASE_URL: "postgresql://runtime.invalid/runtime",
+        DIRECT_DATABASE_URL: "postgresql://direct.invalid/direct",
+      }),
+    ).toBe("postgresql://direct.invalid/direct");
+    expect(() =>
+      migrationConnectionString({ DATABASE_URL: "postgresql://runtime.invalid/runtime" }),
+    ).toThrow("DIRECT_DATABASE_URL is required");
+    expect(() => migrationConnectionString({ DIRECT_DATABASE_URL: "https://db.invalid" })).toThrow(
+      "must use PostgreSQL",
+    );
   });
 });
