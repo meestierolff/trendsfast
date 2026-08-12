@@ -1,14 +1,25 @@
 # Provider cost model
 
-The default hard ceiling is:
+There is no committed TrendsFast Cloud provider price or live per-scan dollar
+ceiling. Operators must explicitly configure:
 
 ```env
-MAX_PROVIDER_COST_USD_PER_SCAN=0.25
+XAI_ESTIMATED_COST_USD_PER_SEARCH=
+DATAFORSEO_ESTIMATED_COST_USD_PER_TASK=
+TAVILY_ESTIMATED_COST_USD_PER_CREDIT=
+YOUTUBE_INTERNAL_QUOTA_VALUE_USD=
+LLM_INPUT_PRICE_USD_PER_MILLION_TOKENS=
+LLM_OUTPUT_PRICE_USD_PER_MILLION_TOKENS=
+MAX_PROVIDER_COST_USD_PER_SCAN=
 ```
 
-This is a product hypothesis and safety limit, not a claim about current
-provider pricing or measured scans. Pricing and quota schedules are external,
-mutable facts; the account owner must record the schedule used for each release.
+Managed mode fails closed when an applicable value or ceiling is absent and
+requires positive prices for configured paid providers/model work. Fixture mode
+uses `$0`. BYOK self-hosters provide their own values or explicitly acknowledge
+the documented conservative sample-estimate policy; no sample represents
+TrendsFast production economics. Pricing and quota schedules are external,
+mutable facts, and the account owner must privately record the dated schedule
+used for each release. See [the commercial boundary](../COMMERCIAL_BOUNDARY.md).
 
 ## Ledger contract
 

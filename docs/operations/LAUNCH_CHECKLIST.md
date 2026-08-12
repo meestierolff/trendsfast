@@ -6,60 +6,47 @@ my machine,” fixture success, and code presence are not production proof.
 
 ## Current integrated local evidence
 
-The current working tree has a completed `LOCAL_PASS`, but it is not yet tied to
-an immutable release SHA. The locally tested implementation baseline is
-`a8b09b1`; the docs reconciliation is uncommitted and remote CI for that commit
-is still pending:
+Implementation candidate `73297a6cfdc99b025990b001b39cef399f4d235e`
+has `LOCAL_PASS` evidence. Every production box below remains unchecked until
+its own immutable remote or external evidence exists:
 
-- PostgreSQL 16 replayed all 15 migration files, `0000` through latest `0016`,
-  with intentional `0009`/`0010` numbering gaps and all 15 migration hashes
-  matched exactly. The strict hosted-schema verifier matched 34/34 public tables
-  plus the exact expected enums, indexes, and constraints, including effective
-  and default ACL denial for `PUBLIC`, `anon`, and `authenticated`.
-- The fixture seed completed twice.
-- `RUN_DATABASE_INTEGRATION=1` completed 85 test files and 449 tests with no
-  failures. Workspace typecheck, lint, Drizzle schema check, and the final
-  optimized webpack production build passed. The standard Turbopack build was
-  locally blocked by sandbox port restrictions; current-tree remote CI remains
-  pending.
-- The actual `next start` production artifact completed 60 browser checks: 58
-  passed and two mobile checks were intentionally skipped. Coverage included 24
-  desktop/mobile axe checks and a complete API submit → `REVIEW_REQUIRED` →
-  founder verify/approve/deliver → `READY` → idempotent replay/conflict journey.
-- The local HTTP production-artifact verifier returned `ok: true` for 26 public
-  route/status/content-type checks, security-header and secret-marker checks,
-  private ops behavior, and two unknown-capability `404` privacy probes.
-- A manual local curl matrix confirmed the dynamic/static cache boundaries,
-  expected text/XML/RSS content types, private ops and unknown-scan behavior,
-  unauthenticated API `401`, and `/api/sources`: every automated source and
-  manual evidence remained **Coming soon**/`UNVERIFIED`; Reddit remained
-  **Permission required**/`LEGAL_REVIEW`.
-- Provider/model attempts reserve durably before I/O and settle valid
-  provider-reported usage; missing usage stays conservative and unsettled.
-  Public replay attempts consume the durable daily cap.
-- The redacted Stripe test-mode verifier passed for product
-  `prod_V3SAWlzw4po9Vw`, recurring `$39` price
-  `price_1U3LGBDzHjCqsazv1xkoxKhA`, coupon
-  `trendsfast_founding_100_12_months`, and disabled promotion
-  `promo_1U3LHgDzHjCqsazvf4vgUGB9`. No application checkout/webhook/charge or
-  live-mode journey was exercised. A test key exposed in local CLI output must
-  be rotated; its value is intentionally omitted.
-- No TrendsFast Supabase or Vercel project exists, and `trendsfast.com` was
-  observed as `NXDOMAIN`.
-- The real local product capture shows both the in-card example-data limitation
-  and the visible “Product demo using example data” footer.
+- PostgreSQL 16 replayed all 18 migration files through `0019`, with intentional
+  `0009`/`0010` gaps and all hashes matched. The strict verifier matched 37/37
+  public tables plus expected columns, enums, indexes, constraints, effective
+  grants, and default ACL denial for `PUBLIC`, `anon`, and `authenticated`.
+- The fixture seed completed twice and the disposable-database purge reported
+  zero remaining eligible records and zero backlog.
+  `RUN_DATABASE_INTEGRATION=1 pnpm test` completed 98 files/512 tests with no
+  failures or skips.
+- Typecheck, lint, Drizzle schema check, and the optimized webpack production
+  build passed; webpack emitted 37 route/page entries. The standard Turbopack
+  build hit a local sandbox port-binding `EPERM`, so the standard build still
+  requires remote CI evidence.
+- The final non-database run passed 78 files/455 tests with 20 files/57 tests
+  skipped (512 tests total). The final production-artifact browser run passed 58
+  checks with two intentional mobile skips, including 24 desktop/mobile axe
+  checks. The local deployment verifier passed 26 routes plus two private
+  unknown-capability `404` probes.
+- Code-local founder review now supports audited evidence verification,
+  immutable-action edit-and-approve, context correction, stored-evidence-only
+  recomputation, and redacted JSON/Markdown bundle export.
+- Public free scans have requester and database-atomic global count/cost
+  admission. API creation/polling/auth-failure rates are separate. Audited,
+  one-project, maximum-30-day design-partner grants remain usage/cost bounded
+  and are not represented as Stripe subscriptions.
+- Stripe subscription Checkout/webhook/claim/key/Portal code and deterministic
+  tests exist using Stripe Node `^22.4.0` / API `2026-07-29.dahlia`, but no
+  current catalog ID or application journey is recorded. The compromised
+  sandbox credential must be rotated before any Stripe API verification.
+- No TrendsFast Supabase project, Vercel project/deployment, commercial Vercel
+  plan verification, DNS/TLS, production source/model read-back, hosted API,
+  three-product dogfood result, monitoring run, or legal/tax approval exists.
 
-This proves a coherent local working tree only. It does not prove an immutable
-release, final remote CI, deployment, live sources, a scheduler, Stripe test/live
-application journeys, legal approval, or customer outcomes. Every box below
-therefore remains unchecked.
-
-Launch remains blocked on final remote CI, live provider/model read-backs,
-external deployment, legal approval, billing/monitoring, manual privacy
-scheduling/request operations, safe explicit retry after an uncertain provider
-effect/charge, missing-usage/operator-price reconciliation, Stripe test-key
-rotation, and the remaining P2 deployed-edge throttle for public capability
-lookups.
+This is `LOCAL_PASS` for the immutable implementation candidate, not production
+proof. See the
+[2026-08-12 local record](LOCAL_VERIFICATION_2026-08-12.md). Launch remains
+blocked on remote CI plus every applicable external, operational, provider,
+Stripe, dogfood, legal, and deployed-edge gate.
 
 ## Ownership and truth
 
@@ -181,8 +168,9 @@ Each check needs the production read-back record described in
       week without blocking the minimum panel.
 
 Until those boxes are checked, this repository is **at most fixture-scoped**.
-Fixture behavior has current working-tree `LOCAL_PASS`, but lacks immutable
-release-SHA CI and every external source/deployment gate. It must not be
+Fixture verification has `LOCAL_PASS` evidence at
+`73297a6cfdc99b025990b001b39cef399f4d235e`, but immutable final-branch remote CI
+and every external source/deployment gate remain separate. It must not be
 declared launch-ready.
 
 ## Infrastructure and operations
@@ -208,8 +196,8 @@ declared launch-ready.
 
 - [ ] `BILLING_ENABLED=false`, `PAID_MONITORING_ENABLED=false`, and
       `STRIPE_MODE=test` in every launch environment until the live gate passes.
-- [ ] `FOUNDING_100_ENABLED=false` and `CLOUD_TRIAL_ENABLED=false`; neither the
-      prepared promotion nor a later trial is presented as a current offer.
+- [ ] `FOUNDING_100_ENABLED=false` and `CLOUD_TRIAL_ENABLED=false`; no promotion,
+      coupon, trial, or alternate plan is presented as a current offer.
 - [ ] No active paid promise, live price, or dead checkout CTA appears.
 - [ ] Test webhook/entitlement code, if present, cannot grant production access.
 - [ ] [Live billing gate](../billing/LIVE_ENABLEMENT_GATE.md) remains separately
@@ -217,8 +205,13 @@ declared launch-ready.
 
 ## Dogfood and distribution
 
-- [ ] Fixture and authorized live scans are run for all eight dogfood products;
-      outputs differ materially and generic repetition is treated as a blocker.
+- [ ] Authorized production-equivalent live API scans are completed, in order,
+      for TrendsFast, Halio, and ShipToUsers; each has redacted JSON/Markdown
+      review bundles, outputs differ materially, and generic repetition is a
+      blocker.
+- [ ] External review approves all three bundles with
+      `DOGFOOD_EXTERNAL_REVIEW_APPROVED=YES`, and every correction is resolved
+      before public production or live Checkout.
 - [ ] Costs are measured from ledgers; unknowns remain unknown and fixtures are
       excluded from provider-cost claims.
 - [ ] Every distribution asset is edited to replace placeholders with real,

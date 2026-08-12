@@ -9,7 +9,8 @@ before an unknown founder trusts it.
 
 ## Scope
 
-Eight authorized product scans, cross-result quality review, provider
+Three authorized production-equivalent product scans (TrendsFast, Halio, and
+ShipToUsers), cross-result quality review, JSON/Markdown review bundles, provider
 actual/unknown cost plus separately labeled conservative model reservations,
 review-time measurement, nine launch assets, explicit public consent, tracked
 URLs, and weekly open metrics.
@@ -27,13 +28,16 @@ reasons. Repeated generic advice blocks launch.
 
 ## API contract
 
-Use the same scan/review/delivery/feedback endpoints as external users. Public
-case-study flag is explicit, revocable consent, not an operator shortcut.
+Use one project-scoped live key per design-partner project, submit through
+`POST /v1/next-move`, poll through the real status endpoint, then use the same
+review/delivery/result contract as external users. Public case-study consent is
+explicit and revocable, not an operator shortcut.
 
 ## Data model
 
-Store consent, attribution, review correction/time, provider ledger, feedback,
-used outcome, case-study version, and takedown/revocation audit.
+Store the design-partner grant, scoped key audit, consent, attribution, review
+correction/time, provider ledger, feedback, used outcome, review-bundle release
+identity, case-study version, and takedown/revocation audit.
 
 ## Provider/legal constraints
 
@@ -60,14 +64,16 @@ after results exist.
 
 ## Verification
 
-Founder reviews all eight side-by-side, validates every URL at delivery, and
-signs the launch checklist with provider actual/unknown cost, unsettled model
-usage, dated price metadata, and review evidence. A conservative reservation is
-not actual model cost.
+Founder reviews all three side-by-side, validates every URL at delivery, and
+exports a redacted JSON and Markdown bundle for each with provider
+actual/unknown cost, unsettled model usage, dated price metadata, and review
+evidence. A conservative reservation is not actual model cost. Stop for external
+review before public production or live Checkout; resume only after
+`DOGFOOD_EXTERNAL_REVIEW_APPROVED=YES` and all correction notes are resolved.
 
 ## Limitations
 
-Eight founder-linked products are a learning set, not broad market validation.
+Three founder-linked products are a learning set, not broad market validation.
 
 ## Rollout
 

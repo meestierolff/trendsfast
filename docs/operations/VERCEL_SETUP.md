@@ -4,9 +4,10 @@ This procedure is executable only after the release SHA, remote CI, database,
 and secret inventory are approved. It does not make an unaudited deployment a
 public launch.
 
-Observed state on 2026-08-12: no TrendsFast Vercel project exists. Treat every
-step below as unexecuted provisioning, not an existing-project or deployment
-claim.
+Observed state on 2026-08-12: no TrendsFast Vercel project exists, and the
+authenticated team `clarios-projects-05f6a57e` is on a Hobby plan. Upgrade that
+founder-owned team to Pro before commercial production. Treat every step below
+as unexecuted provisioning, not an existing-project or deployment claim.
 
 ## Preflight and existing-project check
 
@@ -26,8 +27,11 @@ vercel git connect --yes
 vercel project inspect trendsfast
 ```
 
-Use repository root as Vercel root, `pnpm install --frozen-lockfile` as install
-command, and `pnpm build` as build command. Do not run migrations in the build.
+Configure the project as Next.js with `apps/web` as its Root Directory,
+production branch `main`, and source outside the Root Directory included so the
+workspace packages resolve. Prefer workspace auto-detection, a frozen pnpm
+install, and the default application build; override only when a preview proves
+the defaults fail. Do not run migrations in the build.
 
 ## Secret-safe environment setup
 
@@ -40,7 +44,7 @@ printf '%s' "$VALUE" | vercel env add VARIABLE production --sensitive
 ```
 
 Review names/scopes with `vercel env ls`; never print values. Keep billing,
-trials, Founding 100, and paid monitoring disabled until their gates pass.
+trials, promotions/coupons, and paid monitoring disabled until their gates pass.
 Preview and production must use different databases, salts, sessions, provider
 credentials where available, and Stripe webhook secrets.
 

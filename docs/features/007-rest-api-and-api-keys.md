@@ -23,7 +23,7 @@ key management, or organization/team auth.
 ## Product contract
 
 Only `product_url` is required. Return `200` for a suitable fresh ready result or
-`202` plus status URL for work. States are `QUEUED`, `RUNNING`,
+`202` plus status URL and `poll_after_seconds: 30` for work. States are `QUEUED`, `RUNNING`,
 `REVIEW_REQUIRED`, `READY`, `FAILED`; ready data includes evidence/limitations,
 review status, and `auto_publish=false`.
 
@@ -33,6 +33,8 @@ Bearer shape: `tf_test_<prefix>.<secret>` or `tf_live_<prefix>.<secret>`.
 Require `Idempotency-Key` on creation; same key/body returns one resource and
 conflicting body is rejected. Errors are stable and reveal no secret/tenant data.
 Creation requires `next_move:write`; status reads require `next_move:read`.
+Clients should wait at least 30 seconds, then use exponential backoff. Every
+`429` includes `Retry-After`.
 
 ## Data model
 
@@ -73,15 +75,25 @@ server-side administrative boundary; the public free scan uses no reusable key.
 - `POST /v1/next-move`, `GET /v1/next-moves/{id}`, and
   `GET /v1/openapi.json` are mounted through the Next.js/Hono application.
 - Bearer authentication records an audit event and enforces scope, environment,
-  optional project ownership, hourly authentication usage, and a projected
+  optional project ownership, separate rolling-hour creation/status usage, and a projected
   provider-cost ceiling.
 - Syntactically valid attempts enter durable fixed-cardinality admission before
   expensive secret verification. Defaults are 12 per fingerprint and 120
   globally per one-minute window, in addition to the process-local in-flight
   bound. The deployment must verify the trusted-proxy/fingerprint boundary.
+- Successful `POST /v1/next-move` authentication is counted against the create
+  limit (default 20/hour); successful `GET /v1/next-moves/{id}` authentication
+  is counted against the status limit (default 300/hour). Durable invalid,
+  revoked, and expired outcomes feed a separate 20/hour fingerprint failure
+  budget. Status polling never records an on-demand research acceptance.
 - Protected `/ops/keys` and CSRF-bound ops routes list, issue, rotate, reissue,
   and revoke project-scoped keys with a management audit. A raw secret appears
   once; customers still have no self-service issuance route.
+- Founder ops can issue one audited, revocable `FOUNDER_GRANT` /
+  `DESIGN_PARTNER` entitlement for one active project for at most 30 days. It is
+  not a Stripe subscription. Live key issuance and on-demand requests accept
+  either an active paid entitlement or this grant, while per-key request/cost
+  limits and the ten-run entitlement-window allowance still apply.
 - Keys support optional expiry plus active/revoked state, and expired
   authentication attempts are rejected and audited. There is no automated
   rotation or self-service lifecycle.
@@ -114,15 +126,14 @@ must be checked against the exact release SHA.
 Run unit/integration/concurrency tests, inspect generated spec diff, and exercise
 only implemented routes in a production-like environment.
 
-The current database-enabled 449-test integrated suite covers the API's unit,
-repository, race, and orchestration boundaries. The actual `next start`
-production artifact completed an authenticated submit → `REVIEW_REQUIRED` →
-founder verify/approve/deliver → `READY` → exact idempotent replay/conflicting
-replay journey, and the local production HTTP verifier includes the public
-OpenAPI route. This is working-tree `LOCAL_PASS`; see the
-[integrated record](../operations/LOCAL_VERIFICATION_2026-08-11.md). A final
-spec/runtime diff, immutable-SHA remote CI, and authenticated deployed read-back
-remain open.
+The database-enabled run for implementation candidate
+`73297a6cfdc99b025990b001b39cef399f4d235e` passed 98 files/512 tests across the
+API's unit, repository, race, entitlement, admission, and orchestration
+boundaries. The final non-database run passed 78 files/455 tests with 20 files/57
+tests skipped. A spec/runtime diff, final-branch remote CI, and an authenticated
+deployed read-back remain open. See the
+[integrated record](../operations/LOCAL_VERIFICATION_2026-08-12.md); its counts
+are immutable code-local evidence, not a hosted API claim.
 
 ## Limitations
 

@@ -70,9 +70,14 @@ full-screen AI gradients, and glassmorphism overload.
 The repository mounts the listed public pages, high-intent SEO pages, local
 Markdown news/blog feeds, `llms.txt`, bearer status/result routes, a
 same-origin public submission route with atomic pseudonymous
-count/duplicate/insert admission, same-origin feedback/share-consent mutations,
+count/duplicate/insert admission plus a database-atomic UTC-day count and cost
+reservation boundary, same-origin feedback/share-consent mutations,
 and the protected ops queue/detail surfaces. Public scan capabilities use 256
-random bits. Submission replays still consume the durable daily cap. Every
+random bits. Submission replays still consume the durable requester cap, but an
+exact requester+URL replay reuses the existing request without reserving global
+cost twice. Global count or budget exhaustion returns the stable
+`TODAYS_FOUNDER_REVIEW_CAPACITY_REACHED` payload and swaps in the existing
+launch-interest form. Every
 mutation body is stream-counted before parsing. Turnstile is optional and
 disabled by default. Status responses do not invent percentages; private route
 responses are non-cacheable and pages are marked `noindex`/`nofollow`.
@@ -88,25 +93,18 @@ fingerprint and 100 globally per five minutes by default). `/v1` uses the same
 durable admission store with one-minute defaults of 12 per fingerprint and 120
 globally. Deployed proxy/fingerprint behavior still requires verification.
 
-The current working tree's actual `next start` production artifact ran 60
-browser checks: 58 passed and two mobile checks were intentionally skipped. The
-run included 24 desktop/mobile axe checks and a complete API submit →
-`REVIEW_REQUIRED` → founder verify/approve/deliver → `READY` → idempotent
-replay/conflict journey. Its final optimized webpack production build passed;
-the standard Turbopack build was locally blocked by sandbox port restrictions.
-A local HTTP verifier also passed 26 public route/status/content-type checks,
-the expected security-header/secret-marker matrix, private ops, and two
-unknown-capability privacy probes. A separate manual curl exercise confirmed
-the intended cache/content-type matrix, private/noindex ops and unknown scan,
-unauthenticated API `401`, and `/api/sources` with all automated sources and
-manual evidence at **Coming soon**/`UNVERIFIED` and Reddit at **Permission
-required**/`LEGAL_REVIEW`. This is integrated `LOCAL_PASS` evidence, not
-release-SHA or deployment proof. Final remote CI, manual keyboard/screen-reader
-review, a public lookup edge throttle, and external security-header verification
-remain gates.
+The optimized webpack production build passed with 37 route/page entries; the
+standard Turbopack build was locally blocked by sandbox port restrictions. The
+final production-artifact run passed 58 Playwright checks with two intentional
+mobile skips, including 24 desktop/mobile axe checks. The local deployment
+verifier passed 26 routes plus two private unknown-capability `404` probes. This
+is immutable local evidence at
+`73297a6cfdc99b025990b001b39cef399f4d235e`, not deployment proof. Final remote
+CI, manual keyboard/screen-reader review, a public lookup edge throttle, and
+external security-header verification remain gates.
 
-The complete current working-tree evidence and its limitations are in the
-[integrated local record](../operations/LOCAL_VERIFICATION_2026-08-11.md).
+The complete code-local evidence and its limitations are in the
+[integrated local record](../operations/LOCAL_VERIFICATION_2026-08-12.md).
 
 ## Verification
 

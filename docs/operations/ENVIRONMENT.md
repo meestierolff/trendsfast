@@ -6,18 +6,25 @@ commit values or paste them into support, issues, logs, or screenshots.
 
 ## Runtime and database
 
-| Variable                         | Default/example         | Purpose                                                    |
-| -------------------------------- | ----------------------- | ---------------------------------------------------------- |
-| `NODE_ENV`                       | `development`           | Runtime environment; managed production uses `production`. |
-| `APP_URL`                        | `http://localhost:3000` | Exact canonical origin; managed mode requires HTTPS.       |
-| `DATABASE_URL`                   | local PostgreSQL URL    | Server-side standard PostgreSQL 15+ connection.            |
-| `PROVIDER_CREDENTIAL_MODE`       | `fixture`               | `fixture`, `managed`, or `byok`.                           |
-| `PUBLIC_SCAN_PROCESSING`         | `inline`                | Scan executor policy (`inline` or `manual`).               |
-| `PUBLIC_SCAN_DAILY_LIMIT`        | `20`                    | Abuse-bound submissions per fingerprint/day.               |
-| `SCAN_RETENTION_DAYS`            | `90` in template        | Cutoff used by `pnpm db:purge`; no scheduler is included.  |
-| `MAX_SCAN_DURATION_SECONDS`      | `240`                   | Hard scan duration budget.                                 |
-| `PROVIDER_TIMEOUT_MS`            | `15000`                 | Per-provider attempt timeout.                              |
-| `MAX_PROVIDER_COST_USD_PER_SCAN` | `0.25`                  | Admission/reconciliation ceiling, not a measured cost.     |
+| Variable                               | Default/example         | Purpose                                                    |
+| -------------------------------------- | ----------------------- | ---------------------------------------------------------- |
+| `NODE_ENV`                             | `development`           | Runtime environment; managed production uses `production`. |
+| `APP_URL`                              | `http://localhost:3000` | Exact canonical origin; managed mode requires HTTPS.       |
+| `DATABASE_URL`                         | local PostgreSQL URL    | Server-only pooled/runtime PostgreSQL 15+ connection.      |
+| `DIRECT_DATABASE_URL`                  | local PostgreSQL URL    | Direct connection required for controlled migrate/verify.  |
+| `PROVIDER_CREDENTIAL_MODE`             | `fixture`               | `fixture`, `managed`, or `byok`.                           |
+| `PUBLIC_SCAN_PROCESSING`               | `inline`                | Scan executor policy (`inline` or `manual`).               |
+| `PUBLIC_SCAN_DAILY_LIMIT`              | `1`                     | Accepted submissions per fingerprint/rolling 24 hours.     |
+| `PUBLIC_SCAN_GLOBAL_DAILY_LIMIT`       | `20`                    | New free scans admitted per UTC day across all instances.  |
+| `PUBLIC_SCAN_GLOBAL_DAILY_BUDGET_USD`  | `5`                     | UTC-day reserved/actual free-scan budget.                  |
+| `API_CREATE_RATE_LIMIT_PER_HOUR`       | `20`                    | Expensive create authentications per key/rolling hour.     |
+| `API_STATUS_RATE_LIMIT_PER_HOUR`       | `300`                   | Status reads per key/rolling hour.                         |
+| `API_AUTH_FAILURE_LIMIT_PER_HOUR`      | `20`                    | Failed auth outcomes per fingerprint/rolling hour.         |
+| `API_PROVIDER_COST_LIMIT_USD_PER_HOUR` | empty                   | Required live rolling-hour key cost ceiling.               |
+| `SCAN_RETENTION_DAYS`                  | `90` in template        | Cutoff used by `pnpm db:purge`; no scheduler is included.  |
+| `MAX_SCAN_DURATION_SECONDS`            | `240`                   | Hard scan duration budget.                                 |
+| `PROVIDER_TIMEOUT_MS`                  | `15000`                 | Per-provider attempt timeout.                              |
+| `MAX_PROVIDER_COST_USD_PER_SCAN`       | empty                   | Required live admission ceiling; zero only in fixture.     |
 
 ## Founder/auth/abuse secrets
 
@@ -45,11 +52,15 @@ For creation, fixture mode reserves `$0`; non-fixture mode reserves
 idempotency, totals the greater of each recent request reservation or its summed
 run `GREATEST(estimated, actual)` cost, and compares exact integer micro-USD
 values. A reservation remains in the rolling window for one hour even if the
-worker crashes. These are database contracts, not additional environment
-variables.
+worker crashes. The default live-key ceiling is copied explicitly from
+`API_PROVIDER_COST_LIMIT_USD_PER_HOUR`; it is never derived from the per-scan
+ceiling or a committed managed-production constant.
 
 Public form admission is also durable: duplicate/replay attempts consume the
-configured `PUBLIC_SCAN_DAILY_LIMIT` instead of bypassing the daily cap.
+configured `PUBLIC_SCAN_DAILY_LIMIT` instead of bypassing the requester cap.
+New work additionally reserves cost inside one PostgreSQL global admission
+lock and must fit both UTC-day global limits. Exact duplicate work is reused and
+does not reserve global cost twice.
 
 ## Evidence/model providers
 
@@ -57,12 +68,16 @@ configured `PUBLIC_SCAN_DAILY_LIMIT` instead of bypassing the daily cap.
 | ------------------------------------------ | ------------------------------------------------------------------------- |
 | `XAI_API_KEY`                              | Server secret for xAI/X Search and optionally synthesis.                  |
 | `XAI_MODEL`                                | Explicit approved xAI model; required for configured X where applicable.  |
+| `XAI_ESTIMATED_COST_USD_PER_SEARCH`        | Positive explicit estimate when X Search is configured.                   |
 | `XAI_MAX_TOOL_CALLS_PER_SCAN`              | Integer 0–2; default 2.                                                   |
 | `DATAFORSEO_LOGIN` / `DATAFORSEO_PASSWORD` | Server credential pair; configure both or neither.                        |
 | `DATAFORSEO_GOOGLE_TRENDS_MODE`            | `live` for on-demand scans; `standard` only for reviewed scheduled use.   |
+| `DATAFORSEO_ESTIMATED_COST_USD_PER_TASK`   | Positive explicit task estimate.                                          |
 | `TAVILY_API_KEY`                           | Server secret.                                                            |
+| `TAVILY_ESTIMATED_COST_USD_PER_CREDIT`     | Positive explicit estimate when Tavily is configured.                     |
 | `TAVILY_MAX_CREDITS_PER_SCAN`              | Integer 0–2; default 2.                                                   |
 | `YOUTUBE_API_KEY`                          | Restricted server API key.                                                |
+| `YOUTUBE_INTERNAL_QUOTA_VALUE_USD`         | Explicit nonnegative internal quota valuation when configured.            |
 | `YOUTUBE_MAX_SEARCHES_PER_SCAN`            | Integer 0–2; default 2.                                                   |
 | `GITHUB_TOKEN`                             | Optional read-only server token; public API path must degrade without it. |
 | `LLM_PROVIDER`                             | Explicit `xai` or `openai`; default `xai`.                                |
@@ -74,6 +89,12 @@ configured `PUBLIC_SCAN_DAILY_LIMIT` instead of bypassing the daily cap.
 Non-fixture modes require DataForSEO plus at least X or Tavily launch-minimum
 coverage and a complete configured synthesis provider. That configuration is
 still not a production read-back.
+
+`managed` fails closed without all applicable prices and ceilings. `byok` does
+the same unless the self-hoster explicitly sets
+`BYOK_ACCEPT_CONSERVATIVE_COST_ESTIMATES=YES`, which selects documented public
+samples that must be checked against the self-hoster's own invoices. See
+[the commercial boundary](../COMMERCIAL_BOUNDARY.md).
 
 The model client bounds input at 65,536 bytes, response bytes at 262,144,
 configured output at no more than 8,192 tokens, and calls at one initial attempt
@@ -88,20 +109,21 @@ independently trusted billing facts.
 
 ## Billing and paid monitoring
 
-These variables describe active development work, not a verified paid journey.
-Keep both enablement flags false until the frozen release passes the complete
-billing/monitoring gate.
+These variables describe a code-local implementation, not a verified paid
+journey. Keep both enablement flags false until the frozen release passes the
+complete billing/monitoring gate.
 
 | Variable                        | Current gate                                                                                              |
 | ------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | `BILLING_ENABLED`               | Must remain `false` until the explicit live gate.                                                         |
 | `PAID_MONITORING_ENABLED`       | Must remain `false` until durable scheduled runs pass deployment checks.                                  |
-| `FOUNDING_100_ENABLED`          | Must remain `false`; the prepared promotion is not a launch offer.                                        |
+| `FOUNDING_100_ENABLED`          | Must remain `false`; no promotion/coupon is part of the launch catalog.                                   |
 | `CLOUD_TRIAL_ENABLED`           | Must remain `false` until monitoring and ownership are self-service.                                      |
 | `STRIPE_MODE`                   | `test` until live approval.                                                                               |
 | `STRIPE_SECRET_KEY`             | Server secret; required only when billing is enabled.                                                     |
 | `STRIPE_WEBHOOK_SECRET`         | Server secret; paired with Stripe secret.                                                                 |
 | `STRIPE_FOUNDER_CLOUD_PRICE_ID` | Server-side allowlisted price ID; never browser-selected.                                                 |
+| `STRIPE_PORTAL_LOGIN_URL`       | Stripe-hosted `/p/login/...` URL; never a local arbitrary-customer route.                                 |
 | `CRON_SECRET`                   | 32+ character server secret required for paid monitoring.                                                 |
 | `MONITORING_CRON_BATCH_SIZE`    | Sequential due-work batch; default 1, schema maximum 10, and constrained by the 300s route formula below. |
 | `MONITORING_LEASE_SECONDS`      | Durable claim lease; must be at least `MAX_SCAN_DURATION_SECONDS + 30`.                                   |
@@ -135,8 +157,11 @@ Fixture mode must never call upstream providers.
 ## Production checks
 
 Validate the entire environment at process start; fail closed on partial secret
-pairs, live/test Stripe mismatch, insecure managed origin, or missing managed
-secrets. Inspect built client assets for server variables, then perform
+pairs, production/test or non-production/live Stripe mismatch, insecure managed
+origin, or missing managed secrets. `pnpm db:migrate` and
+`pnpm db:verify-hosted` must receive `DIRECT_DATABASE_URL` in controlled hosted
+release work; the application runtime receives the scoped pooled
+`DATABASE_URL`. Inspect built client assets for server variables, then perform
 provider-specific read-backs without printing values.
 
 Run `pnpm db:purge` from one authenticated, observable, single-owner scheduled

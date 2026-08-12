@@ -96,9 +96,9 @@ clear it merely to admit work.
    pepper rotation needs an API-key reissue plan.
 
 Current blocker: a Stripe test key appeared in local CLI output. Revoke/rotate
-it before further Stripe work, inspect the provider audit trail for misuse, and
-retain only redacted rotation/verifier evidence. Do not reproduce the key in the
-incident record. 5. Notify affected parties and authorities as counsel determines. 6. Add a regression check and sanitized post-incident record.
+it before further Stripe work, inspect the provider audit trail for misuse, run
+`stripe login` for the intended sandbox account, and retain only redacted
+rotation/verifier evidence. Do not reproduce the key in the incident record. 5. Notify affected parties and authorities as counsel determines. 6. Add a regression check and sanitized post-incident record.
 
 ## Private result or tenant access incident
 

@@ -100,11 +100,13 @@ A newly accepted scan returns `202` and a status URL:
 {
   "id": "scan_<opaque-capability>",
   "status": "QUEUED",
-  "status_url": "http://localhost:3000/v1/next-moves/scan_<opaque-capability>"
+  "status_url": "http://localhost:3000/v1/next-moves/scan_<opaque-capability>",
+  "poll_after_seconds": 30
 }
 ```
 
-Poll with the same key:
+Poll with the same key after `poll_after_seconds`; use exponential backoff and
+honor `Retry-After` on `429`:
 
 ```bash
 export SCAN_ID=replace-with-id-from-the-create-response
@@ -245,62 +247,65 @@ external source to **Connected**. See the
 - No production provider/model read-back, deployment verification, legal
   approval, customer result, dogfood outcome, or traction metric is claimed by
   this README.
-- Founder review, manual supplemental evidence, provider verification records,
-  and project-scoped API-key management exist as protected operations paths.
-- Billing and paid monitoring remain disabled unless both their code and every
-  explicit operational/legal gate are verified. A redacted Stripe test-mode
-  catalog verifier passed for product `prod_V3SAWlzw4po9Vw`, recurring `$39`
-  price `price_1U3LGBDzHjCqsazv1xkoxKhA`, 50%-for-12-months coupon
-  `trendsfast_founding_100_12_months`, and disabled promotion
-  `promo_1U3LHgDzHjCqsazvf4vgUGB9`. This is not a live catalog, checkout,
-  webhook, charge, entitlement, or paid-availability claim. The unresolved
-  `$19` versus `$19.50` copy/catalog conflict forbids public promotion.
+- Founder review now includes evidence verification/rejection, immutable-action
+  edit-and-approve, context correction, stored-evidence recomputation, delivery,
+  and redacted JSON/Markdown review bundles. Stored-only recomputation makes no
+  provider/model call and renewed evidence review is required after correction.
+- Public scan admission defaults to one request per anonymous requester plus
+  database-atomic UTC-day global limits of 20 scans and $5 reserved/actual
+  provider cost. API creation and polling use separate 20/hour and 300/hour
+  limits; polling does not consume a research allowance.
+- Protected founder operations can issue a revocable, audited, one-project
+  design-partner grant for at most 30 days. It is explicitly not a Stripe
+  subscription, and normal usage/cost limits still apply.
+- Managed/provider/model prices and cost ceilings are server configuration, not
+  committed TrendsFast economics. Managed mode fails closed when an applicable
+  value is missing; fixture cost is $0; unknown actual usage stays conservatively
+  unsettled. See the [commercial boundary](docs/COMMERCIAL_BOUNDARY.md).
+- Billing and paid monitoring remain disabled unless every code, sandbox,
+  hosted, monitoring, legal, tax, and founder-approval gate is verified. The
+  code-local boundary uses Stripe Node `^22.4.0`, API version
+  `2026-07-29.dahlia`, hosted subscription Checkout, verified webhooks, a hashed
+  one-time checkout claim, exactly-once project key issuance, and Stripe-hosted
+  Portal access. No current Stripe Product or Price ID, application journey, or
+  live-mode result is claimed: the previously used sandbox key must first be
+  rotated and the CLI reauthenticated.
 - The first-party ledger is the intended analytics truth. Public/open metrics
   stay placeholder-only until a reproducible denominator-backed report exists.
-- The locally tested implementation baseline is commit `a8b09b1`; the
-  documentation reconciliation is still uncommitted, and no remote CI result is
-  claimed for that implementation commit.
-- The current working tree has `LOCAL_PASS` evidence: isolated PostgreSQL 16
-  replay of all 15 migration files from `0000` through `0016` (intentional
-  `0009`/`0010` gaps) with all 15 migration hashes matched exactly, a
-  twice-repeated fixture seed, and the strict hosted-schema verifier at 34/34
-  tables plus exact enums/indexes/constraints and effective/default ACL denial
-  for `PUBLIC`, `anon`, and `authenticated`. With database integration enabled,
-  85 test files/449 tests passed; workspace typecheck, lint, Drizzle check, and
-  the final optimized webpack production build also passed. The standard
-  Turbopack build was locally blocked by sandbox port restrictions, so
-  current-tree remote CI remains pending.
-- The actual `next start` production artifact ran 60 browser checks: 58 passed
-  and two mobile checks were intentionally skipped. The run included 24
-  desktop/mobile axe checks and a complete API submit → `REVIEW_REQUIRED` →
-  founder verify/approve/deliver → `READY` → idempotent replay/conflict journey.
-- A local production-artifact HTTP verifier returned `ok: true` across 26 public
-  routes/status/content types, security-header and secret-marker checks, private
-  ops behavior, and two unknown-capability `404` privacy probes. This is not an
-  external deployment check.
-- A separate manual local curl exercise against that artifact verified the
-  public/static content types, dynamic private/no-store behavior, private ops,
-  unknown-capability and unauthenticated API responses, and `/api/sources` with
-  every automated source and manual evidence at **Coming soon**/`UNVERIFIED` and
-  Reddit at **Permission required**/`LEGAL_REVIEW`.
+- Implementation candidate `73297a6cfdc99b025990b001b39cef399f4d235e`
+  replayed all 18 migration files through `0019` (intentional `0009`/`0010`
+  gaps), matched every hash, seeded twice, and passed strict verification for
+  37/37 public tables plus columns, enums, indexes, constraints, and denied
+  browser/default grants. The database-enabled suite passed 98 files/512 tests;
+  the non-database run passed 78 files/455 tests with 20 files/57 tests skipped.
+- Typecheck, lint, Drizzle check, and the optimized webpack production build
+  passed; the build emitted 37 route/page entries. The production artifact
+  passed 58 Playwright checks with two intentional mobile skips, including 24
+  desktop/mobile axe checks. The local deployment verifier passed 26 routes and
+  two private unknown-capability `404` probes, and the retention purge finished
+  with zero eligible backlog. The default Turbopack build was blocked locally by
+  sandbox port restrictions, so the standard build still requires remote CI
+  evidence.
 - Provider and model attempts reserve their bounded cost durably before I/O.
   Valid provider-reported usage settles the reservation; missing usage remains
   conservative and unsettled. Public replay attempts consume the durable daily
   admission cap.
 - No TrendsFast Supabase or Vercel project exists, and `trendsfast.com` was
-  observed as `NXDOMAIN`; no hosted or release claim follows from local checks.
-- A Stripe test key appeared in local CLI output and must be rotated before any
-  further Stripe work. Its value is intentionally absent from this repository.
+  observed as `NXDOMAIN`. No hosted database, deployment, DNS/TLS, source,
+  API/dogfood, monitoring, or release claim follows from local checks. The
+  authenticated Vercel team also requires a suitable commercial plan.
 - Retention and privacy operations still require authenticated scheduling,
   backup-expiry/legal-hold decisions, and deployment evidence.
 - Explicit non-fixture retry after an uncertain provider effect or charge
   requires operator reconciliation; no broad retry-safety claim is made.
 
-These current results are local working-tree evidence, not an immutable release
-record. The CI badge reports `main`; final remote CI for this tree is pending.
-The full [integrated local verification record](docs/operations/LOCAL_VERIFICATION_2026-08-11.md)
+These are `LOCAL_PASS` results for immutable implementation candidate
+`73297a6cfdc99b025990b001b39cef399f4d235e`, not hosted or production proof. The
+CI badge reports `main`; remote branch CI and every applicable external gate
+remain separate release evidence. The full
+[integrated local verification record](docs/operations/LOCAL_VERIFICATION_2026-08-12.md)
 and [launch checklist](docs/operations/LAUNCH_CHECKLIST.md) keep every release
-gate unchecked until current release-SHA and external evidence exist.
+gate unchecked until its immutable remote or external evidence exists.
 
 ## Verification
 
