@@ -20,8 +20,9 @@ its own immutable remote or external evidence exists:
   failures or skips.
 - Typecheck, lint, Drizzle schema check, and the optimized webpack production
   build passed; webpack emitted 37 route/page entries. The standard Turbopack
-  build hit a local sandbox port-binding `EPERM`, so the standard build still
-  requires remote CI evidence.
+  build hit a local sandbox port-binding `EPERM`; branch commit
+  `4ec9510f610001285c54947326c65cb79a075f37` subsequently passed the verify/build
+  and critical-browser jobs in [CI run 31585349262](https://github.com/meestierolff/trendsfast/actions/runs/31585349262).
 - The final non-database run passed 78 files/455 tests with 20 files/57 tests
   skipped (512 tests total). The final production-artifact browser run passed 58
   checks with two intentional mobile skips, including 24 desktop/mobile axe
@@ -45,8 +46,8 @@ its own immutable remote or external evidence exists:
 This is `LOCAL_PASS` for the immutable implementation candidate, not production
 proof. See the
 [2026-08-12 local record](LOCAL_VERIFICATION_2026-08-12.md). Launch remains
-blocked on remote CI plus every applicable external, operational, provider,
-Stripe, dogfood, legal, and deployed-edge gate.
+blocked on every applicable external, operational, provider, Stripe, dogfood,
+legal, and deployed-edge gate.
 
 ## Ownership and truth
 
@@ -169,8 +170,9 @@ Each check needs the production read-back record described in
 
 Until those boxes are checked, this repository is **at most fixture-scoped**.
 Fixture verification has `LOCAL_PASS` evidence at
-`73297a6cfdc99b025990b001b39cef399f4d235e`, but immutable final-branch remote CI
-and every external source/deployment gate remain separate. It must not be
+`73297a6cfdc99b025990b001b39cef399f4d235e` and green branch CI at
+`4ec9510f610001285c54947326c65cb79a075f37`, but every external
+source/deployment gate remains separate. It must not be
 declared launch-ready.
 
 ## Infrastructure and operations

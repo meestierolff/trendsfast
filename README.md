@@ -284,8 +284,10 @@ external source to **Connected**. See the
   desktop/mobile axe checks. The local deployment verifier passed 26 routes and
   two private unknown-capability `404` probes, and the retention purge finished
   with zero eligible backlog. The default Turbopack build was blocked locally by
-  sandbox port restrictions, so the standard build still requires remote CI
-  evidence.
+  sandbox port restrictions. GitHub Actions then passed the standard verify,
+  migration, seed, build, and critical-browser jobs for branch commit
+  `4ec9510f610001285c54947326c65cb79a075f37` in
+  [CI run 31585349262](https://github.com/meestierolff/trendsfast/actions/runs/31585349262).
 - Provider and model attempts reserve their bounded cost durably before I/O.
   Valid provider-reported usage settles the reservation; missing usage remains
   conservative and unsettled. Public replay attempts consume the durable daily
@@ -301,8 +303,8 @@ external source to **Connected**. See the
 
 These are `LOCAL_PASS` results for immutable implementation candidate
 `73297a6cfdc99b025990b001b39cef399f4d235e`, not hosted or production proof. The
-CI badge reports `main`; remote branch CI and every applicable external gate
-remain separate release evidence. The full
+CI badge reports `main`; the exact branch CI evidence is linked above, while
+every applicable hosted and external gate remains separate. The full
 [integrated local verification record](docs/operations/LOCAL_VERIFICATION_2026-08-12.md)
 and [launch checklist](docs/operations/LAUNCH_CHECKLIST.md) keep every release
 gate unchecked until its immutable remote or external evidence exists.

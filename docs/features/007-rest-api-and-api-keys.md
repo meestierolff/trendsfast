@@ -130,8 +130,8 @@ The database-enabled run for implementation candidate
 `73297a6cfdc99b025990b001b39cef399f4d235e` passed 98 files/512 tests across the
 API's unit, repository, race, entitlement, admission, and orchestration
 boundaries. The final non-database run passed 78 files/455 tests with 20 files/57
-tests skipped. A spec/runtime diff, final-branch remote CI, and an authenticated
-deployed read-back remain open. See the
+tests skipped. Branch CI passed at `4ec9510f610001285c54947326c65cb79a075f37`;
+an authenticated deployed spec/runtime read-back remains open. See the
 [integrated record](../operations/LOCAL_VERIFICATION_2026-08-12.md); its counts
 are immutable code-local evidence, not a hosted API claim.
 

@@ -77,9 +77,9 @@ denominator-backed query is reviewed. No external cohort metric is claimed.
 The database-enabled run for implementation candidate
 `73297a6cfdc99b025990b001b39cef399f4d235e` passed 98 files/512 tests. The final
 production-artifact browser run passed 58 checks with two intentional mobile
-skips, including 24 desktop/mobile axe checks. This is local implementation
-evidence only: final remote CI, deployment, scheduler operation, external
-analytics, and real denominator-backed metrics remain unverified.
+skips, including 24 desktop/mobile axe checks. Branch CI passed at
+`4ec9510f610001285c54947326c65cb79a075f37`; deployment, scheduler operation,
+external analytics, and real denominator-backed metrics remain unverified.
 
 Exact-project deletion removes linked request, key, authentication, analytics,
 and related cascaded records. `pnpm db:purge` removes eligible retained terminal

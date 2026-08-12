@@ -2,33 +2,35 @@
 
 Status: **`LOCAL_PASS` for the implementation candidate; launch blocked.** This
 record describes immutable implementation commit
-`73297a6cfdc99b025990b001b39cef399f4d235e`. Nothing in this local record proves
-remote CI, a hosted deployment, provider/model read-back, a Stripe customer
+`73297a6cfdc99b025990b001b39cef399f4d235e`. Nothing in these local commands proves
+a hosted deployment, provider/model read-back, a Stripe customer
 journey, legal approval, or a customer outcome.
 
 The repository started this work from
-`21b13b8dff528f70a175a785da309ad38c67fd73`. Remote CI for the final branch
-commit is pending, remains separate release evidence, and is not claimed by this
-record.
+`21b13b8dff528f70a175a785da309ad38c67fd73`. Separate remote evidence is now
+attached: branch commit `4ec9510f610001285c54947326c65cb79a075f37`
+passed the verify/build and critical-browser jobs in
+[CI run 31585349262](https://github.com/meestierolff/trendsfast/actions/runs/31585349262).
 Public package/OpenAPI versions remain prerelease; no `v0.1.0` tag or release is
 authorized while these gates are open.
 
 ## Observed local results
 
-| Area                           | Observed result                                                                                                                                                                                                                                                                  |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Database replay                | A fresh disposable PostgreSQL 16 database applied all 18 migration files through `0019`; the `0009` and `0010` numbering gaps are intentional. All 18 applied hashes matched the repository ledger exactly.                                                                      |
-| Strict schema/ACL verification | `STRICT_HOSTED_SCHEMA=1 pnpm db:verify-hosted` matched 37/37 public tables plus the expected columns, enums, indexes, constraints, effective grants, and default ACL denial for `PUBLIC`, `anon`, and `authenticated`. This was a local PostgreSQL check, not Supabase evidence. |
-| Fixture seed and purge         | The deterministic fixture seed completed twice. The disposable-database purge completed with zero remaining eligible records and zero backlog, including zero expired founder launch-interest records.                                                                           |
-| Database integration           | `RUN_DATABASE_INTEGRATION=1 pnpm test` completed 98 test files and 512 passing tests with no failures or skips.                                                                                                                                                                  |
-| Unit suite                     | The final non-database run completed 78 passing files / 455 passing tests and 20 skipped files / 57 skipped tests (512 tests total), with no failures. Database-gated coverage ran in the full database suite above.                                                             |
-| Static/schema checks           | Workspace typecheck, lint, Drizzle schema check, and the hosted-schema verifier passed for the implementation candidate.                                                                                                                                                         |
-| Production build               | The optimized Next.js webpack production build passed and emitted 37 route/page entries. The default Turbopack build could not bind its compiler helper port in the local sandbox (`EPERM`); remote CI must run the standard build before release.                               |
-| Browser suite                  | The final production-artifact run completed 58 passing Playwright checks and two intentional mobile skips, including 24 desktop/mobile axe checks, with no failures.                                                                                                             |
-| Local deployment verifier      | The production artifact passed 26 route/status/content/security checks plus two private unknown-capability `404` probes. This was a local HTTP check, not an external deployment check.                                                                                          |
+| Area                           | Observed result                                                                                                                                                                                                                                                                          |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Database replay                | A fresh disposable PostgreSQL 16 database applied all 18 migration files through `0019`; the `0009` and `0010` numbering gaps are intentional. All 18 applied hashes matched the repository ledger exactly.                                                                              |
+| Strict schema/ACL verification | `STRICT_HOSTED_SCHEMA=1 pnpm db:verify-hosted` matched 37/37 public tables plus the expected columns, enums, indexes, constraints, effective grants, and default ACL denial for `PUBLIC`, `anon`, and `authenticated`. This was a local PostgreSQL check, not Supabase evidence.         |
+| Fixture seed and purge         | The deterministic fixture seed completed twice. The disposable-database purge completed with zero remaining eligible records and zero backlog, including zero expired founder launch-interest records.                                                                                   |
+| Database integration           | `RUN_DATABASE_INTEGRATION=1 pnpm test` completed 98 test files and 512 passing tests with no failures or skips.                                                                                                                                                                          |
+| Unit suite                     | The final non-database run completed 78 passing files / 455 passing tests and 20 skipped files / 57 skipped tests (512 tests total), with no failures. Database-gated coverage ran in the full database suite above.                                                                     |
+| Static/schema checks           | Workspace typecheck, lint, Drizzle schema check, and the hosted-schema verifier passed for the implementation candidate.                                                                                                                                                                 |
+| Production build               | The optimized Next.js webpack production build passed and emitted 37 route/page entries. The default Turbopack build could not bind its compiler helper port in the local sandbox (`EPERM`); CI run 31585349262 subsequently passed the standard verify/build and critical-browser jobs. |
+| Browser suite                  | The final production-artifact run completed 58 passing Playwright checks and two intentional mobile skips, including 24 desktop/mobile axe checks, with no failures.                                                                                                                     |
+| Local deployment verifier      | The production artifact passed 26 route/status/content/security checks plus two private unknown-capability `404` probes. This was a local HTTP check, not an external deployment check.                                                                                                  |
 
 These results establish `LOCAL_PASS` for the immutable implementation candidate,
-not remote CI, a hosted release, or production readiness. Every applicable
+not a hosted release or production readiness. The separate exact branch CI run
+linked above is green; every applicable
 external, operational, billing, provider, dogfood, and legal gate remains open.
 
 ## Implemented code-local boundaries
@@ -100,7 +102,7 @@ external, operational, billing, provider, dogfood, and legal gate remains open.
 
 Preserve implementation candidate
 `73297a6cfdc99b025990b001b39cef399f4d235e` as the local evidence baseline and
-attach green remote CI for the final branch commit. Then repeat the applicable
+CI run 31585349262 as its remote branch evidence. Then repeat the applicable
 database, source, API, Stripe, monitoring, domain, and security checks against
 the exact hosted release. Keep every corresponding launch-checklist item
 unchecked until its own immutable or external evidence is linked.

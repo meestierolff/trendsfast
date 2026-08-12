@@ -78,8 +78,9 @@ build, 58-pass/two-intentional-skip browser run with 24 axe checks, and 26-route
 plus two-private-probe local deployment verification also passed. The standard
 Turbopack build was locally blocked by sandbox port restrictions. See the
 [integrated local record](../operations/LOCAL_VERIFICATION_2026-08-12.md).
-This is immutable code-local evidence, not remote-CI, deployed, or
-provider-read-back evidence.
+This is immutable code-local evidence, not deployed or provider-read-back
+evidence. Separate branch CI passed at `4ec9510f610001285c54947326c65cb79a075f37`
+in [run 31585349262](https://github.com/meestierolff/trendsfast/actions/runs/31585349262).
 
 ## Limitations
 
