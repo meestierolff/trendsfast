@@ -25,8 +25,11 @@
     "db:studio": "drizzle-kit studio --config packages/database/drizzle.config.ts",
     "db:verify-hosted": "tsx scripts/db/verify-hosted-schema.ts",
     "openapi:generate": "tsx packages/schemas/src/write-openapi.ts",
-    "stripe:bootstrap-test": "./scripts/stripe/bootstrap-test.sh",
-    "stripe:verify-test": "./scripts/stripe/verify-test-config.sh",
+    "stripe:bootstrap-sandbox": "./scripts/stripe/bootstrap-sandbox.sh",
+    "stripe:verify-sandbox": "./scripts/stripe/verify-sandbox.sh",
+    "stripe:test-webhook": "./scripts/stripe/test-webhook.sh",
+    "stripe:bootstrap-live": "./scripts/stripe/bootstrap-live.sh",
+    "stripe:verify-live": "./scripts/stripe/verify-live.sh",
     "verify:deployment": "tsx scripts/verify-deployment.ts",
     "verify": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },

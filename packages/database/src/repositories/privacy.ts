@@ -6,9 +6,13 @@ import {
   apiKeyAuthEvents,
   apiKeyManagementEvents,
   apiKeys,
+  billingCheckoutSessions,
   deliveryTokens,
   founderLaunchInterestEvents,
   founderLaunchInterests,
+  founderEntitlementGrantEvents,
+  founderEntitlementGrants,
+  founderUsageEvents,
   nextMoves,
   projects,
   scanRequests,
@@ -108,6 +112,18 @@ export class PrivacyRepository {
             .where(eq(apiKeyManagementEvents.projectId, project.id))
             .returning({ id: apiKeyManagementEvents.id })
         : [];
+      if (project) {
+        await tx
+          .delete(founderEntitlementGrantEvents)
+          .where(eq(founderEntitlementGrantEvents.projectId, project.id));
+        await tx.delete(founderUsageEvents).where(eq(founderUsageEvents.projectId, project.id));
+        await tx
+          .delete(founderEntitlementGrants)
+          .where(eq(founderEntitlementGrants.projectId, project.id));
+        await tx
+          .delete(billingCheckoutSessions)
+          .where(eq(billingCheckoutSessions.projectId, project.id));
+      }
       const deletedKeys = project
         ? await tx
             .delete(apiKeys)
@@ -246,6 +262,12 @@ export class PrivacyRepository {
                 .select({ id: stripeCustomers.id })
                 .from(stripeCustomers)
                 .where(eq(stripeCustomers.projectId, projects.id)),
+            ),
+            notExists(
+              tx
+                .select({ id: founderEntitlementGrants.id })
+                .from(founderEntitlementGrants)
+                .where(eq(founderEntitlementGrants.projectId, projects.id)),
             ),
           ),
         )

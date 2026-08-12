@@ -53,10 +53,12 @@ export type SourceRunState = z.infer<typeof SourceRunStateSchema>;
 export const ReviewActionSchema = z.enum([
   "CONTEXT_EDITED",
   "QUERY_PLAN_EDITED",
+  "EVIDENCE_VERIFIED",
   "EVIDENCE_REJECTED",
   "MANUAL_EVIDENCE_ADDED",
   "SOURCE_RERUN_REQUESTED",
   "SYNTHESIS_RERUN_REQUESTED",
+  "RECOMPUTED_FROM_STORED_EVIDENCE",
   "APPROVED",
   "EDITED_AND_APPROVED",
   "CONVERTED_TO_WAIT",

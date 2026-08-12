@@ -3,7 +3,12 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { apiKeyManagementEvents, createDatabaseFromEnv, createRepositories } from "../src/index";
+import {
+  apiKeyAuthEvents,
+  apiKeyManagementEvents,
+  createDatabaseFromEnv,
+  createRepositories,
+} from "../src/index";
 
 const databaseDescribe = process.env.RUN_DATABASE_INTEGRATION === "1" ? describe : describe.skip;
 
@@ -12,9 +17,13 @@ databaseDescribe("project API-key management lifecycle", () => {
   const pepper = "integration-api-key-pepper-that-is-long-enough";
   const repositories = createRepositories(client.db, { apiKeyPepper: pepper });
   const actorId = `integration-key-manager:${randomUUID()}`;
+  const failureFingerprint = `failure-${randomUUID()}`;
   const projectUrl = `https://api-key-${randomUUID()}.example`;
 
   afterAll(async () => {
+    await client.db
+      .delete(apiKeyAuthEvents)
+      .where(eq(apiKeyAuthEvents.requesterFingerprintHash, failureFingerprint));
     await client.db
       .delete(apiKeyManagementEvents)
       .where(eq(apiKeyManagementEvents.actorId, actorId));
@@ -52,8 +61,34 @@ databaseDescribe("project API-key management lifecycle", () => {
       repositories.apiKeys.authenticate({ rawKey: issued.rawKey }),
     ).resolves.toMatchObject({ ok: false, reason: "REVOKED" });
     await expect(
-      repositories.apiKeys.authenticate({ rawKey: rotated.rawKey }),
+      repositories.apiKeys.authenticate({ rawKey: rotated.rawKey, requestKind: "CREATE" }),
     ).resolves.toMatchObject({ ok: true });
+    await expect(
+      repositories.apiKeys.authenticate({ rawKey: rotated.rawKey, requestKind: "STATUS" }),
+    ).resolves.toMatchObject({ ok: true });
+    await expect(
+      repositories.apiKeys.authenticate({ rawKey: rotated.rawKey, requestKind: "STATUS" }),
+    ).resolves.toMatchObject({ ok: true });
+    await expect(
+      repositories.apiKeys.usageSince({
+        apiKeyId: rotated.record.id,
+        since: new Date(Date.now() - 60_000),
+      }),
+    ).resolves.toMatchObject({ createRequests: 1, statusRequests: 2 });
+
+    await expect(
+      repositories.apiKeys.authenticate({
+        rawKey: "tf_test_unknown1.abcdefghijklmnopqrstuvwxyz123456",
+        requesterFingerprintHash: failureFingerprint,
+        requestKind: "STATUS",
+      }),
+    ).resolves.toMatchObject({ ok: false, reason: "NOT_FOUND" });
+    await expect(
+      repositories.apiKeys.failedAuthenticationAttemptsSince({
+        requesterFingerprintHash: failureFingerprint,
+        since: new Date(Date.now() - 60_000),
+      }),
+    ).resolves.toBe(1);
 
     await expect(
       repositories.apiKeys.reissue({ apiKeyId: rotated.record.id, actorId }),

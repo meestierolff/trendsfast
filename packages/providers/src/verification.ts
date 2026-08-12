@@ -71,10 +71,27 @@ export async function verifyProviderReadback(input: {
   context: ProviderExecutionContext;
   request?: ProviderRunRequest;
   maximumCostUsd: number;
+  healthCheckEstimatedCostUsd?: number;
+  healthCheckQuotaUnits?: number;
   deadline: Date;
   circuitBreaker?: ProviderCircuitBreaker;
 }): Promise<ProviderReadbackVerification> {
   const { adapter, context } = input;
+  const healthCheckEstimatedCostUsd = input.healthCheckEstimatedCostUsd ?? 0;
+  const healthCheckQuotaUnits = input.healthCheckQuotaUnits ?? 0;
+  if (
+    !Number.isFinite(input.maximumCostUsd) ||
+    input.maximumCostUsd < 0 ||
+    !Number.isFinite(healthCheckEstimatedCostUsd) ||
+    healthCheckEstimatedCostUsd < 0 ||
+    !Number.isFinite(healthCheckQuotaUnits) ||
+    healthCheckQuotaUnits < 0
+  ) {
+    throw new Error("Provider verification cost controls must be finite and non-negative");
+  }
+  if (healthCheckEstimatedCostUsd > input.maximumCostUsd) {
+    throw new Error("Provider health read-back exceeds the verification cost ceiling");
+  }
   if (context.credentialMode === "fixture") {
     return {
       ...base(adapter, context),
@@ -113,10 +130,16 @@ export async function verifyProviderReadback(input: {
       readbackVerified: false,
       canonicalUrls: [],
       ...(health.latencyMs === undefined ? {} : { latencyMs: health.latencyMs }),
-      estimatedCostUsd: 0,
-      actualCostUsd: 0,
-      quotaUsed: 0,
-      limitations: [health.message ?? "Provider health check failed."],
+      estimatedCostUsd: healthCheckEstimatedCostUsd,
+      quotaUsed: healthCheckQuotaUnits,
+      limitations: [
+        health.message ?? "Provider health check failed.",
+        ...(healthCheckQuotaUnits > 0
+          ? [
+              "Quota reflects the conservative health-read reservation because the failed external outcome may be unknown.",
+            ]
+          : []),
+      ],
       failureCode: "PROVIDER_HEALTH_FAILED",
       failureMessage: health.message ?? "Provider health check failed.",
       checkedAt: health.checkedAt,
@@ -130,9 +153,9 @@ export async function verifyProviderReadback(input: {
       readbackVerified: false,
       canonicalUrls: [],
       ...(health.latencyMs === undefined ? {} : { latencyMs: health.latencyMs }),
-      estimatedCostUsd: 0,
+      estimatedCostUsd: healthCheckEstimatedCostUsd,
       actualCostUsd: 0,
-      quotaUsed: 0,
+      quotaUsed: healthCheckQuotaUnits,
       limitations: [
         health.message ?? "Provider health check succeeded.",
         "A bounded source read-back is still required before verification.",
@@ -143,7 +166,7 @@ export async function verifyProviderReadback(input: {
 
   const result = await executeProvider(adapter, input.request, {
     context,
-    budget: new ProviderBudget(input.maximumCostUsd),
+    budget: new ProviderBudget(input.maximumCostUsd - healthCheckEstimatedCostUsd),
     circuitBreaker: input.circuitBreaker ?? new ProviderCircuitBreaker(),
     deadline: input.deadline,
   });
@@ -164,9 +187,9 @@ export async function verifyProviderReadback(input: {
     readbackVerified: verified,
     canonicalUrls,
     ...(health.latencyMs === undefined ? {} : { latencyMs: health.latencyMs }),
-    estimatedCostUsd: result.cost.estimatedUsd,
+    estimatedCostUsd: healthCheckEstimatedCostUsd + result.cost.estimatedUsd,
     ...(result.cost.actualUsd === undefined ? {} : { actualCostUsd: result.cost.actualUsd }),
-    quotaUsed: result.quota.used,
+    quotaUsed: healthCheckQuotaUnits + result.quota.used,
     limitations: [
       ...(health.message ? [health.message] : []),
       ...result.limitations,

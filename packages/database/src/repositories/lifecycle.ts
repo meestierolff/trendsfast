@@ -1,4 +1,4 @@
-import { and, count, desc, eq, gte, max, sql, sum } from "drizzle-orm";
+import { and, count, desc, eq, gte, lt, max, sql, sum } from "drizzle-orm";
 
 import {
   createPrefixedId,
@@ -134,6 +134,7 @@ export type AdmitApiScanRequestResult =
   | { status: "CREATED"; request: ScanRequestRecord }
   | { status: "REUSED"; request: ScanRequestRecord }
   | { status: "IDEMPOTENCY_CONFLICT"; request: ScanRequestRecord }
+  | { status: "KEY_INACTIVE" }
   | {
       status: "COST_LIMITED";
       committedCostUsd: number;
@@ -141,6 +142,18 @@ export type AdmitApiScanRequestResult =
       maximumCostUsd: number;
     }
   | { status: "USAGE_LIMITED"; reason: "ENTITLEMENT_INACTIVE" | "ON_DEMAND_MONTHLY_LIMIT" };
+
+export type AdmitPublicScanRequestResult =
+  | { status: "CREATED" | "REUSED"; scanRequestId: string; publicToken: string }
+  | { status: "RATE_LIMITED" }
+  | {
+      status: "GLOBAL_CAPACITY_REACHED" | "GLOBAL_BUDGET_REACHED";
+      admittedCount: number;
+      dailyLimit: number;
+      committedCostUsd: number;
+      projectedCostUsd: number;
+      dailyBudgetUsd: number;
+    };
 
 export type TransitionScanOptions = {
   failureCode?: string;
@@ -354,12 +367,22 @@ export class ScanRepository {
           environment: apiKeys.environment,
           projectId: apiKeys.projectId,
           providerCostLimitUsd: apiKeys.providerCostLimitUsd,
+          status: apiKeys.status,
+          revokedAt: apiKeys.revokedAt,
+          expiresAt: apiKeys.expiresAt,
         })
         .from(apiKeys)
         .where(eq(apiKeys.id, input.apiKeyId))
         .limit(1)
         .for("update");
       if (!apiKey) throw new Error("API scan admission requires an existing API key");
+      if (
+        apiKey.status !== "ACTIVE" ||
+        apiKey.revokedAt !== null ||
+        (apiKey.expiresAt !== null && apiKey.expiresAt <= input.now)
+      ) {
+        return { status: "KEY_INACTIVE" as const };
+      }
       if ((apiKey.projectId ?? undefined) !== input.projectId) {
         throw new Error("API scan admission project does not match the API key");
       }
@@ -529,7 +552,12 @@ export class ScanRepository {
     const evidence = await this.db
       .select()
       .from(evidenceReceipts)
-      .where(eq(evidenceReceipts.nextMoveId, move.id));
+      .where(
+        and(
+          eq(evidenceReceipts.nextMoveId, move.id),
+          eq(evidenceReceipts.moveVersion, move.reviewVersion),
+        ),
+      );
     const [delivery] = await this.db
       .select()
       .from(deliveryTokens)
@@ -558,18 +586,21 @@ export class ScanRepository {
     anonymousSessionHash?: string;
     since: Date;
     dailyLimit: number;
+    globalSince: Date;
+    globalDailyLimit: number;
+    globalDailyBudgetUsd: number;
+    costReservationUsd: number;
     now: Date;
-  }): Promise<
-    | { status: "CREATED" | "REUSED"; scanRequestId: string; publicToken: string }
-    | { status: "RATE_LIMITED" }
-  > {
+  }): Promise<AdmitPublicScanRequestResult> {
     const normalizedUrl = normalizeProductUrl(input.submittedUrl);
     if (normalizedUrl !== input.normalizedUrl) {
       throw new Error("Public scan URL normalization did not match the repository");
     }
     if (
       Number.isNaN(input.since.getTime()) ||
+      Number.isNaN(input.globalSince.getTime()) ||
       Number.isNaN(input.now.getTime()) ||
+      input.globalSince > input.now ||
       input.since > input.now
     ) {
       throw new Error("Public scan admission requires a valid time window");
@@ -577,7 +608,18 @@ export class ScanRepository {
     if (!Number.isSafeInteger(input.dailyLimit) || input.dailyLimit < 1) {
       throw new Error("Public scan admission requires a positive daily limit");
     }
+    if (!Number.isSafeInteger(input.globalDailyLimit) || input.globalDailyLimit < 1) {
+      throw new Error("Public scan admission requires a positive global daily limit");
+    }
+    if (
+      !isFiniteNonnegative(input.globalDailyBudgetUsd) ||
+      !isFiniteNonnegative(input.costReservationUsd)
+    ) {
+      throw new Error("Public scan admission requires finite non-negative cost limits");
+    }
     const dailyLimit = input.dailyLimit;
+    const reservationMicros = toUsdMicros(input.costReservationUsd, "nearest");
+    const globalUntil = new Date(input.globalSince.getTime() + 86_400_000);
 
     return this.db.transaction(async (tx) => {
       const recordSubmission = async (scanRequestId: string, reused: boolean) => {
@@ -589,6 +631,8 @@ export class ScanRepository {
           occurredAt: input.now,
         });
       };
+      const globalLockKey = `trendsfast:public-scan:${input.globalSince.toISOString()}`;
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${globalLockKey}, 0))`);
       await tx.execute(
         sql`SELECT pg_advisory_xact_lock(hashtextextended(${input.requesterFingerprintHash}, 0))`,
       );
@@ -626,6 +670,70 @@ export class ScanRepository {
         };
       }
 
+      const publicReservations = await tx
+        .select({
+          requestId: scanRequests.id,
+          reservationUsd: scanRequests.publicCostReservationUsd,
+        })
+        .from(scanRequests)
+        .where(
+          and(
+            eq(scanRequests.origin, "PUBLIC_FORM"),
+            gte(scanRequests.submittedAt, input.globalSince),
+            lt(scanRequests.submittedAt, globalUntil),
+          ),
+        );
+      const admittedCount = publicReservations.length;
+      const publicRunCosts = await tx
+        .select({
+          requestId: scanRequests.id,
+          committedRunCostUsd: sum(
+            sql`greatest(${scanRuns.estimatedCostUsd}, ${scanRuns.actualCostUsd})`,
+          ),
+        })
+        .from(scanRuns)
+        .innerJoin(scanRequests, eq(scanRuns.scanRequestId, scanRequests.id))
+        .where(
+          and(
+            eq(scanRequests.origin, "PUBLIC_FORM"),
+            gte(scanRequests.submittedAt, input.globalSince),
+            lt(scanRequests.submittedAt, globalUntil),
+          ),
+        )
+        .groupBy(scanRequests.id);
+      const committedByRequest = new Map<string, number>();
+      for (const reservation of publicReservations) {
+        committedByRequest.set(
+          reservation.requestId,
+          toUsdMicros(Number(reservation.reservationUsd), "nearest"),
+        );
+      }
+      for (const runCost of publicRunCosts) {
+        const actualMicros = toUsdMicros(Number(runCost.committedRunCostUsd ?? 0), "nearest");
+        committedByRequest.set(
+          runCost.requestId,
+          Math.max(committedByRequest.get(runCost.requestId) ?? 0, actualMicros),
+        );
+      }
+      const committedMicros = [...committedByRequest.values()].reduce(
+        (total, value) => total + value,
+        0,
+      );
+      const projectedMicros = committedMicros + reservationMicros;
+      const capacity = {
+        admittedCount,
+        dailyLimit: input.globalDailyLimit,
+        committedCostUsd: committedMicros / USD_MICROS,
+        projectedCostUsd: projectedMicros / USD_MICROS,
+        dailyBudgetUsd: input.globalDailyBudgetUsd,
+      };
+      if (admittedCount >= input.globalDailyLimit) {
+        return { status: "GLOBAL_CAPACITY_REACHED" as const, ...capacity };
+      }
+      if (projectedMicros > toUsdMicros(input.globalDailyBudgetUsd, "floor")) {
+        return { status: "GLOBAL_BUDGET_REACHED" as const, ...capacity };
+      }
+
       const [created] = await tx
         .insert(scanRequests)
         .values({
@@ -636,6 +744,7 @@ export class ScanRepository {
           normalizedUrl,
           requestPayloadHash: digestNextMoveRequest({ product_url: input.submittedUrl }),
           requesterFingerprintHash: input.requesterFingerprintHash,
+          publicCostReservationUsd: input.costReservationUsd.toFixed(6),
           submittedAt: input.now,
         })
         .returning();

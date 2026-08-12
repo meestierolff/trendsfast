@@ -8,7 +8,10 @@ import {
   parseBoundedFutureExpiry,
 } from "../../app/api/ops/api-keys/_validation";
 import { ManualEvidenceBodySchema } from "../../app/api/ops/scans/[scanId]/manual-evidence/_validation";
-import { ProviderVerificationBodySchema } from "../../app/api/ops/providers/[provider]/verify/_validation";
+import {
+  ProviderVerificationAttemptIdSchema,
+  ProviderVerificationBodySchema,
+} from "../../app/api/ops/providers/[provider]/verify/_validation";
 
 describe("launch-hardening ops validation", () => {
   it("requires a project, bounded controls, known scopes, and expiry", () => {
@@ -56,5 +59,9 @@ describe("launch-hardening ops validation", () => {
       ProviderVerificationBodySchema.safeParse({ query: "founder distribution", extra: true })
         .success,
     ).toBe(false);
+    expect(
+      ProviderVerificationAttemptIdSchema.safeParse("76bc66fa-b5fc-4f2d-859f-c41101941de6").success,
+    ).toBe(true);
+    expect(ProviderVerificationAttemptIdSchema.safeParse("retry-me").success).toBe(false);
   });
 });

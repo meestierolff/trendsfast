@@ -15,6 +15,7 @@ const OptionalTextSchema = z.preprocess(
   emptyToUndefined,
   z.string().trim().min(1).max(1_000).optional(),
 );
+const OptionalUrlSchema = z.preprocess(emptyToUndefined, z.string().url().max(2_000).optional());
 const BooleanSchema = (defaultValue: boolean) =>
   z.preprocess((value) => {
     if (value === undefined || value === "") return defaultValue;
@@ -24,6 +25,8 @@ const BooleanSchema = (defaultValue: boolean) =>
     }
     return value;
   }, z.boolean());
+
+const ExactYesSchema = z.preprocess(emptyToUndefined, z.literal("YES").optional());
 
 const OptionalPriceSchema = z.preprocess((value) => {
   const normalized = emptyToUndefined(value);
@@ -57,16 +60,48 @@ export const EnvironmentSchema = z
     APP_URL: z.string().url().default("http://localhost:3000"),
     PUBLIC_SCAN_PROCESSING: z.enum(["inline", "manual"]).default("inline"),
     PUBLIC_SCAN_DAILY_LIMIT: NumberSchema({
+      defaultValue: 1,
+      min: 1,
+      max: 10_000,
+      integer: true,
+    }),
+    PUBLIC_SCAN_GLOBAL_DAILY_LIMIT: NumberSchema({
       defaultValue: 20,
       min: 1,
       max: 10_000,
       integer: true,
     }),
+    PUBLIC_SCAN_GLOBAL_DAILY_BUDGET_USD: NumberSchema({
+      defaultValue: 5,
+      min: 0.01,
+      max: 100_000,
+    }),
+    API_CREATE_RATE_LIMIT_PER_HOUR: NumberSchema({
+      defaultValue: 20,
+      min: 1,
+      max: 10_000,
+      integer: true,
+    }),
+    API_STATUS_RATE_LIMIT_PER_HOUR: NumberSchema({
+      defaultValue: 300,
+      min: 1,
+      max: 100_000,
+      integer: true,
+    }),
+    API_AUTH_FAILURE_LIMIT_PER_HOUR: NumberSchema({
+      defaultValue: 20,
+      min: 1,
+      max: 10_000,
+      integer: true,
+    }),
+    API_PROVIDER_COST_LIMIT_USD_PER_HOUR: OptionalPriceSchema,
 
     PROVIDER_CREDENTIAL_MODE: ProviderCredentialModeSchema.default("fixture"),
+    BYOK_ACCEPT_CONSERVATIVE_COST_ESTIMATES: ExactYesSchema,
 
     XAI_API_KEY: OptionalSecretSchema,
     XAI_MODEL: OptionalTextSchema,
+    XAI_ESTIMATED_COST_USD_PER_SEARCH: OptionalPriceSchema,
     XAI_MAX_TOOL_CALLS_PER_SCAN: NumberSchema({
       defaultValue: 2,
       min: 0,
@@ -77,8 +112,10 @@ export const EnvironmentSchema = z
     DATAFORSEO_LOGIN: OptionalTextSchema,
     DATAFORSEO_PASSWORD: OptionalSecretSchema,
     DATAFORSEO_GOOGLE_TRENDS_MODE: z.enum(["live", "standard"]).default("live"),
+    DATAFORSEO_ESTIMATED_COST_USD_PER_TASK: OptionalPriceSchema,
 
     TAVILY_API_KEY: OptionalSecretSchema,
+    TAVILY_ESTIMATED_COST_USD_PER_CREDIT: OptionalPriceSchema,
     TAVILY_MAX_CREDITS_PER_SCAN: NumberSchema({
       defaultValue: 2,
       min: 0,
@@ -87,6 +124,7 @@ export const EnvironmentSchema = z
     }),
 
     YOUTUBE_API_KEY: OptionalSecretSchema,
+    YOUTUBE_INTERNAL_QUOTA_VALUE_USD: OptionalPriceSchema,
     YOUTUBE_MAX_SEARCHES_PER_SCAN: NumberSchema({
       defaultValue: 2,
       min: 0,
@@ -102,11 +140,7 @@ export const EnvironmentSchema = z
     LLM_INPUT_PRICE_USD_PER_MILLION_TOKENS: OptionalPriceSchema,
     LLM_OUTPUT_PRICE_USD_PER_MILLION_TOKENS: OptionalPriceSchema,
 
-    MAX_PROVIDER_COST_USD_PER_SCAN: NumberSchema({
-      defaultValue: 0.25,
-      min: 0.01,
-      max: 10,
-    }),
+    MAX_PROVIDER_COST_USD_PER_SCAN: OptionalPriceSchema,
     MAX_SCAN_DURATION_SECONDS: NumberSchema({
       defaultValue: 240,
       min: 30,
@@ -133,9 +167,12 @@ export const EnvironmentSchema = z
     FOUNDING_100_ENABLED: BooleanSchema(false),
     CLOUD_TRIAL_ENABLED: BooleanSchema(false),
     STRIPE_MODE: z.enum(["test", "live"]).default("test"),
+    I_UNDERSTAND_LIVE_STRIPE: ExactYesSchema,
+    STRIPE_LIVE_ENABLEMENT_APPROVED: ExactYesSchema,
     STRIPE_SECRET_KEY: OptionalSecretSchema,
     STRIPE_WEBHOOK_SECRET: OptionalSecretSchema,
     STRIPE_FOUNDER_CLOUD_PRICE_ID: OptionalTextSchema,
+    STRIPE_PORTAL_LOGIN_URL: OptionalUrlSchema,
     CRON_SECRET: OptionalSecretSchema,
     MONITORING_CRON_BATCH_SIZE: NumberSchema({
       defaultValue: 1,
@@ -182,18 +219,55 @@ export const EnvironmentSchema = z
     }
 
     if (env.PROVIDER_CREDENTIAL_MODE !== "fixture") {
-      if (env.LLM_INPUT_PRICE_USD_PER_MILLION_TOKENS === undefined) {
+      const acceptsByokSamples =
+        env.PROVIDER_CREDENTIAL_MODE === "byok" &&
+        env.BYOK_ACCEPT_CONSERVATIVE_COST_ESTIMATES === "YES";
+      const requirePrice = (field: keyof typeof env, configured: boolean, message: string) => {
+        if (configured && env[field] === undefined && !acceptsByokSamples) {
+          context.addIssue({ code: "custom", path: [field], message });
+        }
+      };
+      const requirePositivePrice = (
+        field: keyof typeof env,
+        configured: boolean,
+        message: string,
+      ) => {
+        requirePrice(field, configured, message);
+        if (configured && typeof env[field] === "number" && env[field] <= 0) {
+          context.addIssue({
+            code: "custom",
+            path: [field],
+            message: `${message}; the configured value must be greater than zero`,
+          });
+        }
+      };
+
+      if (env.LLM_INPUT_PRICE_USD_PER_MILLION_TOKENS === undefined && !acceptsByokSamples) {
         context.addIssue({
           code: "custom",
           path: ["LLM_INPUT_PRICE_USD_PER_MILLION_TOKENS"],
           message: "Live credential modes require explicit model input pricing",
         });
       }
-      if (env.LLM_OUTPUT_PRICE_USD_PER_MILLION_TOKENS === undefined) {
+      if ((env.LLM_INPUT_PRICE_USD_PER_MILLION_TOKENS ?? 1) <= 0) {
+        context.addIssue({
+          code: "custom",
+          path: ["LLM_INPUT_PRICE_USD_PER_MILLION_TOKENS"],
+          message: "Live model input pricing must be greater than zero",
+        });
+      }
+      if (env.LLM_OUTPUT_PRICE_USD_PER_MILLION_TOKENS === undefined && !acceptsByokSamples) {
         context.addIssue({
           code: "custom",
           path: ["LLM_OUTPUT_PRICE_USD_PER_MILLION_TOKENS"],
           message: "Live credential modes require explicit model output pricing",
+        });
+      }
+      if ((env.LLM_OUTPUT_PRICE_USD_PER_MILLION_TOKENS ?? 1) <= 0) {
+        context.addIssue({
+          code: "custom",
+          path: ["LLM_OUTPUT_PRICE_USD_PER_MILLION_TOKENS"],
+          message: "Live model output pricing must be greater than zero",
         });
       }
       if (!env.DATAFORSEO_LOGIN || !env.DATAFORSEO_PASSWORD) {
@@ -201,6 +275,56 @@ export const EnvironmentSchema = z
           code: "custom",
           path: ["DATAFORSEO_LOGIN"],
           message: "Live credential modes require Google Trends credentials",
+        });
+      }
+      requirePositivePrice(
+        "DATAFORSEO_ESTIMATED_COST_USD_PER_TASK",
+        Boolean(env.DATAFORSEO_LOGIN && env.DATAFORSEO_PASSWORD),
+        "Live Google Trends coverage requires an explicit DataForSEO task estimate",
+      );
+      requirePositivePrice(
+        "XAI_ESTIMATED_COST_USD_PER_SEARCH",
+        Boolean(env.XAI_API_KEY && env.XAI_MODEL && env.XAI_MAX_TOOL_CALLS_PER_SCAN > 0),
+        "Configured X Search requires an explicit per-search estimate",
+      );
+      requirePositivePrice(
+        "TAVILY_ESTIMATED_COST_USD_PER_CREDIT",
+        Boolean(env.TAVILY_API_KEY && env.TAVILY_MAX_CREDITS_PER_SCAN > 0),
+        "Configured Tavily coverage requires an explicit per-credit estimate",
+      );
+      requirePrice(
+        "YOUTUBE_INTERNAL_QUOTA_VALUE_USD",
+        Boolean(env.YOUTUBE_API_KEY && env.YOUTUBE_MAX_SEARCHES_PER_SCAN > 0),
+        "Configured YouTube coverage requires an explicit internal quota value",
+      );
+      requirePrice(
+        "MAX_PROVIDER_COST_USD_PER_SCAN",
+        true,
+        "Live credential modes require an explicit per-scan provider cost ceiling",
+      );
+      requirePrice(
+        "API_PROVIDER_COST_LIMIT_USD_PER_HOUR",
+        true,
+        "Live API access requires an explicit rolling-hour provider cost limit",
+      );
+      if (
+        env.MAX_PROVIDER_COST_USD_PER_SCAN !== undefined &&
+        env.MAX_PROVIDER_COST_USD_PER_SCAN <= 0
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["MAX_PROVIDER_COST_USD_PER_SCAN"],
+          message: "The live per-scan provider cost ceiling must be greater than zero",
+        });
+      }
+      if (
+        env.API_PROVIDER_COST_LIMIT_USD_PER_HOUR !== undefined &&
+        env.API_PROVIDER_COST_LIMIT_USD_PER_HOUR <= 0
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["API_PROVIDER_COST_LIMIT_USD_PER_HOUR"],
+          message: "The live API rolling-hour provider cost limit must be greater than zero",
         });
       }
       const hasViableXSearch = Boolean(
@@ -271,6 +395,20 @@ export const EnvironmentSchema = z
     }
 
     if (env.BILLING_ENABLED) {
+      if (env.STRIPE_MODE === "test" && env.PROVIDER_CREDENTIAL_MODE !== "fixture") {
+        context.addIssue({
+          code: "custom",
+          path: ["PROVIDER_CREDENTIAL_MODE"],
+          message: "Stripe sandbox billing is fixture-only",
+        });
+      }
+      if (env.STRIPE_MODE === "live" && env.PROVIDER_CREDENTIAL_MODE === "fixture") {
+        context.addIssue({
+          code: "custom",
+          path: ["PROVIDER_CREDENTIAL_MODE"],
+          message: "Live Stripe billing requires a non-fixture provider mode",
+        });
+      }
       if (!env.STRIPE_SECRET_KEY || !env.STRIPE_WEBHOOK_SECRET) {
         context.addIssue({
           code: "custom",
@@ -285,11 +423,47 @@ export const EnvironmentSchema = z
           message: "Billing requires an explicit Stripe price_ ID",
         });
       }
+      if (!env.STRIPE_PORTAL_LOGIN_URL) {
+        context.addIssue({
+          code: "custom",
+          path: ["STRIPE_PORTAL_LOGIN_URL"],
+          message: "Billing requires the Stripe-hosted no-code Customer Portal login URL",
+        });
+      }
       if (env.STRIPE_MODE === "live" && env.NODE_ENV !== "production") {
         context.addIssue({
           code: "custom",
           path: ["STRIPE_MODE"],
           message: "Live Stripe mode is accepted only in production",
+        });
+      }
+      if (
+        env.STRIPE_MODE === "live" &&
+        (env.I_UNDERSTAND_LIVE_STRIPE !== "YES" || env.STRIPE_LIVE_ENABLEMENT_APPROVED !== "YES")
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["STRIPE_LIVE_ENABLEMENT_APPROVED"],
+          message: "Live Stripe billing requires both exact live acknowledgements",
+        });
+      }
+    }
+
+    if (env.STRIPE_PORTAL_LOGIN_URL) {
+      const portal = new URL(env.STRIPE_PORTAL_LOGIN_URL);
+      if (
+        portal.origin !== "https://billing.stripe.com" ||
+        !portal.pathname.startsWith("/p/login/") ||
+        portal.pathname === "/p/login/" ||
+        portal.username ||
+        portal.password ||
+        portal.search ||
+        portal.hash
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["STRIPE_PORTAL_LOGIN_URL"],
+          message: "Customer Portal login must be an exact Stripe-hosted /p/login URL",
         });
       }
     }
@@ -388,6 +562,120 @@ export const EnvironmentSchema = z
   });
 
 export type Environment = z.infer<typeof EnvironmentSchema>;
+
+/**
+ * Public, deliberately conservative examples for self-hosters who explicitly
+ * acknowledge that they must verify the values against their own invoices.
+ * They are not TrendsFast Cloud prices, margins, or production cost data.
+ */
+export const BYOK_CONSERVATIVE_COST_SAMPLES = {
+  xaiSearchUsd: 0.1,
+  dataForSeoTaskUsd: 0.05,
+  tavilyCreditUsd: 0.05,
+  youtubeQuotaUnitUsd: 0.01,
+  llmInputUsdPerMillionTokens: 5,
+  llmOutputUsdPerMillionTokens: 20,
+  maximumProviderCostUsdPerScan: 1,
+  apiProviderCostLimitUsdPerHour: 5,
+} as const;
+
+export type ResolvedProviderCosts = {
+  xaiSearchUsd: number;
+  dataForSeoTaskUsd: number;
+  tavilyCreditUsd: number;
+  youtubeQuotaUnitUsd: number;
+  llmInputUsdPerMillionTokens: number;
+  llmOutputUsdPerMillionTokens: number;
+  maximumProviderCostUsdPerScan: number;
+  apiProviderCostLimitUsdPerHour: number;
+};
+
+export function resolveProviderCosts(env: Environment): ResolvedProviderCosts {
+  if (env.PROVIDER_CREDENTIAL_MODE === "fixture") {
+    return {
+      xaiSearchUsd: 0,
+      dataForSeoTaskUsd: 0,
+      tavilyCreditUsd: 0,
+      youtubeQuotaUnitUsd: 0,
+      llmInputUsdPerMillionTokens: 0,
+      llmOutputUsdPerMillionTokens: 0,
+      maximumProviderCostUsdPerScan: 0,
+      apiProviderCostLimitUsdPerHour: 0,
+    };
+  }
+  const samplesAccepted =
+    env.PROVIDER_CREDENTIAL_MODE === "byok" &&
+    env.BYOK_ACCEPT_CONSERVATIVE_COST_ESTIMATES === "YES";
+  const resolve = (value: number | undefined, sample: number, label: string): number => {
+    if (value !== undefined) return value;
+    if (samplesAccepted) return sample;
+    throw new Error(`${label} is required by the validated live cost policy`);
+  };
+  return {
+    xaiSearchUsd: env.XAI_API_KEY
+      ? resolve(
+          env.XAI_ESTIMATED_COST_USD_PER_SEARCH,
+          BYOK_CONSERVATIVE_COST_SAMPLES.xaiSearchUsd,
+          "X Search cost",
+        )
+      : 0,
+    dataForSeoTaskUsd: resolve(
+      env.DATAFORSEO_ESTIMATED_COST_USD_PER_TASK,
+      BYOK_CONSERVATIVE_COST_SAMPLES.dataForSeoTaskUsd,
+      "DataForSEO task cost",
+    ),
+    tavilyCreditUsd: env.TAVILY_API_KEY
+      ? resolve(
+          env.TAVILY_ESTIMATED_COST_USD_PER_CREDIT,
+          BYOK_CONSERVATIVE_COST_SAMPLES.tavilyCreditUsd,
+          "Tavily credit cost",
+        )
+      : 0,
+    youtubeQuotaUnitUsd: env.YOUTUBE_API_KEY
+      ? resolve(
+          env.YOUTUBE_INTERNAL_QUOTA_VALUE_USD,
+          BYOK_CONSERVATIVE_COST_SAMPLES.youtubeQuotaUnitUsd,
+          "YouTube quota value",
+        )
+      : 0,
+    llmInputUsdPerMillionTokens: resolve(
+      env.LLM_INPUT_PRICE_USD_PER_MILLION_TOKENS,
+      BYOK_CONSERVATIVE_COST_SAMPLES.llmInputUsdPerMillionTokens,
+      "Model input price",
+    ),
+    llmOutputUsdPerMillionTokens: resolve(
+      env.LLM_OUTPUT_PRICE_USD_PER_MILLION_TOKENS,
+      BYOK_CONSERVATIVE_COST_SAMPLES.llmOutputUsdPerMillionTokens,
+      "Model output price",
+    ),
+    maximumProviderCostUsdPerScan: resolve(
+      env.MAX_PROVIDER_COST_USD_PER_SCAN,
+      BYOK_CONSERVATIVE_COST_SAMPLES.maximumProviderCostUsdPerScan,
+      "Per-scan provider cost ceiling",
+    ),
+    apiProviderCostLimitUsdPerHour: resolve(
+      env.API_PROVIDER_COST_LIMIT_USD_PER_HOUR,
+      BYOK_CONSERVATIVE_COST_SAMPLES.apiProviderCostLimitUsdPerHour,
+      "API rolling-hour provider cost limit",
+    ),
+  };
+}
+
+export function resolveApiProviderCostLimitUsdPerHour(env: Environment): number {
+  return resolveProviderCosts(env).apiProviderCostLimitUsdPerHour;
+}
+
+export function resolvedProviderCostEnvironment(
+  env: Environment,
+): Readonly<Record<string, string>> {
+  const costs = resolveProviderCosts(env);
+  return {
+    XAI_ESTIMATED_COST_USD_PER_SEARCH: String(costs.xaiSearchUsd),
+    DATAFORSEO_ESTIMATED_COST_USD_PER_TASK: String(costs.dataForSeoTaskUsd),
+    TAVILY_ESTIMATED_COST_USD_PER_CREDIT: String(costs.tavilyCreditUsd),
+    YOUTUBE_INTERNAL_QUOTA_VALUE_USD: String(costs.youtubeQuotaUnitUsd),
+  };
+}
 
 export class EnvironmentValidationError extends Error {
   readonly issues: ReadonlyArray<{ path: string; message: string }>;

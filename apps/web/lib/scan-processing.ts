@@ -1,6 +1,11 @@
 import "server-only";
 
-import { loadEnv, type Environment } from "@trendsfast/config";
+import {
+  loadEnv,
+  resolveProviderCosts,
+  resolvedProviderCostEnvironment,
+  type Environment,
+} from "@trendsfast/config";
 import { createLogger } from "@trendsfast/observability";
 import {
   buildQueryPlan,
@@ -43,11 +48,9 @@ function boundedProviderRegistry(env: Environment) {
 }
 
 function modelPricing(env: Environment, provider: "xai" | "openai") {
-  const inputUsdPerMillionTokens = env.LLM_INPUT_PRICE_USD_PER_MILLION_TOKENS;
-  const outputUsdPerMillionTokens = env.LLM_OUTPUT_PRICE_USD_PER_MILLION_TOKENS;
-  if (inputUsdPerMillionTokens === undefined || outputUsdPerMillionTokens === undefined) {
-    throw new Error("Live model input and output pricing is not fully configured");
-  }
+  const costs = resolveProviderCosts(env);
+  const inputUsdPerMillionTokens = costs.llmInputUsdPerMillionTokens;
+  const outputUsdPerMillionTokens = costs.llmOutputUsdPerMillionTokens;
   return { provider, inputUsdPerMillionTokens, outputUsdPerMillionTokens };
 }
 
@@ -89,7 +92,7 @@ export async function runPersistedScan(publicId: string) {
   const client = fixture ? null : createConfiguredModelClient(env);
   const providerContext = createProviderContext({
     credentialMode: env.PROVIDER_CREDENTIAL_MODE,
-    env: process.env,
+    env: { ...process.env, ...resolvedProviderCostEnvironment(env) },
   });
   const result = await processScan(publicId, {
     store: createDatabaseProcessingStore(repositories),
@@ -102,7 +105,7 @@ export async function runPersistedScan(publicId: string) {
       context: providerContext,
     }),
     decide: fixture ? decideDeterministically : createModelAssistedDecision(client!),
-    maxCostUsd: env.MAX_PROVIDER_COST_USD_PER_SCAN,
+    maxCostUsd: resolveProviderCosts(env).maximumProviderCostUsdPerScan,
     maxDurationMs: env.MAX_SCAN_DURATION_SECONDS * 1_000,
   }).catch((error) => {
     logger.error("scan_processing_failed", error);

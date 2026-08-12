@@ -154,8 +154,8 @@ importers:
         specifier: workspace:*
         version: link:../database
       stripe:
-        specifier: ^18.0.0
-        version: 18.5.0(@types/node@24.13.3)
+        specifier: ^22.4.0
+        version: 22.4.0(@types/node@24.13.3)
     devDependencies:
       typescript:
         specifier: ^5.9.0
@@ -4643,13 +4643,6 @@ packages:
       }
     engines: { node: ">=6" }
 
-  qs@6.15.3:
-    resolution:
-      {
-        integrity: sha512-O9gl3zCl5h5blw1KGUzQKhA5oUXSl8rwUIM5o0S3nCXMliSvy5Dzx7/DJcI+SwgICv+IneSZwhBh1oSyEHA71A==,
-      }
-    engines: { node: ">=0.6" }
-
   queue-microtask@1.2.3:
     resolution:
       {
@@ -5038,14 +5031,14 @@ packages:
       }
     engines: { node: ">=8" }
 
-  stripe@18.5.0:
+  stripe@22.4.0:
     resolution:
       {
-        integrity: sha512-Hp+wFiEQtCB0LlNgcFh5uVyKznpDjzyUZ+CNVEf+I3fhlYvh7rZruIg+jOwzJRCpy0ZTPMjlzm7J2/M2N6d+DA==,
+        integrity: sha512-LVJ+tcSYeqOSnXr3i+Kz2tZ7y0crLLdP2uwD/4wccrmEVyn0g/Heo0pF7as7rxS/sOjJzrb1lxgZY0Y0Dx1pSA==,
       }
-    engines: { node: ">=12.*" }
+    engines: { node: ">=18" }
     peerDependencies:
-      "@types/node": ">=12.x.x"
+      "@types/node": ">=18"
     peerDependenciesMeta:
       "@types/node":
         optional: true
@@ -8240,11 +8233,6 @@ snapshots:
 
   punycode@2.3.1: {}
 
-  qs@6.15.3:
-    dependencies:
-      es-define-property: 1.0.1
-      side-channel: 1.1.1
-
   queue-microtask@1.2.3: {}
 
   react-dom@19.2.8(react@19.2.8):
@@ -8581,9 +8569,7 @@ snapshots:
 
   strip-json-comments@3.1.1: {}
 
-  stripe@18.5.0(@types/node@24.13.3):
-    dependencies:
-      qs: 6.15.3
+  stripe@22.4.0(@types/node@24.13.3):
     optionalDependencies:
       "@types/node": 24.13.3
 

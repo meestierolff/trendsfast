@@ -17,6 +17,12 @@ function repository(overrides: Partial<PublicScanRepository> = {}): PublicScanRe
   };
 }
 
+const globalPolicy = {
+  globalDailyLimit: 20,
+  globalDailyBudgetUsd: 5,
+  costReservationUsd: 0.25,
+} as const;
+
 describe("public scan acceptance", () => {
   it("fails closed for fixture mode on every non-loopback public origin", () => {
     expect(publicScanCredentialModeAvailable("fixture", "https://trendsfast.com")).toBe(false);
@@ -46,6 +52,7 @@ describe("public scan acceptance", () => {
         fingerprintPepper: "pepper-pepper-pepper-pepper-pepper",
         anonymousSessionHash: "a".repeat(64),
         dailyLimit: 20,
+        ...globalPolicy,
       },
     );
     expect(accepted.token).toMatch(/^scan_[A-Za-z0-9_-]{43}$/);
@@ -70,7 +77,12 @@ describe("public scan acceptance", () => {
     });
     const accepted = await acceptPublicScan(
       { productUrl: "https://example.com", address: "203.0.113.10" },
-      { repository: repo, fingerprintPepper: "pepper-pepper-pepper-pepper-pepper", dailyLimit: 20 },
+      {
+        repository: repo,
+        fingerprintPepper: "pepper-pepper-pepper-pepper-pepper",
+        dailyLimit: 20,
+        ...globalPolicy,
+      },
     );
     expect(accepted.reused).toBe(true);
   });
@@ -83,6 +95,7 @@ describe("public scan acceptance", () => {
           repository: repository(),
           fingerprintPepper: "pepper-pepper-pepper-pepper-pepper",
           dailyLimit: 20,
+          ...globalPolicy,
         },
       ),
     ).rejects.toMatchObject({ code: "ABUSE_REJECTED" });
@@ -96,8 +109,34 @@ describe("public scan acceptance", () => {
           }),
           fingerprintPepper: "pepper-pepper-pepper-pepper-pepper",
           dailyLimit: 20,
+          ...globalPolicy,
         },
       ),
     ).rejects.toBeInstanceOf(PublicScanError);
   });
+
+  it.each(["GLOBAL_CAPACITY_REACHED", "GLOBAL_BUDGET_REACHED"] as const)(
+    "returns the stable founder-capacity error for %s",
+    async (status) => {
+      await expect(
+        acceptPublicScan(
+          { productUrl: "https://example.com", address: "203.0.113.10" },
+          {
+            repository: repository({
+              admitPublicRequest: vi.fn(async () => ({ status })),
+            }),
+            fingerprintPepper: "pepper-pepper-pepper-pepper-pepper",
+            dailyLimit: 1,
+            now: new Date("2026-08-12T12:00:00.000Z"),
+            ...globalPolicy,
+          },
+        ),
+      ).rejects.toMatchObject({
+        code: "TODAYS_FOUNDER_REVIEW_CAPACITY_REACHED",
+        message: "Today's free founder-reviewed scan slots are full.",
+        status: 429,
+        retryAfterSeconds: 43_200,
+      });
+    },
+  );
 });

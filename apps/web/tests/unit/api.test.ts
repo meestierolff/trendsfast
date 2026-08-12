@@ -27,11 +27,13 @@ function dependencies(overrides: Partial<V1ApiDependencies> = {}): V1ApiDependen
       id: "move_test",
       status: "QUEUED" as const,
       status_url: "/v1/next-moves/move_test",
+      poll_after_seconds: 30 as const,
     })),
     getStatus: vi.fn(async () => ({
       id: "move_test",
       status: "RUNNING" as const,
       status_url: "/v1/next-moves/move_test",
+      poll_after_seconds: 30 as const,
     })),
     ...overrides,
   };
@@ -173,6 +175,22 @@ describe("v1 Next Move API", () => {
     expect(authenticate).not.toHaveBeenCalled();
   });
 
+  it("returns Retry-After when the durable failed-authentication budget is exhausted", async () => {
+    const response = await createV1Api(
+      dependencies({
+        authenticate: vi.fn(async () => null),
+        recordAuthenticationFailure: vi.fn(async () => false),
+      }),
+    ).request("/v1/next-moves/move_test", {
+      headers: {
+        authorization: "Bearer tf_test_unknown1.abcdefghijklmnopqrstuvwxyz123456",
+        "x-forwarded-for": "203.0.113.99",
+      },
+    });
+    expect(response.status).toBe(429);
+    expect(response.headers.get("retry-after")).toBe("3600");
+  });
+
   it.each([
     { label: "missing", contentLength: undefined },
     { label: "understated", contentLength: "1" },
@@ -268,6 +286,7 @@ describe("v1 Next Move API", () => {
       },
     );
     expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ poll_after_seconds: 30 });
   });
 
   it("requires a UUID idempotency key", async () => {
@@ -295,6 +314,28 @@ describe("v1 Next Move API", () => {
     });
     expect(response.status).toBe(202);
     expect(response.headers.get("location")).toBe("/v1/next-moves/move_test");
+    expect(await response.json()).toMatchObject({ poll_after_seconds: 30 });
+  });
+
+  it("adds Retry-After to service-level 429 responses", async () => {
+    const response = await createV1Api(
+      dependencies({
+        createOrReuse: vi.fn(async () => {
+          const { ApiServiceError } = await import("../../lib/v1-api");
+          throw new ApiServiceError("RATE_LIMITED", "Create limit reached.");
+        }),
+      }),
+    ).request("/v1/next-move", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${TEST_KEY}`,
+        "idempotency-key": crypto.randomUUID(),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ product_url: "https://example.com" }),
+    });
+    expect(response.status).toBe(429);
+    expect(response.headers.get("retry-after")).toBe("3600");
   });
 
   it("does not accept unknown request fields", async () => {

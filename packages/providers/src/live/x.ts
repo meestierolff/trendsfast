@@ -8,7 +8,7 @@ import {
   boundedIntegerEnvironment,
   elapsedMilliseconds,
   fetchJson,
-  numericEnvironment,
+  requiredNonnegativeEnvironment,
   providerResult,
   unconfiguredResult,
 } from "./common";
@@ -30,9 +30,12 @@ export function createXAdapter(): ProviderAdapter {
         maximum,
         request.queries.filter((query) => query.provider === "x").length,
       );
-      const perCall = context
-        ? numericEnvironment(context, "XAI_ESTIMATED_COST_USD_PER_SEARCH", 0.03)
-        : 0.03;
+      if (calls > 0 && !context) throw new Error("X Search estimation requires runtime costs");
+      const configured = Boolean(context?.env.XAI_API_KEY?.trim() && context.env.XAI_MODEL?.trim());
+      const perCall =
+        context && calls > 0 && configured
+          ? requiredNonnegativeEnvironment(context, "XAI_ESTIMATED_COST_USD_PER_SEARCH")
+          : 0;
       return { calls, estimatedUsd: calls * perCall, quotaUnits: calls };
     },
     collect: async (request, context) => {
@@ -45,20 +48,14 @@ export function createXAdapter(): ProviderAdapter {
       const queries = request.queries
         .filter((query) => query.provider === "x")
         .slice(0, maximumSearches);
-      const perCallEstimate = numericEnvironment(
+      if (!hasRequiredCredentials(metadata.requiredEnvironmentVariables, context)) {
+        return unconfiguredResult("x", metadata.requiredEnvironmentVariables, context);
+      }
+      const perCallEstimate = requiredNonnegativeEnvironment(
         context,
         "XAI_ESTIMATED_COST_USD_PER_SEARCH",
-        0.03,
       );
       const estimatedUsd = queries.length * perCallEstimate;
-      if (!hasRequiredCredentials(metadata.requiredEnvironmentVariables, context)) {
-        return unconfiguredResult(
-          "x",
-          metadata.requiredEnvironmentVariables,
-          context,
-          estimatedUsd,
-        );
-      }
       const startedAt = context.now().toISOString();
       const signals: CanonicalSignal[] = [];
       let actualCostUsd = 0;

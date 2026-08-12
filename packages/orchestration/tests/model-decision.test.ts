@@ -82,7 +82,7 @@ describe("model-assisted decision", () => {
     expect(result.move.priority).toBe(0);
     expect(result.evidenceSignalIds).toEqual(["sig_hn"]);
     expect(result.independentSourceCount).toBe(1);
-    expect(result.promptVersion).toBe("deterministic-fixture-v1");
+    expect(result.promptVersion).toBe("deterministic-ranking-v2");
     expect(result.limitations).toContain(
       "Model synthesis was unavailable or failed validation; deterministic output was retained.",
     );
@@ -105,7 +105,7 @@ describe("model-assisted decision", () => {
     expect(result.move.action).toBe("WAIT");
     expect(result.evidenceSignalIds).toEqual(["sig_hn"]);
     expect(result.independentSourceCount).toBe(1);
-    expect(result.promptVersion).toBe("deterministic-fixture-v1");
+    expect(result.promptVersion).toBe("deterministic-ranking-v2");
   });
 
   it("rejects an actionable synthesis that drops deterministic evidence", async () => {
@@ -133,7 +133,7 @@ describe("model-assisted decision", () => {
     expect(result.move.action).toBe("PUBLISH");
     expect(result.evidenceSignalIds).toEqual(["sig_gh", "sig_hn"]);
     expect(result.independentSourceCount).toBe(2);
-    expect(result.promptVersion).toBe("deterministic-fixture-v1");
+    expect(result.promptVersion).toBe("deterministic-ranking-v2");
   });
 
   it("accepts prose refinements but keeps deterministic categorical fields", async () => {

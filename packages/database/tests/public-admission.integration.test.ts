@@ -18,6 +18,13 @@ databaseDescribe("atomic public scan admission", () => {
   const fingerprint = `admission-${randomUUID()}`;
   const now = new Date();
   const since = new Date(now.getTime() - 86_400_000);
+  const globalSince = new Date(now.getTime() - 86_400_000);
+  const globalPolicy = {
+    globalSince,
+    globalDailyLimit: 10_000,
+    globalDailyBudgetUsd: 10_000,
+    costReservationUsd: 0,
+  } as const;
   const sessionHash = randomUUID().replaceAll("-", "").repeat(2);
   const limitSessionHash = randomUUID().replaceAll("-", "").repeat(2);
 
@@ -44,6 +51,7 @@ databaseDescribe("atomic public scan admission", () => {
           anonymousSessionHash: sessionHash,
           since,
           dailyLimit: 20,
+          ...globalPolicy,
           now,
         }),
       ),
@@ -76,6 +84,7 @@ databaseDescribe("atomic public scan admission", () => {
             anonymousSessionHash: limitSessionHash,
             since,
             dailyLimit: 2,
+            ...globalPolicy,
             now,
           });
         }),
@@ -109,6 +118,7 @@ databaseDescribe("atomic public scan admission", () => {
             anonymousSessionHash: replaySessionHash,
             since,
             dailyLimit: 2,
+            ...globalPolicy,
             now,
           }),
         ),
@@ -127,6 +137,89 @@ databaseDescribe("atomic public scan admission", () => {
       await client.db
         .delete(scanRequests)
         .where(eq(scanRequests.requesterFingerprintHash, replayFingerprint));
+    }
+  });
+
+  it("atomically holds unique submissions to the global count across fingerprints", async () => {
+    const globalNow = new Date("2098-01-02T12:00:00.000Z");
+    const globalStart = new Date("2098-01-02T00:00:00.000Z");
+    const prefix = `global-count-${randomUUID()}`;
+    try {
+      const results = await Promise.all(
+        Array.from({ length: 12 }, (_, index) => {
+          const url = `https://${prefix}-${index}.example/`;
+          return repositories.scans.admitPublicRequest({
+            submittedUrl: url,
+            normalizedUrl: url,
+            requesterFingerprintHash: `${prefix}-${index}`,
+            since: globalStart,
+            dailyLimit: 1,
+            globalSince: globalStart,
+            globalDailyLimit: 4,
+            globalDailyBudgetUsd: 100,
+            costReservationUsd: 1,
+            now: globalNow,
+          });
+        }),
+      );
+      expect(results.filter((result) => result.status === "CREATED")).toHaveLength(4);
+      expect(results.filter((result) => result.status === "GLOBAL_CAPACITY_REACHED")).toHaveLength(
+        8,
+      );
+    } finally {
+      await client.db.delete(scanRequests).where(eq(scanRequests.submittedAt, globalNow));
+    }
+  });
+
+  it("reserves global cost once while duplicate replays reuse admitted work", async () => {
+    const budgetNow = new Date("2098-01-03T12:00:00.000Z");
+    const budgetStart = new Date("2098-01-03T00:00:00.000Z");
+    const prefix = `global-budget-${randomUUID()}`;
+    try {
+      const unique = await Promise.all(
+        Array.from({ length: 8 }, (_, index) => {
+          const url = `https://${prefix}-${index}.example/`;
+          return repositories.scans
+            .admitPublicRequest({
+              submittedUrl: url,
+              normalizedUrl: url,
+              requesterFingerprintHash: `${prefix}-${index}`,
+              since: budgetStart,
+              dailyLimit: 10,
+              globalSince: budgetStart,
+              globalDailyLimit: 20,
+              globalDailyBudgetUsd: 5,
+              costReservationUsd: 2,
+              now: budgetNow,
+            })
+            .then((result) => ({ index, result }));
+        }),
+      );
+      expect(unique.filter(({ result }) => result.status === "CREATED")).toHaveLength(2);
+      expect(unique.filter(({ result }) => result.status === "GLOBAL_BUDGET_REACHED")).toHaveLength(
+        6,
+      );
+
+      const admittedIndex = unique.find(({ result }) => result.status === "CREATED")!.index;
+      const duplicateUrl = `https://${prefix}-${admittedIndex}.example/`;
+      const replay = await repositories.scans.admitPublicRequest({
+        submittedUrl: duplicateUrl,
+        normalizedUrl: duplicateUrl,
+        requesterFingerprintHash: `${prefix}-${admittedIndex}`,
+        since: budgetStart,
+        dailyLimit: 10,
+        globalSince: budgetStart,
+        globalDailyLimit: 2,
+        globalDailyBudgetUsd: 4,
+        costReservationUsd: 2,
+        now: new Date(budgetNow.getTime() + 1_000),
+      });
+      expect(replay.status).toBe("REUSED");
+    } finally {
+      await client.db.delete(scanRequests).where(eq(scanRequests.submittedAt, budgetNow));
+      await client.db
+        .delete(scanRequests)
+        .where(eq(scanRequests.submittedAt, new Date(budgetNow.getTime() + 1_000)));
     }
   });
 });

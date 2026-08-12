@@ -8,7 +8,7 @@ import { hasRequiredCredentials } from "../runtime";
 import {
   elapsedMilliseconds,
   fetchJson,
-  numericEnvironment,
+  requiredNonnegativeEnvironment,
   providerResult,
   unconfiguredResult,
 } from "./common";
@@ -27,13 +27,19 @@ export function createGoogleTrendsAdapter(): ProviderAdapter {
     requestSchema: ProviderRunRequestSchema,
     estimate: (request, context) => {
       const hasQueries = request.queries.some((query) => query.provider === "google_trends");
+      const configured = Boolean(
+        context?.env.DATAFORSEO_LOGIN?.trim() && context.env.DATAFORSEO_PASSWORD?.trim(),
+      );
       return {
         calls: hasQueries ? 1 : 0,
-        estimatedUsd: hasQueries
-          ? context
-            ? numericEnvironment(context, "DATAFORSEO_ESTIMATED_COST_USD_PER_TASK", 0.01)
-            : 0.01
-          : 0,
+        estimatedUsd:
+          hasQueries && configured
+            ? context
+              ? requiredNonnegativeEnvironment(context, "DATAFORSEO_ESTIMATED_COST_USD_PER_TASK")
+              : (() => {
+                  throw new Error("DataForSEO estimation requires runtime costs");
+                })()
+            : 0,
         quotaUnits: hasQueries ? 1 : 0,
       };
     },
@@ -41,18 +47,13 @@ export function createGoogleTrendsAdapter(): ProviderAdapter {
       const queries = request.queries
         .filter((query) => query.provider === "google_trends")
         .slice(0, 5);
+      if (!hasRequiredCredentials(metadata.requiredEnvironmentVariables, context)) {
+        return unconfiguredResult("google_trends", metadata.requiredEnvironmentVariables, context);
+      }
       const estimatedUsd =
         queries.length > 0
-          ? numericEnvironment(context, "DATAFORSEO_ESTIMATED_COST_USD_PER_TASK", 0.01)
+          ? requiredNonnegativeEnvironment(context, "DATAFORSEO_ESTIMATED_COST_USD_PER_TASK")
           : 0;
-      if (!hasRequiredCredentials(metadata.requiredEnvironmentVariables, context)) {
-        return unconfiguredResult(
-          "google_trends",
-          metadata.requiredEnvironmentVariables,
-          context,
-          estimatedUsd,
-        );
-      }
       if (queries.length === 0) {
         const timestamp = context.now().toISOString();
         return providerResult({

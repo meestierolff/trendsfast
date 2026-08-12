@@ -30,6 +30,10 @@ describe("live model cost wiring", () => {
         OPENAI_API_KEY: "openai-key",
         LLM_INPUT_PRICE_USD_PER_MILLION_TOKENS: "0.25",
         LLM_OUTPUT_PRICE_USD_PER_MILLION_TOKENS: "2",
+        DATAFORSEO_ESTIMATED_COST_USD_PER_TASK: "0.05",
+        TAVILY_ESTIMATED_COST_USD_PER_CREDIT: "0.05",
+        MAX_PROVIDER_COST_USD_PER_SCAN: "1",
+        API_PROVIDER_COST_LIMIT_USD_PER_HOUR: "5",
       }),
       { fetch: fetcher },
     );

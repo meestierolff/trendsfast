@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export const ProviderVerificationAttemptIdSchema = z.uuid();
+
 export const ProviderVerificationBodySchema = z
   .object({
     productUrl: z.url().max(2_048).optional(),

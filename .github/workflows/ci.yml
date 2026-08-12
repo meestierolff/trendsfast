@@ -17,6 +17,7 @@ env:
   CI: "true"
   APP_URL: http://127.0.0.1:3000
   DATABASE_URL: postgresql://trendsfast:trendsfast_ci@127.0.0.1:5432/trendsfast
+  DIRECT_DATABASE_URL: postgresql://trendsfast:trendsfast_ci@127.0.0.1:5432/trendsfast
   PROVIDER_CREDENTIAL_MODE: fixture
   PUBLIC_SCAN_PROCESSING: inline
   PUBLIC_SCAN_DAILY_LIMIT: "20"

@@ -84,7 +84,7 @@ function sourceState(result: ProviderRunResult): SourceRunState {
   return "FAILED";
 }
 
-function storedSignal(
+export function storedSignal(
   row: Awaited<ReturnType<Repositories["scanData"]["listSignalsForRun"]>>[number],
 ): Signal {
   const { signal } = row;
@@ -115,7 +115,7 @@ function storedSignal(
   });
 }
 
-function measurementFragment(value: unknown): ProviderMeasurement[] {
+export function measurementFragment(value: unknown): ProviderMeasurement[] {
   const result = StoredProviderFragmentSchema.safeParse(value);
   if (!result.success) return [];
   return result.data.measurements.map((measurement) => ({

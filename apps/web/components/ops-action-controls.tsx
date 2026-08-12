@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
+import { isoToUtcDateTimeValue, utcDateTimeValueToIso } from "../lib/utc-datetime";
+
 type ActionResponse = {
   ok?: boolean;
   error?: string;
@@ -11,6 +13,41 @@ type ActionResponse = {
   created?: boolean;
   expiresAt?: string;
 };
+
+type EditableMove = {
+  reviewVersion: number;
+  proposalStale: boolean;
+  topic: string;
+  angle: string;
+  channel: string;
+  format: string;
+  hook: string;
+  outline: readonly string[];
+  cta: string;
+  whyNow: string;
+  limitations: readonly string[];
+  validUntil: string;
+  confidenceRationale: string;
+};
+
+type EditableContext = {
+  productName: string;
+  audience: string;
+  problem: string;
+  desiredOutcome: string;
+  credibleClaims: readonly string[];
+  credibleTopics: readonly string[];
+  suitableChannels: readonly string[];
+  availableFormats: readonly string[];
+  assumptions: readonly string[];
+};
+
+function lines(form: FormData, name: string): string[] {
+  return String(form.get(name) ?? "")
+    .split("\n")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
 
 function useOpsAction(scanId: string, csrfToken: string) {
   const router = useRouter();
@@ -63,6 +100,7 @@ export function OpsEvidenceControls({
   scanId,
   csrfToken,
   receiptId,
+  reviewVersion,
   canReview,
   verified,
   availability,
@@ -70,6 +108,7 @@ export function OpsEvidenceControls({
   scanId: string;
   csrfToken: string;
   receiptId: string;
+  reviewVersion: number;
   canReview: boolean;
   verified: boolean;
   availability: string;
@@ -81,6 +120,7 @@ export function OpsEvidenceControls({
     const form = new FormData(event.currentTarget);
     await action.post("reject-evidence", {
       evidenceReceiptId: receiptId,
+      expectedVersion: reviewVersion,
       reason: form.get("reason"),
     });
   }
@@ -98,7 +138,12 @@ export function OpsEvidenceControls({
     <div className="ops-evidence-actions">
       <button
         type="button"
-        onClick={() => void action.post("verify-evidence", { evidenceReceiptId: receiptId })}
+        onClick={() =>
+          void action.post("verify-evidence", {
+            evidenceReceiptId: receiptId,
+            expectedVersion: reviewVersion,
+          })
+        }
         disabled={action.pending !== null || (verified && availability === "AVAILABLE")}
       >
         {action.pending === "verify-evidence"
@@ -159,26 +204,21 @@ export function OpsManualEvidenceControl({
     setPending(true);
     setNotice(null);
     try {
-      const response = await fetch(
-        `/api/ops/scans/${encodeURIComponent(scanId)}/manual-evidence`,
-        {
-          method: "POST",
-          credentials: "same-origin",
-          cache: "no-store",
-          headers: { "content-type": "application/json", "x-csrf-token": csrfToken },
-          body: JSON.stringify({
-            url: form.get("url"),
-            sourceLabel: form.get("sourceLabel"),
-            title: form.get("title"),
-            excerpt: String(form.get("excerpt") ?? "").trim() || undefined,
-            ...(publishedAtValue
-              ? { publishedAt: new Date(publishedAtValue).toISOString() }
-              : {}),
-            ...(Object.keys(metrics).length ? { visibleEngagement: metrics } : {}),
-            reason: form.get("reason"),
-          }),
-        },
-      );
+      const response = await fetch(`/api/ops/scans/${encodeURIComponent(scanId)}/manual-evidence`, {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { "content-type": "application/json", "x-csrf-token": csrfToken },
+        body: JSON.stringify({
+          url: form.get("url"),
+          sourceLabel: form.get("sourceLabel"),
+          title: form.get("title"),
+          excerpt: String(form.get("excerpt") ?? "").trim() || undefined,
+          ...(publishedAtValue ? { publishedAt: new Date(publishedAtValue).toISOString() } : {}),
+          ...(Object.keys(metrics).length ? { visibleEngagement: metrics } : {}),
+          reason: form.get("reason"),
+        }),
+      });
       const payload = (await response.json().catch(() => null)) as {
         ok?: boolean;
         error?: string;
@@ -210,8 +250,8 @@ export function OpsManualEvidenceControl({
       <form onSubmit={submit}>
         <p>
           The manual adapter validates a public URL, stores one canonical signal, and binds the
-          supplemental receipt to this exact draft. It never bypasses the evidence ledger or
-          changes the prior synthesis.
+          supplemental receipt to this exact draft. It never bypasses the evidence ledger or changes
+          the prior synthesis.
         </p>
         <label htmlFor="manual-source-label">Source label</label>
         <input
@@ -273,6 +313,8 @@ export function OpsActionControls({
   founderReviewed,
   autoPublish,
   retryEnabled,
+  editableMove,
+  editableContext,
 }: {
   scanId: string;
   csrfToken: string;
@@ -283,6 +325,8 @@ export function OpsActionControls({
   founderReviewed?: boolean;
   autoPublish?: boolean;
   retryEnabled: boolean;
+  editableMove?: EditableMove;
+  editableContext?: EditableContext;
 }) {
   const router = useRouter();
   const action = useOpsAction(scanId, csrfToken);
@@ -292,7 +336,11 @@ export function OpsActionControls({
     expiresAt?: string;
   } | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
-  const canReview = requestState === "REVIEW_REQUIRED" && moveState === "DRAFT" && !autoPublish;
+  const canReview =
+    requestState === "REVIEW_REQUIRED" &&
+    moveState === "DRAFT" &&
+    !autoPublish &&
+    editableMove?.proposalStale !== true;
   const canDeliver =
     requestState === "REVIEW_REQUIRED" &&
     moveState === "APPROVED" &&
@@ -304,16 +352,72 @@ export function OpsActionControls({
 
   async function approve(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!editableMove) return;
     const form = new FormData(event.currentTarget);
-    await action.post("approve", { note: form.get("note") || undefined });
+    await action.post("approve", {
+      expectedVersion: editableMove.reviewVersion,
+      note: form.get("note") || undefined,
+    });
   }
 
   async function convertToWait(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!editableMove) return;
     const form = new FormData(event.currentTarget);
     await action.post("convert-to-wait", {
       reason: form.get("reason"),
+      expectedVersion: editableMove.reviewVersion,
       validForHours: Number(form.get("validForHours")),
+    });
+  }
+
+  async function editAndApprove(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editableMove) return;
+    const form = new FormData(event.currentTarget);
+    await action.post("edit-and-approve", {
+      expectedVersion: editableMove.reviewVersion,
+      reason: form.get("reason"),
+      topic: form.get("topic"),
+      angle: form.get("angle"),
+      channel: form.get("channel"),
+      format: form.get("format"),
+      hook: form.get("hook"),
+      outline: lines(form, "outline"),
+      cta: form.get("cta"),
+      whyNow: form.get("whyNow"),
+      limitations: lines(form, "limitations"),
+      validUntil: utcDateTimeValueToIso(String(form.get("validUntil") ?? "")),
+      confidenceRationale: form.get("confidenceRationale"),
+    });
+  }
+
+  async function correctContext(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editableMove || !editableContext) return;
+    const form = new FormData(event.currentTarget);
+    await action.post("correct-context", {
+      expectedVersion: editableMove.reviewVersion,
+      reason: form.get("reason"),
+      productName: form.get("productName"),
+      audience: form.get("audience"),
+      problem: form.get("problem"),
+      desiredOutcome: form.get("desiredOutcome"),
+      credibleClaims: lines(form, "credibleClaims"),
+      credibleTopics: lines(form, "credibleTopics"),
+      suitableChannels: lines(form, "suitableChannels"),
+      availableFormats: lines(form, "availableFormats"),
+      assumptions: lines(form, "assumptions"),
+    });
+  }
+
+  async function recomputeStored(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editableMove) return;
+    const form = new FormData(event.currentTarget);
+    await action.post("recompute-stored", {
+      expectedVersion: editableMove.reviewVersion,
+      reason: form.get("reason"),
     });
   }
 
@@ -364,6 +468,242 @@ export function OpsActionControls({
       </div>
 
       <div className="ops-action-grid">
+        {canReview && editableMove ? (
+          <details className="ops-fail-control">
+            <summary>Edit recommendation</summary>
+            <form onSubmit={editAndApprove}>
+              <p>
+                Action, evidence, truth class, score, source count, metrics, providers, and cost
+                stay immutable. Saving validates the current version and approves the edited copy.
+              </p>
+              <label htmlFor="edit-topic">Topic</label>
+              <input
+                id="edit-topic"
+                name="topic"
+                defaultValue={editableMove.topic}
+                required
+                maxLength={500}
+              />
+              <label htmlFor="edit-angle">Angle</label>
+              <textarea
+                id="edit-angle"
+                name="angle"
+                defaultValue={editableMove.angle}
+                required
+                maxLength={4_000}
+                rows={3}
+              />
+              <label htmlFor="edit-channel">Channel</label>
+              <input
+                id="edit-channel"
+                name="channel"
+                defaultValue={editableMove.channel}
+                required
+                maxLength={100}
+              />
+              <label htmlFor="edit-format">Format</label>
+              <input
+                id="edit-format"
+                name="format"
+                defaultValue={editableMove.format}
+                required
+                maxLength={100}
+              />
+              <label htmlFor="edit-hook">Hook</label>
+              <textarea
+                id="edit-hook"
+                name="hook"
+                defaultValue={editableMove.hook}
+                required
+                maxLength={4_000}
+                rows={3}
+              />
+              <label htmlFor="edit-outline">Outline · one item per line</label>
+              <textarea
+                id="edit-outline"
+                name="outline"
+                defaultValue={editableMove.outline.join("\n")}
+                required
+                maxLength={12_000}
+                rows={5}
+              />
+              <label htmlFor="edit-cta">CTA</label>
+              <textarea
+                id="edit-cta"
+                name="cta"
+                defaultValue={editableMove.cta}
+                required
+                maxLength={4_000}
+                rows={2}
+              />
+              <label htmlFor="edit-why-now">Why now</label>
+              <textarea
+                id="edit-why-now"
+                name="whyNow"
+                defaultValue={editableMove.whyNow}
+                required
+                maxLength={4_000}
+                rows={3}
+              />
+              <label htmlFor="edit-limitations">Limitations · one per line</label>
+              <textarea
+                id="edit-limitations"
+                name="limitations"
+                defaultValue={editableMove.limitations.join("\n")}
+                maxLength={50_000}
+                rows={4}
+              />
+              <label htmlFor="edit-confidence">Confidence rationale</label>
+              <textarea
+                id="edit-confidence"
+                name="confidenceRationale"
+                defaultValue={editableMove.confidenceRationale}
+                required
+                maxLength={4_000}
+                rows={3}
+              />
+              <label htmlFor="edit-valid-until">Valid until · UTC</label>
+              <input
+                id="edit-valid-until"
+                name="validUntil"
+                type="datetime-local"
+                step="0.001"
+                defaultValue={isoToUtcDateTimeValue(editableMove.validUntil)}
+                required
+              />
+              <label htmlFor="edit-reason">Edit reason</label>
+              <textarea
+                id="edit-reason"
+                name="reason"
+                required
+                minLength={10}
+                maxLength={4_000}
+                rows={3}
+              />
+              <button type="submit" disabled={action.pending !== null}>
+                {action.pending === "edit-and-approve" ? "Validating…" : "Edit and approve"}
+              </button>
+            </form>
+          </details>
+        ) : null}
+
+        {canReview && editableMove && editableContext ? (
+          <details className="ops-fail-control">
+            <summary>Correct context</summary>
+            <form onSubmit={correctContext}>
+              <p>
+                Creates an immutable context version, stales the old proposal, and reranks only
+                stored evidence. No provider call or model synthesis runs; receipts require renewed
+                review.
+              </p>
+              <label htmlFor="context-name">Product name</label>
+              <input
+                id="context-name"
+                name="productName"
+                defaultValue={editableContext.productName}
+                required
+                maxLength={200}
+              />
+              <label htmlFor="context-audience">Audience</label>
+              <textarea
+                id="context-audience"
+                name="audience"
+                defaultValue={editableContext.audience}
+                required
+                maxLength={4_000}
+                rows={3}
+              />
+              <label htmlFor="context-problem">Problem</label>
+              <textarea
+                id="context-problem"
+                name="problem"
+                defaultValue={editableContext.problem}
+                required
+                maxLength={4_000}
+                rows={3}
+              />
+              <label htmlFor="context-outcome">Desired outcome</label>
+              <textarea
+                id="context-outcome"
+                name="desiredOutcome"
+                defaultValue={editableContext.desiredOutcome}
+                required
+                maxLength={4_000}
+                rows={3}
+              />
+              {(
+                [
+                  ["credibleClaims", "Credible claims", editableContext.credibleClaims],
+                  ["credibleTopics", "Credible topics", editableContext.credibleTopics],
+                  ["suitableChannels", "Suitable channels", editableContext.suitableChannels],
+                  ["availableFormats", "Available formats", editableContext.availableFormats],
+                  ["assumptions", "Assumptions", editableContext.assumptions],
+                ] as const
+              ).map(([name, label, values]) => (
+                <label key={name}>
+                  {label} · one per line
+                  <textarea name={name} defaultValue={values.join("\n")} rows={3} />
+                </label>
+              ))}
+              <label htmlFor="context-reason">Correction reason</label>
+              <textarea
+                id="context-reason"
+                name="reason"
+                required
+                minLength={10}
+                maxLength={4_000}
+                rows={3}
+              />
+              <button type="submit" disabled={action.pending !== null}>
+                {action.pending === "correct-context"
+                  ? "Correcting and reranking…"
+                  : "Correct context + recompute"}
+              </button>
+            </form>
+          </details>
+        ) : null}
+
+        {canReview && editableMove ? (
+          <details className="ops-fail-control">
+            <summary>Recompute from stored evidence</summary>
+            <form onSubmit={recomputeStored}>
+              <p>
+                Reruns deterministic ranking and the quality floor only. It makes zero provider
+                calls and requires renewed evidence review.
+              </p>
+              <label htmlFor="recompute-reason">Why recompute</label>
+              <textarea
+                id="recompute-reason"
+                name="reason"
+                required
+                minLength={10}
+                maxLength={4_000}
+                rows={3}
+              />
+              <button type="submit" disabled={action.pending !== null}>
+                {action.pending === "recompute-stored"
+                  ? "Recomputing…"
+                  : "Recompute stored evidence"}
+              </button>
+            </form>
+          </details>
+        ) : null}
+
+        <div className="ops-action-card">
+          <span>DOGFOOD / REDACTED</span>
+          <h3>Export review bundle</h3>
+          <p>
+            Founder-only, no-store exports exclude capabilities, secrets, raw payloads, e-mail, and
+            IP addresses.
+          </p>
+          <a href={`/api/ops/scans/${encodeURIComponent(scanId)}/review-bundle.json`} download>
+            Download JSON
+          </a>
+          <a href={`/api/ops/scans/${encodeURIComponent(scanId)}/review-bundle.md`} download>
+            Download Markdown
+          </a>
+        </div>
+
         {canReview ? (
           <form className="ops-action-card" onSubmit={approve}>
             <span>01 / APPROVE</span>

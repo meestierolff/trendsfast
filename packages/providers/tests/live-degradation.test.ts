@@ -33,7 +33,16 @@ describe("live adapter degradation", () => {
   it("returns honest unavailable results for optional providers with missing credentials", async () => {
     const registry = createLiveProviderRegistry();
     const fetch = vi.fn();
-    const runtime = createProviderContext({ credentialMode: "byok", env: {}, fetch });
+    const runtime = createProviderContext({
+      credentialMode: "byok",
+      env: {
+        DATAFORSEO_ESTIMATED_COST_USD_PER_TASK: "0.05",
+        XAI_ESTIMATED_COST_USD_PER_SEARCH: "0.1",
+        TAVILY_ESTIMATED_COST_USD_PER_CREDIT: "0.05",
+        YOUTUBE_INTERNAL_QUOTA_VALUE_USD: "0.01",
+      },
+      fetch,
+    });
     const plan = buildQueryPlan(context, {
       productUrl: "https://trendsfast.com",
       now: new Date("2026-08-11T08:00:00.000Z"),

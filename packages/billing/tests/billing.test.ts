@@ -2,9 +2,18 @@ import { describe, expect, it, vi } from "vitest";
 import Stripe from "stripe";
 import {
   billingAvailability,
+  checkoutClaimCookie,
+  checkoutClaimExpiresAt,
+  checkoutClaimHash,
   checkoutSessionExpiresAt,
+  clearCheckoutClaimCookie,
+  createCheckoutClaim,
   createStripeBilling,
   projectEntitlement,
+  readCheckoutClaimCookie,
+  STRIPE_API_VERSION,
+  stripeIntegrationIdentifier,
+  verifyCheckoutClaim,
 } from "../src/index";
 
 describe("billing launch gate", () => {
@@ -20,7 +29,9 @@ describe("billing launch gate", () => {
       reason: "MONITORING_DISABLED",
     },
   ])("keeps checkout closed when either launch gate is off", (input) => {
-    expect(billingAvailability({ ...input, mode: "test" })).toEqual({
+    expect(
+      billingAvailability({ ...input, mode: "test", providerCredentialMode: "fixture" }),
+    ).toEqual({
       enabled: false,
       checkoutAvailable: false,
       reason: input.reason,
@@ -33,8 +44,51 @@ describe("billing launch gate", () => {
         billingEnabled: true,
         paidMonitoringEnabled: true,
         mode: "test",
+        providerCredentialMode: "fixture",
       }),
     ).toEqual({ enabled: true, checkoutAvailable: true, reason: null });
+  });
+
+  it("never permits sandbox Checkout on a production deployment", () => {
+    expect(
+      billingAvailability({
+        billingEnabled: true,
+        paidMonitoringEnabled: true,
+        mode: "test",
+        providerCredentialMode: "fixture",
+        deploymentEnvironment: "production",
+      }),
+    ).toEqual({
+      enabled: true,
+      checkoutAvailable: false,
+      reason: "PRODUCTION_LIVE_MODE_REQUIRED",
+    });
+    expect(
+      billingAvailability({
+        billingEnabled: true,
+        paidMonitoringEnabled: true,
+        mode: "test",
+        providerCredentialMode: "fixture",
+        deploymentEnvironment: "preview",
+      }),
+    ).toEqual({ enabled: true, checkoutAvailable: true, reason: null });
+  });
+
+  it("never permits live Checkout outside the production deployment", () => {
+    expect(
+      billingAvailability({
+        billingEnabled: true,
+        paidMonitoringEnabled: true,
+        mode: "live",
+        providerCredentialMode: "managed",
+        liveEnablementApproved: true,
+        deploymentEnvironment: "preview",
+      }),
+    ).toEqual({
+      enabled: true,
+      checkoutAvailable: false,
+      reason: "LIVE_PRODUCTION_DEPLOYMENT_REQUIRED",
+    });
   });
 
   it("keeps live checkout closed pending an explicit commercial review", () => {
@@ -43,11 +97,51 @@ describe("billing launch gate", () => {
         billingEnabled: true,
         paidMonitoringEnabled: true,
         mode: "live",
+        providerCredentialMode: "managed",
       }),
     ).toEqual({
       enabled: true,
       checkoutAvailable: false,
       reason: "LIVE_ENABLEMENT_REVIEW_REQUIRED",
+    });
+    expect(
+      billingAvailability({
+        billingEnabled: true,
+        paidMonitoringEnabled: true,
+        mode: "live",
+        providerCredentialMode: "managed",
+        liveEnablementApproved: true,
+      }),
+    ).toEqual({ enabled: true, checkoutAvailable: true, reason: null });
+  });
+
+  it("never permits sandbox Checkout to mint paid-provider keys", () => {
+    expect(
+      billingAvailability({
+        billingEnabled: true,
+        paidMonitoringEnabled: true,
+        mode: "test",
+        providerCredentialMode: "managed",
+        deploymentEnvironment: "preview",
+      }),
+    ).toEqual({
+      enabled: true,
+      checkoutAvailable: false,
+      reason: "SANDBOX_FIXTURE_MODE_REQUIRED",
+    });
+    expect(
+      billingAvailability({
+        billingEnabled: true,
+        paidMonitoringEnabled: true,
+        mode: "live",
+        providerCredentialMode: "fixture",
+        liveEnablementApproved: true,
+        deploymentEnvironment: "production",
+      }),
+    ).toEqual({
+      enabled: true,
+      checkoutAvailable: false,
+      reason: "LIVE_PROVIDER_MODE_REQUIRED",
     });
   });
 
@@ -122,6 +216,31 @@ describe("billing launch gate", () => {
 });
 
 describe("project-bound Stripe sessions", () => {
+  it("uses the SDK-paired Dahlia API and an eight-letter integration suffix", () => {
+    expect(STRIPE_API_VERSION).toBe("2026-07-29.dahlia");
+    expect(stripeIntegrationIdentifier("0198a5d3-d718-7000-8000-000000000001")).toMatch(
+      /^trendsfast_founder_[a-z]{8}$/,
+    );
+    expect(stripeIntegrationIdentifier("0198a5d3-d718-7000-8000-000000000001")).toBe(
+      stripeIntegrationIdentifier("0198a5d3-d718-7000-8000-000000000001"),
+    );
+  });
+
+  it("creates, verifies, scopes, reads, and clears a secret Checkout claim", () => {
+    const claim = createCheckoutClaim();
+    expect(claim.rawClaim).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(claim.claimHash).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(checkoutClaimHash(claim.rawClaim)).toBe(claim.claimHash);
+    expect(verifyCheckoutClaim(claim.rawClaim, claim.claimHash)).toBe(true);
+    expect(verifyCheckoutClaim(`${claim.rawClaim}x`, claim.claimHash)).toBe(false);
+    const cookie = checkoutClaimCookie(claim.rawClaim, new Date("2026-08-12T12:00:00Z"));
+    expect(cookie).toContain("Path=/");
+    expect(cookie).toContain("HttpOnly");
+    expect(cookie).toContain("SameSite=Lax");
+    expect(cookie).toContain("Secure");
+    expect(readCheckoutClaimCookie(cookie)).toBe(claim.rawClaim);
+    expect(clearCheckoutClaimCookie()).toContain("Max-Age=0");
+  });
   it("verifies real Stripe SDK signatures over the exact raw body without network access", () => {
     const webhookSecret = "whsec_local_signature_test";
     const payload = JSON.stringify({
@@ -139,6 +258,7 @@ describe("project-bound Stripe sessions", () => {
       billingEnabled: true,
       paidMonitoringEnabled: true,
       mode: "test",
+      providerCredentialMode: "fixture",
       secretKey: "sk_test_signature_only",
       webhookSecret,
       founderCloudPriceId: "price_founder",
@@ -151,6 +271,7 @@ describe("project-bound Stripe sessions", () => {
       billingEnabled: true,
       paidMonitoringEnabled: true,
       mode: "test",
+      providerCredentialMode: "fixture",
       secretKey: "sk_test_signature_only",
       webhookSecret: "whsec_wrong_local_secret",
       founderCloudPriceId: "price_founder",
@@ -167,6 +288,7 @@ describe("project-bound Stripe sessions", () => {
       billingEnabled: true,
       paidMonitoringEnabled: true,
       mode: "test",
+      providerCredentialMode: "fixture",
       secretKey: "sk_test_example",
       webhookSecret: "whsec_example",
       founderCloudPriceId: "price_founder",
@@ -180,7 +302,7 @@ describe("project-bound Stripe sessions", () => {
 
     await billing.createCheckout({
       projectId: "2a7f6ec1-11dd-4b80-b22b-6d1489a20cb9",
-      actorId: "founder:session",
+      actorId: "delivery:private_capability_should_not_leave_origin",
       customerEmail: "founder@example.com",
       expiresAt: new Date("2026-08-11T12:00:00Z"),
       reservationId: "reservation-123",
@@ -189,11 +311,12 @@ describe("project-bound Stripe sessions", () => {
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({
         mode: "subscription",
+        integration_identifier: expect.stringMatching(/^trendsfast_founder_[a-z]{8}$/),
         client_reference_id: "2a7f6ec1-11dd-4b80-b22b-6d1489a20cb9",
         metadata: {
           project_id: "2a7f6ec1-11dd-4b80-b22b-6d1489a20cb9",
           checkout_reservation_id: "reservation-123",
-          scope: "founder_ops",
+          scope: "delivered_result",
         },
         subscription_data: {
           metadata: {
@@ -202,11 +325,47 @@ describe("project-bound Stripe sessions", () => {
             checkout_reservation_id: "reservation-123",
           },
         },
-        success_url: "https://trendsfast.example/ops/billing?checkout=returned",
+        success_url: "https://trendsfast.example/billing/success?session_id={CHECKOUT_SESSION_ID}",
+        cancel_url: "https://trendsfast.example/billing/canceled",
         expires_at: 1_786_449_600,
+        allow_promotion_codes: false,
       }),
       { idempotencyKey: expect.stringMatching(/^tf_checkout_[a-f0-9]{48}$/) },
     );
+    expect(JSON.stringify(create.mock.calls)).not.toContain(
+      "private_capability_should_not_leave_origin",
+    );
+    expect(JSON.stringify(create.mock.calls)).not.toContain("tf_checkout_claim");
+  });
+
+  it("omits manual payment methods and tax until registrations are approved", async () => {
+    const create = vi
+      .fn()
+      .mockResolvedValue({ id: "cs_test_dynamic", url: "https://checkout.stripe.com/dynamic" });
+    const billing = createStripeBilling({
+      billingEnabled: true,
+      paidMonitoringEnabled: true,
+      mode: "test",
+      providerCredentialMode: "fixture",
+      secretKey: "rk_test_example",
+      webhookSecret: "whsec_example",
+      founderCloudPriceId: "price_founder",
+      appUrl: "https://trendsfast.example",
+      stripe: {
+        checkout: { sessions: { create, retrieve: vi.fn(), list: vi.fn() } },
+        billingPortal: { sessions: { create: vi.fn() } },
+        webhooks: { constructEvent: vi.fn() },
+      },
+    });
+    await billing.createCheckout({
+      projectId: "2a7f6ec1-11dd-4b80-b22b-6d1489a20cb9",
+      actorId: "delivery:test",
+      reservationId: "0198a5d3-d718-7000-8000-000000000001",
+      expiresAt: new Date("2026-08-12T12:00:00Z"),
+    });
+    const params = create.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(params).not.toHaveProperty("payment_method_types");
+    expect(params).not.toHaveProperty("automatic_tax");
   });
 
   it("reuses a server-derived Checkout idempotency key for the durable reservation", async () => {
@@ -217,6 +376,7 @@ describe("project-bound Stripe sessions", () => {
       billingEnabled: true,
       paidMonitoringEnabled: true,
       mode: "test",
+      providerCredentialMode: "fixture",
       secretKey: "sk_test_example",
       webhookSecret: "whsec_example",
       founderCloudPriceId: "price_founder",
@@ -248,6 +408,7 @@ describe("project-bound Stripe sessions", () => {
       billingEnabled: true,
       paidMonitoringEnabled: true,
       mode: "test",
+      providerCredentialMode: "fixture",
       secretKey: "sk_test_example",
       webhookSecret: "whsec_example",
       founderCloudPriceId: "price_founder",
@@ -291,6 +452,7 @@ describe("project-bound Stripe sessions", () => {
       billingEnabled: true,
       paidMonitoringEnabled: true,
       mode: "test",
+      providerCredentialMode: "fixture",
       secretKey: "sk_test_example",
       webhookSecret: "whsec_example",
       founderCloudPriceId: "price_founder",
@@ -330,6 +492,9 @@ describe("project-bound Stripe sessions", () => {
     expect(() => checkoutSessionExpiresAt(new Date(Number.NaN))).toThrow(
       "STRIPE_CHECKOUT_TIME_INVALID",
     );
+    expect(checkoutClaimExpiresAt(new Date("2026-08-11T11:00:00Z"))).toEqual(
+      new Date("2026-08-11T11:30:00Z"),
+    );
   });
 
   it("uses a bounded server-derived hourly key for Customer Portal", async () => {
@@ -340,6 +505,7 @@ describe("project-bound Stripe sessions", () => {
       billingEnabled: true,
       paidMonitoringEnabled: true,
       mode: "test",
+      providerCredentialMode: "fixture",
       secretKey: "rk_test_example",
       webhookSecret: "whsec_example",
       founderCloudPriceId: "price_founder",
@@ -370,6 +536,7 @@ describe("project-bound Stripe sessions", () => {
         billingEnabled: true,
         paidMonitoringEnabled: true,
         mode: "test",
+        providerCredentialMode: "fixture",
         secretKey: "sk_live_wrong",
         webhookSecret: "whsec_example",
         founderCloudPriceId: "price_founder",
@@ -382,6 +549,7 @@ describe("project-bound Stripe sessions", () => {
         billingEnabled: true,
         paidMonitoringEnabled: true,
         mode: "test",
+        providerCredentialMode: "fixture",
         secretKey: "sk_test_example",
         webhookSecret: "whsec_example",
         founderCloudPriceId: "price_founder",
@@ -394,6 +562,7 @@ describe("project-bound Stripe sessions", () => {
         billingEnabled: true,
         paidMonitoringEnabled: true,
         mode: "test",
+        providerCredentialMode: "fixture",
         secretKey: "sk_test_example",
         webhookSecret: "whsec_example",
         founderCloudPriceId: "price_founder",

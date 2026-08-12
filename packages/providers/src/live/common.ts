@@ -157,6 +157,21 @@ export function numericEnvironment(
   return Number.isFinite(value) && value >= 0 ? value : fallback;
 }
 
+export function requiredNonnegativeEnvironment(
+  context: ProviderExecutionContext,
+  name: string,
+): number {
+  const raw = context.env[name]?.trim();
+  const value = raw === undefined || raw === "" ? Number.NaN : Number(raw);
+  if (!Number.isFinite(value) || value < 0) {
+    throw new ProviderError(`${name} is required for live cost admission`, {
+      code: "PROVIDER_COST_CONFIGURATION_MISSING",
+      retryable: false,
+    });
+  }
+  return value;
+}
+
 export function boundedIntegerEnvironment(
   context: ProviderExecutionContext,
   name: string,

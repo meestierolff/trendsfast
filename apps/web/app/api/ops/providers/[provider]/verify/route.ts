@@ -1,9 +1,10 @@
 import { z } from "zod";
+import { ProviderVerificationAttemptConflictError } from "@trendsfast/database";
 
 import { readBoundedJsonBody } from "../../../../../../lib/bounded-json";
 import { runConfiguredProviderVerification } from "../../../../../../lib/provider-verification-service";
 import { authorizeOpsActionRequest } from "../../../_security";
-import { ProviderVerificationBodySchema } from "./_validation";
+import { ProviderVerificationAttemptIdSchema, ProviderVerificationBodySchema } from "./_validation";
 
 export const runtime = "nodejs";
 export const maxDuration = 90;
@@ -44,6 +45,12 @@ export async function POST(
   if (!bounded.ok) return json({ error: "The request body is not valid JSON." }, 400);
   const body = ProviderVerificationBodySchema.safeParse(bounded.value);
   if (!body.success) return json({ error: "The verification inputs are invalid." }, 400);
+  const attemptId = ProviderVerificationAttemptIdSchema.safeParse(
+    request.headers.get("idempotency-key"),
+  );
+  if (!attemptId.success) {
+    return json({ error: "Provider verification requires a UUID Idempotency-Key header." }, 400);
+  }
   if (provider.data === "website" ? !body.data.productUrl : !body.data.query) {
     return json(
       {
@@ -58,6 +65,7 @@ export async function POST(
 
   try {
     const record = await runConfiguredProviderVerification({
+      attemptId: attemptId.data,
       provider: provider.data,
       initiatedBy: authorization.reviewerId,
       ...(body.data.productUrl === undefined ? {} : { productUrl: body.data.productUrl }),
@@ -65,16 +73,37 @@ export async function POST(
       ...(body.data.market === undefined ? {} : { market: body.data.market }),
       ...(body.data.language === undefined ? {} : { language: body.data.language }),
     });
-    return json({
-      ok: true,
-      id: record.id,
-      source: record.source,
-      state: record.state,
-      readbackVerified: record.readbackVerified,
-      healthStatus: record.healthStatus,
-      checkedAt: record.checkedAt?.toISOString() ?? null,
-    });
-  } catch {
+    if (record.failureCode === "VERIFICATION_COST_LIMIT") {
+      return json(
+        {
+          error: "The bounded provider verification would exceed its cost ceiling.",
+          id: record.id,
+          state: record.state,
+          reused: record.reused,
+        },
+        429,
+      );
+    }
+    return json(
+      {
+        ok: record.state !== "FAILED",
+        id: record.id,
+        source: record.source,
+        state: record.state,
+        readbackVerified: record.readbackVerified,
+        healthStatus: record.healthStatus,
+        checkedAt: record.checkedAt?.toISOString() ?? null,
+        reused: record.reused,
+      },
+      record.state === "RUNNING" ? 202 : record.state === "FAILED" ? 502 : 200,
+    );
+  } catch (error) {
+    if (error instanceof ProviderVerificationAttemptConflictError) {
+      return json(
+        { error: "The Idempotency-Key was already used for different verification inputs." },
+        409,
+      );
+    }
     return json({ error: "The bounded provider verification failed." }, 502);
   }
 }

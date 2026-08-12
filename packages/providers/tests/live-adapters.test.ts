@@ -72,6 +72,7 @@ describe("bounded live REST adapters", () => {
             DATAFORSEO_LOGIN: "test-login",
             DATAFORSEO_PASSWORD: "test-password",
             DATAFORSEO_GOOGLE_TRENDS_MODE: "live",
+            DATAFORSEO_ESTIMATED_COST_USD_PER_TASK: "0.05",
           },
           fetch,
           now: () => now,
@@ -143,8 +144,11 @@ describe("bounded live REST adapters", () => {
       credentialMode: "managed",
       env: {
         XAI_MAX_TOOL_CALLS_PER_SCAN: "1",
+        XAI_ESTIMATED_COST_USD_PER_SEARCH: "0.1",
         TAVILY_MAX_CREDITS_PER_SCAN: "1",
+        TAVILY_ESTIMATED_COST_USD_PER_CREDIT: "0.05",
         YOUTUBE_MAX_SEARCHES_PER_SCAN: "1",
+        YOUTUBE_INTERNAL_QUOTA_VALUE_USD: "0.01",
       },
     });
     expect(
@@ -219,6 +223,7 @@ describe("bounded live REST adapters", () => {
           DATAFORSEO_LOGIN: "test-login",
           DATAFORSEO_PASSWORD: "test-password",
           DATAFORSEO_GOOGLE_TRENDS_MODE: "live",
+          DATAFORSEO_ESTIMATED_COST_USD_PER_TASK: "0.05",
         },
         fetch,
         now: () => now,
@@ -257,7 +262,11 @@ describe("bounded live REST adapters", () => {
       },
       createProviderContext({
         credentialMode: "managed",
-        env: { XAI_API_KEY: "test-key", XAI_MODEL: "grok-test" },
+        env: {
+          XAI_API_KEY: "test-key",
+          XAI_MODEL: "grok-test",
+          XAI_ESTIMATED_COST_USD_PER_SEARCH: "0.1",
+        },
         fetch,
         now: () => now,
       }),
@@ -300,7 +309,10 @@ describe("bounded live REST adapters", () => {
       },
       createProviderContext({
         credentialMode: "byok",
-        env: { TAVILY_API_KEY: "test-key" },
+        env: {
+          TAVILY_API_KEY: "test-key",
+          TAVILY_ESTIMATED_COST_USD_PER_CREDIT: "0.05",
+        },
         fetch,
         now: () => now,
       }),
@@ -417,7 +429,10 @@ describe("bounded live REST adapters", () => {
     const registry = createLiveProviderRegistry();
     const runtime = createProviderContext({
       credentialMode: "byok",
-      env: { YOUTUBE_API_KEY: "test-youtube" },
+      env: {
+        YOUTUBE_API_KEY: "test-youtube",
+        YOUTUBE_INTERNAL_QUOTA_VALUE_USD: "0.01",
+      },
       fetch,
       now: () => now,
     });

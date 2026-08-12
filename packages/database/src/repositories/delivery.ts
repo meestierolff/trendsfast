@@ -84,7 +84,12 @@ export class DeliveryRepository {
           canonicalUrl: evidenceReceipts.canonicalUrl,
         })
         .from(evidenceReceipts)
-        .where(eq(evidenceReceipts.nextMoveId, move.id));
+        .where(
+          and(
+            eq(evidenceReceipts.nextMoveId, move.id),
+            eq(evidenceReceipts.moveVersion, move.reviewVersion),
+          ),
+        );
       const evidenceQuality = requireDecisionEvidenceQuality({
         action: move.action,
         signalClass: move.signalClass,
@@ -289,7 +294,12 @@ export class DeliveryRepository {
     const evidence = await this.db
       .select()
       .from(evidenceReceipts)
-      .where(eq(evidenceReceipts.nextMoveId, result.move.id));
+      .where(
+        and(
+          eq(evidenceReceipts.nextMoveId, result.move.id),
+          eq(evidenceReceipts.moveVersion, result.move.reviewVersion),
+        ),
+      );
     return { token, ...result, evidence };
   }
 

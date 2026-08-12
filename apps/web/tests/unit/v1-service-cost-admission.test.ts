@@ -18,7 +18,10 @@ vi.mock("@trendsfast/config", () => ({
     APP_URL: "https://app.example",
     PROVIDER_CREDENTIAL_MODE: "managed",
     MAX_PROVIDER_COST_USD_PER_SCAN: 0.25,
+    API_CREATE_RATE_LIMIT_PER_HOUR: 20,
+    API_STATUS_RATE_LIMIT_PER_HOUR: 300,
   }),
+  resolveProviderCosts: () => ({ maximumProviderCostUsdPerScan: 0.25 }),
 }));
 
 vi.mock("../../lib/server-database", () => ({
@@ -45,6 +48,8 @@ describe("v1 service cost admission wiring", () => {
     vi.clearAllMocks();
     repositoryMocks.usageSince.mockResolvedValue({
       successfulRequests: 1,
+      createRequests: 1,
+      statusRequests: 1,
       estimatedCostUsd: 0,
       actualCostUsd: 0,
     });

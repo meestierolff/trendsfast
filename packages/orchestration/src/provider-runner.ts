@@ -44,7 +44,8 @@ export function createProviderRunner(input: {
     estimate(provider, queries) {
       const adapter = input.registry.get(provider);
       if (!adapter) return 0;
-      return adapter.estimate(request(provider, "estimate", undefined, queries)).estimatedUsd;
+      return adapter.estimate(request(provider, "estimate", undefined, queries), input.context)
+        .estimatedUsd;
     },
     async execute(provider, work, budget) {
       const adapter = input.registry.get(provider);

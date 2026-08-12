@@ -24,6 +24,7 @@ import {
   opportunities,
   projectContextVersions,
   projects,
+  reviewEvents,
   scanRequests,
   scanRuns,
   signalMetricSnapshots,
@@ -31,6 +32,7 @@ import {
   sourceRuns,
 } from "../schema";
 import { normalizeProductUrl } from "./lifecycle";
+import { ReviewVersionConflictError } from "./review";
 
 export function sanitizeProviderPayloadFragment(
   input: Readonly<Record<string, unknown>>,
@@ -308,6 +310,16 @@ export class ScanDataRepository {
       .orderBy(asc(signals.observedAt));
   }
 
+  async listMetricSnapshotsForRun(scanRunId: string) {
+    return this.db
+      .select({ snapshot: signalMetricSnapshots, signal: signals })
+      .from(signalMetricSnapshots)
+      .innerJoin(signals, eq(signals.id, signalMetricSnapshots.signalId))
+      .innerJoin(sourceRuns, eq(sourceRuns.id, signals.sourceRunId))
+      .where(eq(sourceRuns.scanRunId, scanRunId))
+      .orderBy(asc(signalMetricSnapshots.observedAt));
+  }
+
   async upsertSignal(sourceRunId: string, input: Signal) {
     const signal = SignalSchema.parse(input);
     return this.db.transaction(async (tx) => {
@@ -372,6 +384,8 @@ export class ScanDataRepository {
 
   async addMetricSnapshot(input: {
     signalId: string;
+    evidenceReceiptId?: string;
+    expectedVersion?: number;
     observedAt: string;
     metrics: Signal["metrics"];
   }) {
@@ -486,6 +500,14 @@ export class ScanDataRepository {
       .orderBy(asc(clusters.createdAt));
   }
 
+  async listOpportunitiesForRun(scanRunId: string) {
+    return this.db
+      .select()
+      .from(opportunities)
+      .where(eq(opportunities.scanRunId, scanRunId))
+      .orderBy(asc(opportunities.moveVersion), asc(opportunities.rank));
+  }
+
   async createOpportunity(input: {
     scanRunId: string;
     clusterId?: string;
@@ -594,6 +616,8 @@ export class ScanDataRepository {
   async bindEvidence(input: {
     nextMoveId: string;
     signalId: string;
+    evidenceReceiptId?: string;
+    expectedVersion?: number;
     reason: string;
     reviewerId?: string;
     verified?: boolean;
@@ -638,18 +662,54 @@ export class ScanDataRepository {
         stored.move.state === "DRAFT" &&
         input.reviewerId === undefined &&
         input.verified !== true;
-      const founderReviewBind =
+      const founderReviewStage =
         stored.requestState === "REVIEW_REQUIRED" &&
         stored.runState === "REVIEW_REQUIRED" &&
         stored.move.state === "DRAFT";
+      const reviewerId = input.reviewerId?.trim();
+      if (
+        founderReviewStage &&
+        (!Number.isSafeInteger(input.expectedVersion) ||
+          input.expectedVersion !== stored.move.reviewVersion)
+      ) {
+        throw new ReviewVersionConflictError();
+      }
+      if (founderReviewStage && !input.evidenceReceiptId) {
+        throw new Error("Founder review evidence binding requires the current receipt identity");
+      }
+      if (founderReviewStage && !reviewerId) {
+        throw new Error("Founder review evidence binding requires a non-empty reviewer identity");
+      }
+      if (founderReviewStage && input.verified !== true) {
+        throw new Error("Founder review evidence binding requires verified=true");
+      }
+      const founderReviewBind =
+        founderReviewStage && Boolean(reviewerId) && input.verified === true;
       if (!processingBind && !founderReviewBind) {
         throw new Error("Evidence can only be bound to a founder review draft");
       }
       const verified = input.verified ?? false;
+      const [before] = await tx
+        .select()
+        .from(evidenceReceipts)
+        .where(
+          and(
+            eq(evidenceReceipts.nextMoveId, stored.move.id),
+            eq(evidenceReceipts.moveVersion, stored.move.reviewVersion),
+            eq(evidenceReceipts.signalId, stored.signal.id),
+            ...(founderReviewStage && input.evidenceReceiptId
+              ? [eq(evidenceReceipts.id, input.evidenceReceiptId)]
+              : []),
+          ),
+        )
+        .limit(1);
+      const verifiedAt = verified ? new Date() : null;
+      if (founderReviewStage && !before) throw new ReviewVersionConflictError();
       const [receipt] = await tx
         .insert(evidenceReceipts)
         .values({
           nextMoveId: stored.move.id,
+          moveVersion: stored.move.reviewVersion,
           signalId: stored.signal.id,
           source: stored.signal.source,
           provider: stored.signal.provider,
@@ -659,21 +719,53 @@ export class ScanDataRepository {
           observedAt: stored.signal.observedAt,
           reason: redactSecrets(input.reason),
           verified,
-          verifiedAt: verified ? new Date() : null,
-          reviewedBy: input.reviewerId ?? null,
+          verifiedAt,
+          reviewedBy: reviewerId ?? null,
         })
         .onConflictDoUpdate({
-          target: [evidenceReceipts.nextMoveId, evidenceReceipts.signalId],
+          target: [
+            evidenceReceipts.nextMoveId,
+            evidenceReceipts.moveVersion,
+            evidenceReceipts.signalId,
+          ],
           set: {
             reason: redactSecrets(input.reason),
             verified,
-            verifiedAt: verified ? new Date() : null,
-            reviewedBy: input.reviewerId ?? null,
+            verifiedAt,
+            reviewedBy: reviewerId ?? null,
             availability: "AVAILABLE",
           },
         })
         .returning();
       if (!receipt) throw new Error("Could not bind evidence");
+      if (founderReviewBind && reviewerId) {
+        await tx.insert(reviewEvents).values({
+          scanRequestId: stored.move.scanRequestId,
+          scanRunId: stored.move.scanRunId,
+          nextMoveId: stored.move.id,
+          action: "EVIDENCE_VERIFIED",
+          reviewerId,
+          before: before
+            ? {
+                evidenceReceiptId: before.id,
+                moveVersion: before.moveVersion,
+                verified: before.verified,
+                reviewedBy: before.reviewedBy,
+                verifiedAt: before.verifiedAt?.toISOString() ?? null,
+                availability: before.availability,
+              }
+            : null,
+          after: {
+            evidenceReceiptId: receipt.id,
+            moveVersion: receipt.moveVersion,
+            verified: true,
+            reviewedBy: reviewerId,
+            verifiedAt: receipt.verifiedAt?.toISOString() ?? null,
+            availability: receipt.availability,
+          },
+          note: redactSecrets(input.reason).slice(0, 4_000),
+        });
+      }
       return receipt;
     });
   }

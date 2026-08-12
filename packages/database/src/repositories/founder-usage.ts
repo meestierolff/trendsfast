@@ -1,7 +1,13 @@
-import { and, count, desc, eq, gt, gte, inArray, lt, lte, sql } from "drizzle-orm";
+import { and, count, desc, eq, gt, gte, inArray, isNull, lt, lte, sql } from "drizzle-orm";
 
 import type { TrendsFastDatabase } from "../client";
-import { founderUsageEvents, projectEntitlements, scanRequests, subscriptions } from "../schema";
+import {
+  founderEntitlementGrants,
+  founderUsageEvents,
+  projectEntitlements,
+  scanRequests,
+  subscriptions,
+} from "../schema";
 import {
   decideFounderUsageAdmission,
   founderUsageWindow,
@@ -52,11 +58,40 @@ export async function admitFounderUsage(
     .where(eq(projectEntitlements.projectId, input.projectId))
     .limit(1)
     .for("update");
-  const periodStart = row?.entitlement.periodStart ?? new Date(Number.NaN);
-  const periodEnd = row?.entitlement.periodEnd ?? new Date(Number.NaN);
-  if (!row || !row.entitlement.active) {
+  const [grant] = await db
+    .select()
+    .from(founderEntitlementGrants)
+    .where(
+      and(
+        eq(founderEntitlementGrants.projectId, input.projectId),
+        isNull(founderEntitlementGrants.revokedAt),
+        lte(founderEntitlementGrants.createdAt, input.occurredAt),
+        gt(founderEntitlementGrants.expiresAt, input.occurredAt),
+      ),
+    )
+    .limit(1)
+    .for("update");
+  const paidStart = row?.entitlement.periodStart ?? null;
+  const paidEnd = row?.entitlement.periodEnd ?? null;
+  const paidPeriodValid = Boolean(paidStart && paidEnd && paidStart < paidEnd);
+  const paidActive = Boolean(
+    row?.entitlement.active &&
+    paidStart &&
+    paidEnd &&
+    input.occurredAt >= paidStart &&
+    input.occurredAt < paidEnd,
+  );
+  if (!paidActive && grant && input.kind === "SCHEDULED_RUN_ACCEPTED") {
     return { status: "LIMITED", reason: "ENTITLEMENT_INACTIVE" };
   }
+  if (!paidActive && !grant) {
+    if (row?.entitlement.active && !paidPeriodValid) {
+      return { status: "LIMITED", reason: "ENTITLEMENT_PERIOD_INVALID" };
+    }
+    return { status: "LIMITED", reason: "ENTITLEMENT_INACTIVE" };
+  }
+  const periodStart = paidActive ? paidStart! : grant!.createdAt;
+  const periodEnd = paidActive ? paidEnd! : grant!.expiresAt;
   if (
     Number.isNaN(periodStart.getTime()) ||
     Number.isNaN(periodEnd.getTime()) ||
@@ -88,7 +123,8 @@ export async function admitFounderUsage(
     .insert(founderUsageEvents)
     .values({
       projectId: input.projectId,
-      subscriptionId: row.subscription.id,
+      subscriptionId: paidActive ? row!.subscription.id : null,
+      founderGrantId: paidActive ? null : grant!.id,
       scanRequestId: input.scanRequestId ?? null,
       kind: input.kind,
       idempotencyKey: input.idempotencyKey,
@@ -137,15 +173,32 @@ export class FounderUsageRepository {
       .from(projectEntitlements)
       .where(eq(projectEntitlements.projectId, acceptance.projectId))
       .limit(1);
-    const active = Boolean(
+    const paidActive = Boolean(
       entitlement?.active &&
       entitlement.periodStart &&
       entitlement.periodEnd &&
       now >= entitlement.periodStart &&
       now < entitlement.periodEnd,
     );
+    const [grant] = paidActive
+      ? []
+      : await this.db
+          .select({ id: founderEntitlementGrants.id })
+          .from(founderEntitlementGrants)
+          .where(
+            and(
+              eq(founderEntitlementGrants.projectId, acceptance.projectId),
+              isNull(founderEntitlementGrants.revokedAt),
+              lte(founderEntitlementGrants.createdAt, now),
+              gt(founderEntitlementGrants.expiresAt, now),
+            ),
+          )
+          .limit(1);
     return {
-      policy: paidDeliveryPolicy({ hasPaidAcceptance: true, entitlementActive: active }),
+      policy: paidDeliveryPolicy({
+        hasPaidAcceptance: true,
+        entitlementActive: paidActive || Boolean(grant),
+      }),
       acceptance,
     };
   }
@@ -177,7 +230,20 @@ export class FounderUsageRepository {
         ),
       )
       .limit(1);
-    return Boolean(entitlement);
+    if (entitlement) return true;
+    const [grant] = await this.db
+      .select({ projectId: founderEntitlementGrants.projectId })
+      .from(founderEntitlementGrants)
+      .where(
+        and(
+          eq(founderEntitlementGrants.projectId, projectId),
+          isNull(founderEntitlementGrants.revokedAt),
+          lte(founderEntitlementGrants.createdAt, now),
+          gt(founderEntitlementGrants.expiresAt, now),
+        ),
+      )
+      .limit(1);
+    return Boolean(grant);
   }
 
   async listHistory(projectId: string, now = new Date(), limit = 100) {

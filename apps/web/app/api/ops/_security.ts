@@ -4,6 +4,9 @@ export type OpsActionAuthorization =
   | { ok: true; reviewerId: string; sessionToken: string }
   | { ok: false; status: 401 | 403 | 503; error: string };
 
+export type OpsReadAuthorization =
+  { ok: true; reviewerId: string } | { ok: false; status: 401 | 403 | 503; error: string };
+
 function cookieValue(header: string | null, name: string): string | null {
   if (!header) return null;
   for (const part of header.split(";")) {
@@ -63,4 +66,27 @@ export function authorizeOpsActionRequest(
     reviewerId: `founder:${session.nonce.slice(0, 12)}`,
     sessionToken,
   };
+}
+
+/** Safe GET authorization: signed founder session, with cross-site fetches denied. */
+export function authorizeOpsReadRequest(
+  request: Request,
+  options: { secret?: string; now?: Date } = {},
+): OpsReadAuthorization {
+  const fetchSite = request.headers.get("sec-fetch-site");
+  if (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none") {
+    return { ok: false, status: 403, error: "Cross-site operations reads are not accepted." };
+  }
+  const secret = options.secret ?? process.env.SESSION_SECRET ?? "";
+  if (secret.length < 32) {
+    return { ok: false, status: 503, error: "Operations access is not configured." };
+  }
+  const session = verifyOpsSession(
+    cookieValue(request.headers.get("cookie"), "tf_ops_session") ?? undefined,
+    { secret, ...(options.now ? { now: options.now } : {}) },
+  );
+  if (!session) {
+    return { ok: false, status: 401, error: "A valid operations session is required." };
+  }
+  return { ok: true, reviewerId: `founder:${session.nonce.slice(0, 12)}` };
 }

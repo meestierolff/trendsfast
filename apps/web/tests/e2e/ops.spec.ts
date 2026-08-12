@@ -16,6 +16,14 @@ test("founder reviews, approves, and privately delivers a persisted scan", async
   test.skip(!opsToken, "OPS_TOKEN is required for the founder delivery journey.");
   if (!opsToken) return;
 
+  // The commercial boundary deliberately allows one accepted free submission
+  // per requester/day. Model the two browser projects as distinct clients at
+  // the trusted local proxy so desktop and mobile each exercise the full flow.
+  const requesterOctet = 20 + (Date.now() % 200);
+  await page.setExtraHTTPHeaders({
+    "X-Forwarded-For": `${testInfo.project.name === "mobile" ? "198.51.100" : "192.0.2"}.${requesterOctet}`,
+  });
+
   const host = `ops-${testInfo.project.name}-${testInfo.retry}-${Date.now()}.example.com`;
   await page.goto("/");
   await page.getByLabel("Product URL").first().fill(`https://${host}`);

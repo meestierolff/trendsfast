@@ -102,13 +102,13 @@ function applyVerification(
  * Missing/unavailable database state can never upgrade a static source claim.
  */
 export function projectPublicSourceStatuses(
-  latestVerifications: readonly SourceVerificationView[] = [],
-  currentDeployment?: CurrentProductionDeployment,
+  latestVerifications: readonly SourceVerificationView[],
+  currentDeployment: CurrentProductionDeployment,
 ): PublicSourceStatusView[] {
   const bySource = new Map<string, SourceVerificationView>();
   for (const record of latestVerifications) {
     if (
-      currentDeployment?.deploymentEnvironment !== "production" ||
+      currentDeployment.deploymentEnvironment !== "production" ||
       !currentDeployment.releaseSha ||
       !currentDeployment.deploymentHost ||
       record.deploymentEnvironment !== "production" ||

@@ -202,6 +202,7 @@ export class ManualEvidenceRepository {
         .insert(evidenceReceipts)
         .values({
           nextMoveId: record.move.id,
+          moveVersion: record.move.reviewVersion,
           signalId: storedSignal.id,
           source: storedSignal.source,
           provider: storedSignal.provider,
@@ -217,7 +218,11 @@ export class ManualEvidenceRepository {
           verifiedAt: null,
         })
         .onConflictDoUpdate({
-          target: [evidenceReceipts.nextMoveId, evidenceReceipts.signalId],
+          target: [
+            evidenceReceipts.nextMoveId,
+            evidenceReceipts.moveVersion,
+            evidenceReceipts.signalId,
+          ],
           set: {
             canonicalUrl: storedSignal.canonicalUrl,
             title: storedSignal.title,

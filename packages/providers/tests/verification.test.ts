@@ -65,6 +65,50 @@ describe("provider read-back verification", () => {
     expect(collect).not.toHaveBeenCalled();
   });
 
+  it("retains conservative health cost and quota when the external outcome fails", async () => {
+    const baseAdapter = createManualEvidenceAdapter();
+    const collect = vi.fn();
+    const adapter: ProviderAdapter = {
+      ...baseAdapter,
+      metadata: {
+        ...baseAdapter.metadata,
+        slug: "youtube",
+        publicName: "YouTube",
+        requiredEnvironmentVariables: ["YOUTUBE_API_KEY"],
+      },
+      collect,
+      healthCheck: async () => ({
+        status: "FAILED",
+        checkedAt: now.toISOString(),
+        message: "The health read outcome is unknown.",
+      }),
+    };
+    const result = await verifyProviderReadback({
+      adapter,
+      context: createProviderContext({
+        credentialMode: "managed",
+        env: { YOUTUBE_API_KEY: "server-side-key" },
+        now: () => now,
+      }),
+      request: { scanId: "verify_youtube_health_failed", queries: [] },
+      maximumCostUsd: 0.25,
+      healthCheckEstimatedCostUsd: 0.01,
+      healthCheckQuotaUnits: 1,
+      deadline: new Date(now.getTime() + 1_000),
+    });
+
+    expect(result).toMatchObject({
+      state: "FAILED",
+      estimatedCostUsd: 0.01,
+      quotaUsed: 1,
+    });
+    expect(result.actualCostUsd).toBeUndefined();
+    expect(result.limitations).toContain(
+      "Quota reflects the conservative health-read reservation because the failed external outcome may be unknown.",
+    );
+    expect(collect).not.toHaveBeenCalled();
+  });
+
   it("requires a bounded original URL before marking the source verified", async () => {
     const adapter = createManualEvidenceAdapter();
     const result = await verifyProviderReadback({
