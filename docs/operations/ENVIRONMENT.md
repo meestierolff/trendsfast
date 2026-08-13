@@ -10,7 +10,7 @@ commit values or paste them into support, issues, logs, or screenshots.
 | -------------------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `NODE_ENV`                             | `development`           | Runtime environment; managed production uses `production`.                                                        |
 | `APP_URL`                              | `http://localhost:3000` | Exact canonical origin; managed mode requires HTTPS.                                                              |
-| `PUBLIC_APP_URL`                       | empty                   | Ops-only exact public origin used for private delivery links; required on hosted ops and distinct from `APP_URL`. |
+| `PUBLIC_APP_URL`                       | empty                   | Exact public origin: equals `APP_URL` on public; hosted ops points here and keeps a distinct protected `APP_URL`. |
 | `TRENDSFAST_SURFACE`                   | `public`                | Exact `public` or `ops`; only `ops` exposes founder routes.                                                       |
 | `DATABASE_URL`                         | local PostgreSQL URL    | Server-only pooled/runtime PostgreSQL 15+ connection.                                                             |
 | `MEMBER_DATABASE_URL`                  | empty/local fallback    | Authenticated claim, dashboard, membership, and owner key-management role URL.                                    |

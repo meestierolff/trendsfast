@@ -25,6 +25,8 @@ connectivity, deployment, security approval, billing, or customer outcomes.
 - [2026-08-13 local product-completion record](operations/LOCAL_VERIFICATION_2026-08-13.md)
   and the
   [2026-08-13 protected hosted-preview record](operations/HOSTED_PREVIEW_VERIFICATION_2026-08-13.md),
+  the
+  [2026-08-13 blocked staged-production preparation record](operations/STAGED_PRODUCTION_PREPARATION_2026-08-13.md),
   plus the preserved
   [2026-08-12 immutable historical baseline](operations/LOCAL_VERIFICATION_2026-08-12.md)
 - [Legal drafting templates](legal/README.md)

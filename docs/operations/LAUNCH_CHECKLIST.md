@@ -83,6 +83,12 @@ evidence, not production proof. See the
 [2026-08-13 product-completion record](LOCAL_VERIFICATION_2026-08-13.md) and
 [2026-08-12 historical record](LOCAL_VERIFICATION_2026-08-12.md), plus the
 [2026-08-13 protected hosted-preview record](HOSTED_PREVIEW_VERIFICATION_2026-08-13.md).
+The separate
+[2026-08-13 staged-production preparation record](STAGED_PRODUCTION_PREPARATION_2026-08-13.md)
+confirms the existing Vercel project/generated origin and a private-inventory
+preflight, but it remains `BLOCKED_EXTERNAL`: the founder-owned Supabase Free
+organization has no project capacity, production environment values were not
+uploaded, and no deployment or promotion occurred.
 Launch remains blocked on production/ops infrastructure and every applicable
 external, operational, provider, Stripe, monitoring, dogfood, legal, and
 founder-approval gate.

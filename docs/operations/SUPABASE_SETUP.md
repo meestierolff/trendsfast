@@ -23,6 +23,14 @@ create a Pro organization for production. See the
 result separate from the
 [local product-completion record](LOCAL_VERIFICATION_2026-08-13.md).
 
+Phase 1 production preflight on 2026-08-13 confirmed that the founder-owned
+organization is still on Free and already has its maximum two active projects.
+Creation of the exact `trendsfast-prod` project was rejected before a project or
+credential was created. Do not pause, delete, or repurpose an unrelated project
+to work around that limit. The founder must approve production-capable paid
+capacity first; until then, production migration, role, Auth, backup, and TLS
+evidence remains absent and the Vercel environment importer must stay blocked.
+
 ## Connections
 
 Create separate preview and production projects. Store server-only URLs per
@@ -76,6 +84,11 @@ selected driver configuration against the chosen pooler before production.
    `DIRECT_DATABASE_URL` set to the migrator identity. Save the redacted JSON
    result with the release record; the admin identity intentionally cannot read
    the migrator-owned Drizzle ledger.
+10. After all production checks pass, store the non-secret project reference as
+    `SOL_READS_SUPABASE_PRODUCTION_PROJECT_REF` in the ignored mode-`0600`
+    operator inventory. The staged Vercel importer binds that exact ref to the
+    Auth URL and all three public-side runtime identities but never uploads the
+    `SOL_READS_*` field itself.
 
 Configure Supabase Auth only after the database/runtime-role read-back is clean;
 the exact redirect, SMTP, Google-provider, cookie, and claim-consumption contract
