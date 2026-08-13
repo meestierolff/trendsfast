@@ -1,8 +1,10 @@
 import { timingSafeEqual } from "node:crypto";
 
-import { loadEnv } from "@trendsfast/config";
+import { loadEnv, paidMonitoringRuntimeEnabled } from "@trendsfast/config";
 
 import { runMonitoringBatch } from "../../../../lib/monitoring-service";
+import { dispatchOperationsAlerts } from "../../../../lib/ops-alert-service";
+import { runDailyOperationsReconciliation } from "../../../../lib/operations-reconciliation-service";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -31,12 +33,41 @@ export async function GET(request: Request) {
   if (!safeSecretMatch(request.headers.get("authorization"), env.CRON_SECRET)) {
     return json({ error: "Monitoring cron authorization failed." }, 401);
   }
-  if (!env.BILLING_ENABLED || !env.PAID_MONITORING_ENABLED) {
-    return json({ error: "Paid monitoring is not enabled." }, 503);
+  const monitoringEnabled = paidMonitoringRuntimeEnabled(env);
+  let routeFailed = false;
+  let monitoring: Record<string, unknown> = { enabled: false };
+  if (monitoringEnabled) {
+    try {
+      monitoring = { enabled: true, ...(await runMonitoringBatch()) };
+    } catch {
+      routeFailed = true;
+      monitoring = { enabled: true, error: "MONITORING_BATCH_FAILED" };
+    }
   }
+
+  // Reliability draining is independent from the paid-work kill switch and
+  // from a failed monitoring batch. Stripe projection failures and existing
+  // alert retries must still progress while monitoring is paused or broken.
+  let reconciliation: Record<string, unknown>;
   try {
-    return json({ ok: true, ...(await runMonitoringBatch()) });
+    reconciliation = await runDailyOperationsReconciliation();
   } catch {
-    return json({ error: "The monitoring batch could not be completed." }, 500);
+    routeFailed = true;
+    reconciliation = { ran: false, alertsQueued: 0, failed: true };
   }
+  let alerts: Record<string, unknown>;
+  try {
+    alerts = await dispatchOperationsAlerts();
+    if (
+      (typeof alerts.failed === "number" && alerts.failed > 0) ||
+      (typeof alerts.deadLetter === "number" && alerts.deadLetter > 0) ||
+      (typeof alerts.stale === "number" && alerts.stale > 0)
+    ) {
+      routeFailed = true;
+    }
+  } catch {
+    routeFailed = true;
+    alerts = { enabled: Boolean(env.OPS_ALERT_WEBHOOK_URL), failed: 1 };
+  }
+  return json({ ok: !routeFailed, monitoring, reconciliation, alerts }, routeFailed ? 500 : 200);
 }
