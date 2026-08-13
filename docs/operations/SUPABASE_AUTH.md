@@ -2,8 +2,13 @@
 
 Status: Google PKCE, browser-bound e-mail magic-link, claim consumption, member
 authorization, dashboard, and owner key-management application paths are
-implemented and tested locally. Supabase provider, redirect, custom-SMTP, and
-preview journey acceptance remain unverified.
+implemented and tested locally. On the protected preview, the Site URL and exact
+`/auth/callback**` and `/auth/confirm**` redirect entries are configured, and
+the publishable Auth values are present on Vercel. Google and e-mail remain
+disabled: no Google credentials or custom SMTP exist, the reviewed template
+could not be changed on the Free/default-sender configuration, and no end-to-end
+Auth journey is claimed. See the
+[hosted preview record](HOSTED_PREVIEW_VERIFICATION_2026-08-13.md).
 
 TrendsFast uses Supabase Auth for identity only. Browser clients never query the application
 schema. The server verifies the signed Auth identity, then every project read or mutation applies a

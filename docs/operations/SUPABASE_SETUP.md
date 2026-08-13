@@ -5,31 +5,23 @@ authentication. It does not use Storage, Realtime, Edge Functions, or the
 browser Data API. Supabase Auth establishes identity only; every TrendsFast
 business-table query runs server-side through a scoped database runtime.
 
-Observed state on 2026-08-12: an isolated Free preview organization and project
-exist: `TrendsFast Preview` (`yylqvbwxoixwzouhnmgo`) and
-`trendsfast-preview` (`auxienkuufejeakaczlq`) in `eu-central-1`, PostgreSQL
-17.6. SSL enforcement and a CA-verified TLS 1.3 transaction-pooler connection
-were read back. No migration or seed has run: the direct host is IPv6-only and
-this release runner has no IPv6 route, and the transaction pooler must not be
-substituted for the controlled direct path. No production project exists; the
-founder still must upgrade or create a Pro organization for production. This is
-infrastructure inventory, not hosted-database acceptance.
+Observed state on 2026-08-13: the isolated Free project
+`trendsfast-preview` (`auxienkuufejeakaczlq`) in `eu-central-1` runs PostgreSQL
+17.6. At exact release SHA `91374fcb357f576de7a35bbbac4f684c1e9a5317`,
+the controlled session-pooler path applied and hash-verified 23/23 migrations
+through `0024` without a fixture seed. Strict verification matched 44 tables,
+560 columns, 30 enums, 119 indexes, and 177 foreign-key/check constraints with
+zero application drift. Eight roles and all seven CA-verified TLS 1.3 runtime
+identities passed the catalog-only ownership/grant/denial checks, including zero
+application access for the Supabase Data API roles. Managed policy remains
+unsynchronized because `SCAN_RETENTION_DAYS` is not approved.
 
-The earlier immutable local baseline at
-`73297a6cfdc99b025990b001b39cef399f4d235e` replayed 18 migrations through
-`0019` and matched 37/37 tables. That is historical evidence only. The current
-tree contains 23 migration files through `0024` (with intentional `0009`/`0010`
-gaps) and expects 44 TrendsFast tables. A fresh isolated local PostgreSQL 16.14
-database applied 23/23 files and seeded; the initial strict verifier matched
-44/44 tables, and the full integration suite passed 710 tests with 5 skipped.
-The role provisioner created the migrator and all seven runtimes, all 7/7
-runtime connections passed catalog-only verification without reading row
-values, and the separate runtime-role suite passed 5/5 tests. This is mutable
-local evidence only: the expanded snapshot-manifest verifier still needs a
-final rerun, and no hosted application/runtime-role verification has been
-performed. Repeat all checks against each hosted environment; do not copy
-either local result forward as hosted proof. See the
-[current local record](LOCAL_VERIFICATION_2026-08-13.md).
+The project is preview-only. No production project, backup/restore rehearsal,
+or production database acceptance exists; the founder still must upgrade or
+create a Pro organization for production. See the
+[hosted preview record](HOSTED_PREVIEW_VERIFICATION_2026-08-13.md) and keep its
+result separate from the
+[local product-completion record](LOCAL_VERIFICATION_2026-08-13.md).
 
 ## Connections
 

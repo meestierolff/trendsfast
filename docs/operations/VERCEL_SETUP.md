@@ -5,14 +5,21 @@ and secret inventory are approved. It does not make an unaudited deployment a
 public launch.
 
 Observed project configuration on 2026-08-13: the founder-owned team `Finnie`
-(`team_UVAUfp4G8CmlSNPI9w5FasKj`) is on Hobby. One linked, protected-dogfood public
-project exists: `trendsfast` (`prj_nYn6zjWW4BcKd03QaVO6LTOF3CSC`). Its verified
-Root Directory is `apps/web` and its production branch is `main`. The latest
-deployment inventory has no accepted deployment, alias, custom domain, or active
-cron. Upgrade the team to Pro before commercial production. This inventory is
-not deployment evidence. No separate `trendsfast-ops` project exists. Creating
-it on an approved plan, protecting it, and reading back its private
-deployment/cron are founder blockers.
+(`team_UVAUfp4G8CmlSNPI9w5FasKj`) is on Hobby. Linked public project
+`trendsfast` (`prj_nYn6zjWW4BcKd03QaVO6LTOF3CSC`) uses Root Directory `apps/web`
+and production branch `main`. Protected preview deployment
+`dpl_8vpd6yDUSVxn9oNH5SobuJWXuN6q` reached `READY` at exact SHA
+`91374fcb357f576de7a35bbbac4f684c1e9a5317` and has the stable alias
+`trendsfast-preview.vercel.app`. Authenticated route/API and zero-error-log
+read-backs passed with every customer-effect gate disabled; Deployment
+Protection remains enabled. See the
+[hosted preview record](HOSTED_PREVIEW_VERIFICATION_2026-08-13.md).
+
+This is protected-preview evidence, not public-origin or production acceptance.
+There is no accepted custom domain, production deployment, or active cron.
+Upgrade the team to Pro before commercial production. No separate
+`trendsfast-ops` project exists; creating it on an approved plan, protecting it,
+and reading back its private deployment/cron are founder blockers.
 
 ## Preflight and existing-project check
 

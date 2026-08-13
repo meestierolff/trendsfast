@@ -301,9 +301,10 @@ external source to **Connected**. See the
 
 ## Current release truth
 
-- No production provider/model read-back, deployment verification, legal
-  approval, customer result, dogfood outcome, or traction metric is claimed by
-  this README.
+- No production deployment, provider/model read-back, legal approval, customer
+  result, dogfood outcome, or traction metric is claimed by this README. A
+  protected preview has separate dated evidence below; it is not a public or
+  production launch.
 - Founder review now includes evidence verification/rejection, immutable-action
   edit-and-approve, context correction, stored-evidence recomputation, delivery,
   and redacted JSON/Markdown review bundles. Stored-only recomputation makes no
@@ -347,16 +348,17 @@ external source to **Connected**. See the
   migration, seed, build, and critical-browser jobs for branch commit
   `4ec9510f610001285c54947326c65cb79a075f37` in
   [CI run 31585349262](https://github.com/meestierolff/trendsfast/actions/runs/31585349262).
-- The product-completion working tree has separate local-only evidence: an
+- The product-completion release candidate has separate local evidence: an
   isolated PostgreSQL 16.14 database applied 23/23 migration files through
   `0024` and seeded; the initial strict verifier matched 44/44 tables; the full
   database run passed 710 tests with 5 skipped; and the runtime-role integration
   passed 5/5 tests. Eight roles were provisioned (migrator plus seven scoped
   runtimes), and all seven runtime connections passed catalog-only verification
-  with no row values read. The verifier's newly expanded snapshot-manifest gate
-  still needs a final rerun, and no immutable SHA or remote CI is attached to
-  these newer results.
-- The same working tree implements strict `next-move-v1`, bounded product
+  with no row values read. Exact release-candidate SHA
+  `91374fcb357f576de7a35bbbac4f684c1e9a5317` subsequently passed CI, CodeQL,
+  dependency review, and secret-history checks; the dated hosted record keeps
+  those immutable results separate from this local run.
+- The same release candidate implements strict `next-move-v1`, bounded product
   context/provenance, Supabase Google/magic-link application flows, secure
   project claims, the Today/Projects/History/Agents/Billing dashboard, owner
   key self-service, the preferred claimed-project API route, and an ops-only
@@ -366,12 +368,16 @@ external source to **Connected**. See the
   Valid provider-reported usage settles the reservation; missing usage remains
   conservative and unsettled. Public replay attempts consume the durable daily
   admission cap.
-- Isolated Free Supabase preview project `auxienkuufejeakaczlq` and protected
-  Hobby Vercel project `prj_nYn6zjWW4BcKd03QaVO6LTOF3CSC` now exist, with all
-  effect switches disabled. No hosted migration, deployment, alias, custom
-  domain, DNS/TLS, source, API/dogfood, monitoring, backup/restore, or release
-  claim follows. Production still requires Vercel Pro and a Supabase Pro
-  project; `trendsfast.com` is registered but not connected or verified.
+- Isolated Free Supabase preview project `auxienkuufejeakaczlq` now has 23/23
+  unseeded migrations, strict schema/ownership/Data API denial verification,
+  and seven TLS-verified runtime identities. Protected Hobby Vercel deployment
+  `dpl_8vpd6yDUSVxn9oNH5SobuJWXuN6q` is `READY` at the stable
+  `trendsfast-preview.vercel.app` alias with all customer-effect switches
+  disabled. Authenticated route/API probes passed for the exact release SHA.
+  This does not prove an anonymous public origin, production, provider/model
+  access, managed policy, monitoring, backup/restore, Auth journeys, or
+  dogfood. Production still requires Vercel Pro and a Supabase Pro project;
+  `trendsfast.com` is registered but not connected or verified.
 - Retention now has an authenticated ops-only route, a daily ops deployment
   template, aggregate health/alerts, and a dedicated least-privilege database
   role. Scheduler deployment/success, backup expiry, legal holds, and operator
@@ -379,13 +385,15 @@ external source to **Connected**. See the
 - Explicit non-fixture retry after an uncertain provider effect or charge
   requires operator reconciliation; no broad retry-safety claim is made.
 
-The immutable historical baseline and the newer mutable-tree results are both
-`LOCAL_PASS`, not hosted or production proof. The CI badge reports `main`; no
-CI run for the complete product-completion tree is claimed here. See the
+The immutable historical baseline and the newer local results remain
+`LOCAL_PASS`; they are not upgraded by the separate protected-preview evidence.
+See the
 [2026-08-12 historical record](docs/operations/LOCAL_VERIFICATION_2026-08-12.md),
 [2026-08-13 local product-completion record](docs/operations/LOCAL_VERIFICATION_2026-08-13.md),
+the
+[2026-08-13 protected hosted-preview record](docs/operations/HOSTED_PREVIEW_VERIFICATION_2026-08-13.md),
 and [launch checklist](docs/operations/LAUNCH_CHECKLIST.md). Every applicable
-hosted and external gate remains separate.
+production, external, and founder-approval gate remains separate.
 
 ## Verification
 
