@@ -14,7 +14,6 @@ import { analyticsEvents } from "../schema";
 
 const FORBIDDEN_PROPERTY =
   /(email|api.?key|authorization|token|secret|password|evidence.?text|model.?prompt|provider.?payload|product.?url|private.?url|submitted.?url|cost|price|currency|amount|spend|budget|margin|revenue|usd|eur)/i;
-const SECRET_VALUE = /tf_(?:test|live)_[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|Bearer\s+/i;
 const ATTRIBUTION_KEYS = new Set([
   "ref",
   "source",
@@ -24,6 +23,92 @@ const ATTRIBUTION_KEYS = new Set([
   "first_landing",
   "landing_path",
 ]);
+
+function asciiEqualsAt(value: string, index: number, expectedLowercase: string): boolean {
+  if (index + expectedLowercase.length > value.length) return false;
+  for (let offset = 0; offset < expectedLowercase.length; offset += 1) {
+    const code = value.charCodeAt(index + offset);
+    const lowercaseCode = code >= 65 && code <= 90 ? code + 32 : code;
+    if (lowercaseCode !== expectedLowercase.charCodeAt(offset)) return false;
+  }
+  return true;
+}
+
+function isSecretSegmentCharacter(code: number): boolean {
+  return (
+    (code >= 48 && code <= 57) ||
+    (code >= 65 && code <= 90) ||
+    code === 95 ||
+    (code >= 97 && code <= 122) ||
+    code === 45
+  );
+}
+
+function isEcmaScriptWhitespace(code: number): boolean {
+  return (
+    code === 0x0009 ||
+    code === 0x000a ||
+    code === 0x000b ||
+    code === 0x000c ||
+    code === 0x000d ||
+    code === 0x0020 ||
+    code === 0x00a0 ||
+    code === 0x1680 ||
+    (code >= 0x2000 && code <= 0x200a) ||
+    code === 0x2028 ||
+    code === 0x2029 ||
+    code === 0x202f ||
+    code === 0x205f ||
+    code === 0x3000 ||
+    code === 0xfeff
+  );
+}
+
+function containsBearerCredential(value: string): boolean {
+  for (let index = 0; index + 6 < value.length; index += 1) {
+    if (
+      asciiEqualsAt(value, index, "bearer") &&
+      isEcmaScriptWhitespace(value.charCodeAt(index + 6))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function containsTrendsFastCredential(value: string): boolean {
+  let index = 0;
+  while (index < value.length) {
+    const hasPrefix =
+      asciiEqualsAt(value, index, "tf_test_") || asciiEqualsAt(value, index, "tf_live_");
+    if (!hasPrefix) {
+      index += 1;
+      continue;
+    }
+
+    const segmentStart = index + 8;
+    let cursor = segmentStart;
+    while (cursor < value.length && isSecretSegmentCharacter(value.charCodeAt(cursor))) {
+      cursor += 1;
+    }
+    if (
+      cursor > segmentStart &&
+      value.charCodeAt(cursor) === 46 &&
+      isSecretSegmentCharacter(value.charCodeAt(cursor + 1))
+    ) {
+      return true;
+    }
+
+    // Any nested prefix in this ASCII segment reaches the same delimiter and
+    // cannot succeed when the earliest prefix failed, so skip it in one pass.
+    index = Math.max(index + 1, cursor);
+  }
+  return false;
+}
+
+function containsSecretValue(value: string): boolean {
+  return containsBearerCredential(value) || containsTrendsFastCredential(value);
+}
 
 /** Stable, non-secret identifier for a server-derived event committed beside
  * its canonical business mutation. Inputs must be internal durable IDs only. */
@@ -45,7 +130,7 @@ const safeAttributionText = (
   maxLength: number,
   kind: "dimension" | "landing" | "referrer" = "dimension",
 ) => {
-  if (!value || SECRET_VALUE.test(value)) return null;
+  if (!value || containsSecretValue(value)) return null;
   if (kind === "landing") return sanitizePublicAnalyticsPath(value).slice(0, maxLength);
   if (kind === "referrer") return sanitizeAnalyticsReferrer(value)?.slice(0, maxLength) ?? null;
   return sanitizeAnalyticsDimension(value, maxLength);
@@ -56,7 +141,7 @@ export function sanitizeAnalyticsAttribution(
 ): Record<string, string> {
   const safe: Record<string, string> = {};
   for (const [key, value] of Object.entries(input).slice(0, 20)) {
-    if (!ATTRIBUTION_KEYS.has(key) || FORBIDDEN_PROPERTY.test(key) || SECRET_VALUE.test(value)) {
+    if (!ATTRIBUTION_KEYS.has(key) || FORBIDDEN_PROPERTY.test(key) || containsSecretValue(value)) {
       continue;
     }
     const sanitized = /(path|landing)/i.test(key)
@@ -75,7 +160,7 @@ export function sanitizeAnalyticsProperties(
     if (FORBIDDEN_PROPERTY.test(key)) continue;
     if (value === null || typeof value === "number" || typeof value === "boolean") {
       safe[key.slice(0, 100)] = value;
-    } else if (typeof value === "string" && value.length <= 500 && !SECRET_VALUE.test(value)) {
+    } else if (typeof value === "string" && value.length <= 500 && !containsSecretValue(value)) {
       safe[key.slice(0, 100)] = value;
     }
   }

@@ -103,7 +103,21 @@ export function deriveProjectContextProfile(
 }
 
 function titleName(title: string | undefined, hostname: string): string {
-  const candidate = title?.split(/\s+[—|·-]\s+/)[0]?.trim();
+  let candidate = title?.trim();
+  if (title) {
+    for (let index = 1; index + 1 < title.length; index += 1) {
+      const delimiter = title[index];
+      if (delimiter !== "—" && delimiter !== "|" && delimiter !== "·" && delimiter !== "-") {
+        continue;
+      }
+      const before = title[index - 1];
+      const after = title[index + 1];
+      if (before?.trim() === "" && after?.trim() === "") {
+        candidate = title.slice(0, index).trim();
+        break;
+      }
+    }
+  }
   if (candidate && candidate.length <= 80) return candidate;
   const label = hostname.replace(/^www\./, "").split(".")[0] ?? "Product";
   return label.replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());

@@ -142,6 +142,19 @@ describe("scan lifecycle", () => {
     ).toEqual({ state: "REVIEW_REQUIRED", credentialMode: "managed" });
   });
 
+  it("scans adversarial credential-shaped attribution values without overlapping retries", () => {
+    const longCredentialPrefix = `tf_test_${"a".repeat(100_000)}`;
+    expect(
+      sanitizeAnalyticsAttribution({
+        source: longCredentialPrefix,
+        utm_source: `${longCredentialPrefix}.secret`,
+      }),
+    ).toEqual({});
+    expect(sanitizeAnalyticsAttribution({ source: "community" })).toEqual({
+      source: "community",
+    });
+  });
+
   it("redacts and bounds persisted provider fragments", () => {
     expect(
       sanitizeProviderPayloadFragment({
