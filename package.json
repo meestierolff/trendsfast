@@ -30,6 +30,7 @@
     "ops:record-health": "tsx scripts/db/record-operations-health.ts",
     "dogfood:export": "NODE_OPTIONS=--conditions=react-server tsx scripts/export-dogfood-bundle.ts",
     "private:bootstrap": "./scripts/bootstrap-private-state.sh",
+    "env:import-production": "tsx scripts/import-production-env.ts",
     "openapi:generate": "node --import tsx scripts/generate-openapi.ts",
     "stripe:bootstrap-sandbox": "./scripts/stripe/bootstrap-sandbox.sh",
     "stripe:verify-sandbox": "./scripts/stripe/verify-sandbox.sh",

@@ -392,6 +392,8 @@ See the
 [2026-08-13 local product-completion record](docs/operations/LOCAL_VERIFICATION_2026-08-13.md),
 the
 [2026-08-13 protected hosted-preview record](docs/operations/HOSTED_PREVIEW_VERIFICATION_2026-08-13.md),
+the
+[2026-08-13 blocked staged-production preparation record](docs/operations/STAGED_PRODUCTION_PREPARATION_2026-08-13.md),
 and [launch checklist](docs/operations/LAUNCH_CHECKLIST.md). Every applicable
 production, external, and founder-approval gate remains separate.
 

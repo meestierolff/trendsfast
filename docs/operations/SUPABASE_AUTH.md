@@ -40,7 +40,16 @@ anonymous public-data-plane URL for claim or dashboard repositories.
 ## URL configuration
 
 Configure the canonical production Site URL and add exact preview/development callback origins to
-the Supabase redirect allow list. Production uses:
+the Supabase redirect allow list. Before custom DNS, the inert staged-production project uses the
+verified Vercel project origin and only these path-scoped redirects:
+
+```text
+Site URL: https://trendsfast.vercel.app
+https://trendsfast.vercel.app/auth/callback**
+https://trendsfast.vercel.app/auth/confirm**
+```
+
+After the final DNS/canonical-origin change, production uses:
 
 ```text
 https://trendsfast.com/auth/callback**
@@ -49,7 +58,9 @@ https://trendsfast.com/auth/confirm**
 
 The path-scoped suffix is required because the current Supabase client appends its reserved
 `sb_flow_id` correlation query parameter. Keep the host and callback path exact; do not add a host
-or site-wide production wildcard. Preview callback hosts must likewise be explicit and temporary.
+or site-wide production wildcard. The generated Vercel callbacks are temporary and must be
+replaced, not retained as an additional production wildcard, after the canonical-domain cutover.
+Preview callback hosts must likewise be explicit and temporary.
 The application accepts only fixed dashboard destinations after authentication, so an attacker
 cannot turn `next` into an open redirect. Supabase also requires every `redirectTo` destination to
 match its configured allow list. See the official [Supabase redirect URL guidance](https://supabase.com/docs/guides/auth/redirect-urls).

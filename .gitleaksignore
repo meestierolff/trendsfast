@@ -32,3 +32,11 @@ ec8b3a792c8fc946a324031a070d2e870a373aa5:apps/web/components/dashboard-api-key-m
 0c47c44fed8db6feb19a3e0da134432530f15af5:apps/web/tests/unit/retention-cron-route.test.ts:generic-api-key:10
 1d769362621d806cfe6adb280e0b981c07056c57:packages/config/tests/env.test.ts:stripe-access-token:487
 1d769362621d806cfe6adb280e0b981c07056c57:packages/config/tests/env.test.ts:stripe-access-token:610
+2e719a6fbe4fc66629b24caf3daeccff462d2e7e:apps/web/components/dashboard-api-key-manager.tsx:curl-auth-header:83
+2e719a6fbe4fc66629b24caf3daeccff462d2e7e:apps/web/tests/unit/api.test.ts:generic-api-key:437
+2e719a6fbe4fc66629b24caf3daeccff462d2e7e:apps/web/tests/unit/retention-cron-route.test.ts:generic-api-key:10
+2e719a6fbe4fc66629b24caf3daeccff462d2e7e:docs/features/007-rest-api-and-api-keys.md:generic-api-key:49
+2e719a6fbe4fc66629b24caf3daeccff462d2e7e:apps/web/tests/unit/v1-service-cost-admission.test.ts:generic-api-key:148
+2e719a6fbe4fc66629b24caf3daeccff462d2e7e:apps/web/tests/unit/v1-service-cost-admission.test.ts:generic-api-key:259
+2e719a6fbe4fc66629b24caf3daeccff462d2e7e:packages/config/tests/env.test.ts:stripe-access-token:487
+2e719a6fbe4fc66629b24caf3daeccff462d2e7e:packages/config/tests/env.test.ts:stripe-access-token:610

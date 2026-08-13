@@ -16,8 +16,10 @@ Protection remains enabled. See the
 [hosted preview record](HOSTED_PREVIEW_VERIFICATION_2026-08-13.md).
 
 This is protected-preview evidence, not public-origin or production acceptance.
-There is no accepted custom domain, production deployment, or active cron.
-Upgrade the team to Pro before commercial production. No separate
+The public project's generated production domain is
+`https://trendsfast.vercel.app`, but it currently has no accepted Current
+deployment. There is no accepted custom domain or active cron. Upgrade the team
+to Pro before commercial production. No separate
 `trendsfast-ops` project exists; creating it on an approved plan, protecting it,
 and reading back its private deployment/cron are founder blockers.
 
@@ -44,8 +46,12 @@ Node 22, production branch `main`, a frozen pnpm install, and the web workspace
 build. Preserve monorepo workspace-package access and do not run migrations in
 the build.
 
-`apps/web/vercel.json` is deliberately the no-cron default, making automatic
-Git previews and Hobby deployments safe. `apps/web/vercel.pro.json` is the
+`apps/web/vercel.json` is deliberately the no-cron default. Its branch-scoped
+Git configuration disables automatic deployments from `main`, so merging a
+release-preparation PR cannot replace production before the founder's explicit
+CLI release; PR previews remain available. It pins the single Function region
+to `fra1`, colocated with the intended `eu-central-1` production database.
+`apps/web/vercel.pro.json` is the
 explicit Pro-only public configuration containing the ten-minute monitoring
 cron. `apps/web/vercel.hobby.json` remains a no-cron compatibility config, but
 the default is preferred. For reviewed CLI deployments from the repository
@@ -96,6 +102,27 @@ trials, promotions/coupons, and paid monitoring disabled until their gates pass.
 Preview and production must use different databases, salts, sessions, provider
 credentials where available, and Stripe webhook secrets.
 
+For the inert Phase 1 public surface, `APP_URL` and `PUBLIC_APP_URL` both equal
+the exact generated public origin. This is intentionally different from the
+ops contract above: on ops, `APP_URL` remains the protected ops origin while
+`PUBLIC_APP_URL` points across the boundary to public.
+
+Use the allowlisted importer only after the unseeded production database, three
+public-side runtime roles, Auth publishable pair, TLS CA, and private policy have
+all passed their own read-backs:
+
+```bash
+pnpm env:import-production --check
+pnpm env:import-production --apply
+```
+
+The importer parses `.env.production.local` as data, requires mode `0600`,
+passes values only on standard input, and never prints them. It must remain
+blocked rather than install partial or preview database configuration. Vercel
+updates variables sequentially, so an interrupted apply can leave a mixed
+environment; no deploy may proceed until the operator fixes the cause, reruns
+`--apply`, and receives the exact name/type read-back.
+
 ## Preview-first deployment
 
 ```bash
@@ -110,16 +137,29 @@ idempotency/limits, source status, mobile, accessibility, and security-header
 checks against the preview. Run provider read-backs separately and record them;
 a successful deploy does not mark sources Connected.
 
-Only after preview acceptance, deploy the same reviewed tree with the no-cron
-default while the team remains on Hobby and paid monitoring remains disabled:
+For the founder-controlled Phase 1 release, merge the reviewed preparation PR,
+check out the exact accepted `main` SHA, and run:
 
 ```bash
-vercel deploy --prod -A apps/web/vercel.json
+bash scripts/deploy-staged-production.sh
 ```
 
-Then repeat the deployment verifier and an independent browser/API smoke. Check
-logs for errors without emitting request bodies, capability tokens, API keys,
-model payloads, evidence text, or payment data.
+The script uses `vercel deploy --prod --skip-domain --yes -A
+apps/web/vercel.json`. `--skip-domain` creates a staged Production deployment;
+it deliberately does not make `trendsfast.vercel.app` Current. The script first
+inspects and smokes that immutable deployment through `vercel curl`, including
+the expected public `/ops` denial and disabled scan-create response, and checks
+error-level logs. Only after every staged check passes does it explicitly
+promote the accepted deployment and recheck the stable origin. A failed staged
+check leaves the former Current deployment unchanged; a failed post-promotion
+check is a release incident and requires the documented rollback procedure.
+
+This is Vercel's documented
+[staged-production workflow](https://vercel.com/docs/cli/deploying-from-cli#deploying-a-staged-production-build),
+not an alias shortcut. Do not add `trendsfast.com` or `www.trendsfast.com` until
+promotion and the stable-origin smoke pass. A technically inert Hobby build is
+not commercial-production approval; upgrade the team before public/commercial
+use.
 
 Only after the team is on Pro and every paid-monitoring gate passes, opt in to
 the monitoring schedule with the same accepted release SHA:
