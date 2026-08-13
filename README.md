@@ -3,15 +3,18 @@
 [![CI](https://github.com/meestierolff/trendsfast/actions/workflows/ci.yml/badge.svg)](https://github.com/meestierolff/trendsfast/actions/workflows/ci.yml)
 [![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-C8FF4D.svg)](LICENSE)
 
-> **The social and search trend intelligence API for founders and their AI
-> agents.**
+> **The social and search trend intelligence API for founders, creator-led
+> brands, and their AI agents.**
 
 ## Spot the trends your users care about. Know what to distribute next.
 
-Paste a product URL. TrendsFast turns bounded social conversations, search
-demand, developer adoption, news, video, and product-site signals into one
-evidence-backed **Next Move**: a topic, angle, format, and channel your founder
-or agent can act on.
+Paste a product URL. Find relevant trends and content opportunities fast. Know
+exactly what to publish, where to publish it, which conversation to reply to,
+what to remix, or what to wait on.
+
+TrendsFast understands bounded product context, watches live social and search
+signals, and gives a founder or AI agent one evidence-backed **Next Move**—with
+a channel, format, hook, tone, target, and honest time window.
 
 **Replace hours of manual distribution research with one relevant,
 evidence-backed action a founder can actually take.** Reach the right users
@@ -70,27 +73,26 @@ only when you intentionally want to delete local database data. See
 
 ## API example
 
-Approved users receive a show-once, project-scoped key from founder operations.
-Anonymous free scans do not receive a reusable API key. Keep the endpoint local
-until a deployment is verified, and use the public product URL assigned to that
-key:
+After claiming a private result, an entitled owner can create a named,
+show-once, project-scoped key in **Dashboard → Agents**. Anonymous free scans do
+not receive a reusable API key. Keep the endpoint local until a deployment is
+verified. The preferred route loads the claimed project's saved URL, context,
+voice, and capability ceiling server-side:
 
 ```bash
 export APP_URL=http://localhost:3000
-export PROJECT_URL=https://your-public-product.example
+export PROJECT_ID=replace-with-claimed-project-uuid
 export TRENDSFAST_API_KEY=replace-with-your-project-scoped-key
 
-curl -sS "$APP_URL/v1/next-move" \
+curl -sS "$APP_URL/v1/projects/$PROJECT_ID/next-move" \
   -H "Authorization: Bearer $TRENDSFAST_API_KEY" \
   -H "Idempotency-Key: 4a2d1201-9666-4ef0-90a9-e5aa47786c8e" \
   -H "Content-Type: application/json" \
   --data "{
-    \"product_url\": \"$PROJECT_URL\",
-    \"goal\": \"qualified_signups\",
-    \"market\": \"US\",
-    \"language\": \"en\",
+    \"objective\": \"Grow among technical founders\",
     \"preferred_channels\": [\"x\", \"linkedin\"],
-    \"available_formats\": [\"founder_text\", \"screen_recording\"]
+    \"content_capabilities\": [\"founder_text\", \"screen_recording\"],
+    \"generation_level\": \"brief\"
   }"
 ```
 
@@ -119,21 +121,26 @@ Creation returns `200` when a suitable fresh result is already ready or `202`
 when work is accepted. Polling returns `200` with `QUEUED`, `RUNNING`,
 `REVIEW_REQUIRED`, `READY`, or `FAILED` in the body. The runtime OpenAPI 3.1
 document is at `$APP_URL/v1/openapi.json`. The seeded fixture key is deliberately
-bound to its seeded project, so substituting it for a different `PROJECT_URL`
-correctly returns `403`.
+bound to its seeded project, so substituting a different `PROJECT_ID` correctly
+returns `403`. The legacy `POST /v1/next-move` remains available for compatible
+project-bound clients that supply `product_url`; it returns the same strict
+ready-result contract.
 
 ## What a Next Move contains
 
-A result includes the relevant trend/topic, recommended distribution channel,
-content angle, hook, format, outline, why now, evidence URLs, signal truth class,
-freshness, confidence, limitations, and validity window. It is one distribution
-action that can power a post, reply, thread, article, short video, tutorial, or
-content brief—not a promise of one finished asset.
+A result includes the relevant opportunity, one immutable action, its
+action-specific production detail, a rounded trend window, categorical
+BreakoutPotential, why now, exact evidence receipts, freshness, limitations,
+and founder-review state. `brief` is already actionable; `draft` may add prose
+for PUBLISH or REMIX without changing the action, evidence, timing, or score.
+BreakoutPotential is not a probability.
 
 ```json
 {
   "id": "scan_example",
   "status": "READY",
+  "contract_version": "next-move-v1",
+  "generation_level": "brief",
   "project": {
     "name": "Example",
     "url": "https://example.com",
@@ -154,21 +161,71 @@ content brief—not a promise of one finished asset.
     "confidence": 0.74,
     "valid_until": "2026-08-14T10:00:00.000Z"
   },
+  "action_details": {
+    "action": "WAIT",
+    "considered_opportunity": "A single-source discussion about distribution agents",
+    "failure_reasons": ["DEPENDENT_EVIDENCE", "WEAK_EVIDENCE"],
+    "do_not_act_on": ["Do not present this discussion as a corroborated trend yet."],
+    "watch_conditions": ["Recheck when an independent current source confirms the topic."],
+    "recheck_at": "2026-08-13T22:00:00.000Z"
+  },
+  "trend_window": {
+    "state": "UNKNOWN",
+    "basis": "UNKNOWN",
+    "observed_since": "2026-08-13T07:00:00.000Z",
+    "last_confirmed_at": "2026-08-13T09:00:00.000Z",
+    "valid_until": "2026-08-14T10:00:00.000Z",
+    "recheck_at": "2026-08-13T22:00:00.000Z",
+    "confidence": 0.35,
+    "explanation": "The stored evidence does not support a defensible remaining-duration estimate."
+  },
+  "breakout_potential": {
+    "level": "unknown",
+    "basis": "INSUFFICIENT_DATA",
+    "factors": {
+      "audience_relevance": 0.63,
+      "timing": 0.41,
+      "novelty": 0.58,
+      "product_credibility": 0.52,
+      "format_fit": 0.7,
+      "saturation_risk": 0.2
+    },
+    "explanation": "The label is unknown because the evidence is insufficient; it is not a probability."
+  },
+  "freshness": {
+    "state": "CURRENT",
+    "evaluated_at": "2026-08-13T10:00:00.000Z",
+    "requires_new_scan": false
+  },
   "why_now": {
     "summary": "Available example signals share one origin.",
     "signal_class": "INSUFFICIENT_SIGNAL",
     "independent_source_count": 1,
     "saturation": "unknown"
   },
-  "evidence": [],
-  "limitations": ["Example data only"],
+  "evidence": [
+    {
+      "source": "hacker_news",
+      "url": "https://news.ycombinator.com/item?id=44123123",
+      "title": "A stored founder discussion",
+      "published_at": "2026-08-13T07:00:00.000Z",
+      "observed_at": "2026-08-13T09:00:00.000Z",
+      "reason": "The exact stored discussion is relevant but not independently corroborated.",
+      "provider": "hn_algolia",
+      "role": "DECISION_SUPPORT",
+      "verified": true,
+      "availability": "AVAILABLE"
+    }
+  ],
+  "limitations": ["One-source evidence cannot support a trend claim."],
   "founder_reviewed": true,
   "auto_publish": false
 }
 ```
 
 `WAIT` is a trustworthy result, not an error. A recent popular post is not called
-a trend unless the evidence meets the explicit truth model.
+a trend unless the evidence meets the explicit truth model. At `valid_until`,
+the same response is labeled `STALE` with `requires_new_scan=true`.
 
 ## Architecture at a glance
 
@@ -251,10 +308,12 @@ external source to **Connected**. See the
   edit-and-approve, context correction, stored-evidence recomputation, delivery,
   and redacted JSON/Markdown review bundles. Stored-only recomputation makes no
   provider/model call and renewed evidence review is required after correction.
-- Public scan admission defaults to one request per anonymous requester plus
-  database-atomic UTC-day global limits of 20 scans and $5 reserved/actual
-  provider cost. API creation and polling use separate 20/hour and 300/hour
-  limits; polling does not consume a research allowance.
+- Hosted public/API admission and provider-spend limits come only from ignored
+  private policy. Missing private policy or a disabled provider-call gate stops
+  new paid work before database admission or provider I/O; polling does not
+  consume a research allowance.
+- Public scans, live API creation, and Checkout each have a separate default-off
+  kill switch so a hosted preview can boot without enabling customer effects.
 - Protected founder operations can issue a revocable, audited, one-project
   design-partner grant for at most 30 days. It is explicitly not a Stripe
   subscription, and normal usage/cost limits still apply.
@@ -272,7 +331,7 @@ external source to **Connected**. See the
   rotated and the CLI reauthenticated.
 - The first-party ledger is the intended analytics truth. Public/open metrics
   stay placeholder-only until a reproducible denominator-backed report exists.
-- Implementation candidate `73297a6cfdc99b025990b001b39cef399f4d235e`
+- Historical implementation candidate `73297a6cfdc99b025990b001b39cef399f4d235e`
   replayed all 18 migration files through `0019` (intentional `0009`/`0010`
   gaps), matched every hash, seeded twice, and passed strict verification for
   37/37 public tables plus columns, enums, indexes, constraints, and denied
@@ -288,26 +347,45 @@ external source to **Connected**. See the
   migration, seed, build, and critical-browser jobs for branch commit
   `4ec9510f610001285c54947326c65cb79a075f37` in
   [CI run 31585349262](https://github.com/meestierolff/trendsfast/actions/runs/31585349262).
+- The product-completion working tree has separate local-only evidence: an
+  isolated PostgreSQL 16.14 database applied 23/23 migration files through
+  `0024` and seeded; the initial strict verifier matched 44/44 tables; the full
+  database run passed 710 tests with 5 skipped; and the runtime-role integration
+  passed 5/5 tests. Eight roles were provisioned (migrator plus seven scoped
+  runtimes), and all seven runtime connections passed catalog-only verification
+  with no row values read. The verifier's newly expanded snapshot-manifest gate
+  still needs a final rerun, and no immutable SHA or remote CI is attached to
+  these newer results.
+- The same working tree implements strict `next-move-v1`, bounded product
+  context/provenance, Supabase Google/magic-link application flows, secure
+  project claims, the Today/Projects/History/Agents/Billing dashboard, owner
+  key self-service, the preferred claimed-project API route, and an ops-only
+  retention cron. None of those code-local surfaces is a hosted Auth, API, or
+  operational read-back.
 - Provider and model attempts reserve their bounded cost durably before I/O.
   Valid provider-reported usage settles the reservation; missing usage remains
   conservative and unsettled. Public replay attempts consume the durable daily
   admission cap.
-- No TrendsFast Supabase or Vercel project exists, and `trendsfast.com` was
-  observed as `NXDOMAIN`. No hosted database, deployment, DNS/TLS, source,
-  API/dogfood, monitoring, or release claim follows from local checks. The
-  authenticated Vercel team also requires a suitable commercial plan.
-- Retention and privacy operations still require authenticated scheduling,
-  backup-expiry/legal-hold decisions, and deployment evidence.
+- Isolated Free Supabase preview project `auxienkuufejeakaczlq` and protected
+  Hobby Vercel project `prj_nYn6zjWW4BcKd03QaVO6LTOF3CSC` now exist, with all
+  effect switches disabled. No hosted migration, deployment, alias, custom
+  domain, DNS/TLS, source, API/dogfood, monitoring, backup/restore, or release
+  claim follows. Production still requires Vercel Pro and a Supabase Pro
+  project; `trendsfast.com` is registered but not connected or verified.
+- Retention now has an authenticated ops-only route, a daily ops deployment
+  template, aggregate health/alerts, and a dedicated least-privilege database
+  role. Scheduler deployment/success, backup expiry, legal holds, and operator
+  privacy-request acceptance remain unverified.
 - Explicit non-fixture retry after an uncertain provider effect or charge
   requires operator reconciliation; no broad retry-safety claim is made.
 
-These are `LOCAL_PASS` results for immutable implementation candidate
-`73297a6cfdc99b025990b001b39cef399f4d235e`, not hosted or production proof. The
-CI badge reports `main`; the exact branch CI evidence is linked above, while
-every applicable hosted and external gate remains separate. The full
-[integrated local verification record](docs/operations/LOCAL_VERIFICATION_2026-08-12.md)
-and [launch checklist](docs/operations/LAUNCH_CHECKLIST.md) keep every release
-gate unchecked until its immutable remote or external evidence exists.
+The immutable historical baseline and the newer mutable-tree results are both
+`LOCAL_PASS`, not hosted or production proof. The CI badge reports `main`; no
+CI run for the complete product-completion tree is claimed here. See the
+[2026-08-12 historical record](docs/operations/LOCAL_VERIFICATION_2026-08-12.md),
+[2026-08-13 local product-completion record](docs/operations/LOCAL_VERIFICATION_2026-08-13.md),
+and [launch checklist](docs/operations/LAUNCH_CHECKLIST.md). Every applicable
+hosted and external gate remains separate.
 
 ## Verification
 

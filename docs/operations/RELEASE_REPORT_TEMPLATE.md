@@ -5,30 +5,40 @@ Do not mark a gate passed without a link or artifact.
 
 1. **Starting and ending SHAs:** `[exact immutable values; ending SHA may be PENDING]`
 2. **Branch and PR:** `[branch, PR URL/state]`
-3. **Commits:** `[SHA and subject list]`
-4. **Green CI:** `[run URLs or NOT GREEN/NOT RUN]`
-5. **Installed Stripe skills:** `[exact repository paths]`
-6. **Stripe SDK/API decision:** `[SDK and explicit API version plus rationale]`
-7. **Review comments:** `[thread, fix, evidence, resolution state]`
-8. **Edit-and-approve:** `[editable/immutable fields, concurrency, audit, tests]`
-9. **Context correction:** `[versioning, stored-only recompute, renewed review]`
-10. **Dogfood bundles:** `[three JSON/Markdown path pairs or NOT RUN]`
-11. **Commercial boundary:** `[open-source versus cloud/private truth]`
-12. **Cost configuration:** `[public variables versus private operator values]`
-13. **Supabase:** `[project/environment, 18 migrations/0019, 37-table strict read-back, ACL, backup/restore; or NOT RUN]`
-14. **Vercel:** `[project/scope/plan and preview/production URLs/IDs; or NOT RUN]`
-15. **Domain/DNS:** `[exact assigned records, TLS, canonical redirect; or unresolved]`
-16. **Source read-backs:** `[website, HN, Google Trends, Tavily/xAI, GitHub, YouTube, manual; exact status]`
-17. **Live API:** `[hosted create/poll/result evidence or NOT RUN]`
-18. **Design-partner grant:** `[project, expiry, key/usage audit evidence or NOT RUN]`
-19. **Stripe catalog:** `[safe Product/Price IDs or NOT CREATED/VERIFIED]`
-20. **Checkout/webhook/Portal:** `[sandbox/hosted matrix or NOT RUN]`
-21. **Monitoring:** `[scheduler/lease/overlap/alerts evidence or NOT RUN]`
-22. **Dogfood costs:** `[TrendsFast, Halio, ShipToUsers actual/unknown breakdowns]`
-23. **External dogfood review:** `[approved/pending/not reached and corrections]`
-24. **Legal/operational blockers:** `[explicit remaining approvals/owners]`
-25. **Go/no-go:** `[free public scans; broad Reddit/X launch; live API; live Stripe subscriptions]`
-26. **Founder actions:** `[exact, executable actions still required]`
+3. **Commits:** `[SHA and subject list, grouped as reviewable verticals]`
+4. **Review comments:** `[thread, fix, evidence, resolution state]`
+5. **Green CI:** `[exact run/job URLs or NOT GREEN/NOT RUN]`
+6. **Schema changes:** `[tables, columns, enums, constraints, indexes, compatibility]`
+7. **Migrations and ACL:** `[23/23 through 0024, 44/44 tables, strict manifest, seven runtime roles, browser/default denial; exact evidence or NOT RUN]`
+8. **Local verification:** `[file/test/build/browser totals and immutable SHA, or explicitly mutable local evidence]`
+9. **Action-specific examples:** `[redacted PUBLISH, REPLY, REMIX, and WAIT response paths or excerpts]`
+10. **TrendWindow and BreakoutPotential:** `[truth rules, expiry behavior, non-probability proof, tests]`
+11. **Context extraction/provenance:** `[bounded pages/bytes/origin, observed facts, inferred context, assumptions, voice/capabilities]`
+12. **Edit-and-approve/context correction:** `[editable versus immutable fields, concurrency, versioning, stored-only recompute, renewed review, audit, tests]`
+13. **Supabase Auth:** `[Google PKCE and magic-link implementation, exact external redirect/provider/custom-SMTP steps, preview evidence or NOT RUN]`
+14. **Claim security:** `[random-secret/hash/cookie/expiry/delivery binding, callback consumption, replay/conflict/isolation tests and hosted proof]`
+15. **Dashboard route matrix:** `[Today, Projects, History, Agents, Billing access and behavior]`
+16. **API-key self-service:** `[show-once issue, name, scopes, last use, revoke/reissue, project allowance behavior and hosted proof]`
+17. **OpenAPI compatibility:** `[legacy and claimed-project routes, runtime/spec parity result and hosted document URL or NOT RUN]`
+18. **Installed Stripe skills:** `[exact repository paths]`
+19. **Stripe SDK/API decision:** `[SDK and explicit API version plus rationale]`
+20. **Commercial boundary and cost configuration:** `[open-source/cloud truth; public variables versus private operator values; settlement limitations]`
+21. **Supabase infrastructure:** `[project/environment, PostgreSQL version, hosted migration/runtime-role read-back, backup/restore; or NOT RUN]`
+22. **Vercel:** `[project/scope/plan and preview/production URLs/IDs; or NOT RUN]`
+23. **Domain/DNS:** `[exact assigned records, TLS, canonical redirect; or unresolved]`
+24. **Provider readback matrix:** `[website, HN, Google Trends, Tavily/xAI, GitHub, YouTube, manual; status, cost/quota, limitation, artifact]`
+25. **Live API:** `[hosted create/poll/strict result and project-scoped key evidence or NOT RUN]`
+26. **Design-partner grant:** `[project, expiry, key/usage audit evidence or NOT RUN]`
+27. **Stripe and paid monitoring:** `[safe Product/Price IDs, sandbox Checkout/webhook/claim/Portal matrix, live gate, €39 offer state]`
+28. **Monitoring/retention/privacy:** `[scheduler, lease/overlap, alerts, purge, request workflow, backup expiry evidence or NOT RUN]`
+29. **Halio bundle path:** `[exact private redacted JSON and Markdown paths or NOT RUN]`
+30. **ShipToUsers bundle path:** `[exact private redacted JSON and Markdown paths or NOT RUN]`
+31. **Dogfood costs:** `[Halio and ShipToUsers actual/unknown breakdowns]`
+32. **External dogfood review:** `[AWAITING_EXTERNAL_DOGFOOD_REVIEW, approved value, or not reached; corrections]`
+33. **Hosted URLs and domain status:** `[public, protected ops, Supabase, canonical domain; exact verification state]`
+34. **Remaining launch blockers:** `[explicit technical, provider, legal, tax, billing, monitoring, dogfood, and founder-owned actions]`
+35. **Go/no-go:** `[limited free founder scans; paid monitoring; broader launch]`
+36. **Founder actions:** `[exact, executable actions still required]`
 
 Prohibited unsupported claims include legal/provider approval, production
 readiness, live billing, source coverage, security approval, successful external

@@ -63,10 +63,12 @@ notice. Avoid a service-level promise unless one is operationally supported.
 ## Fees, renewal, cancellation, tax, and refunds
 
 The public alpha is intended to offer one free reviewed scan. Billing is
-currently disabled. Before any paid offer, counsel/founder must insert the exact
-currency, price, billing interval, renewal disclosure, cancellation effective
-date, refunds, failed payments, taxes/VAT, invoices, cooling-off rights,
-consumer exceptions, price-change notice, and Stripe role: `[APPROVED TERMS]`.
+currently disabled. The planned Founder offer is €39/month for the bounded
+usage described on the pricing page, exclusive of any approved applicable tax.
+Before enabling it, counsel/founder must approve the renewal disclosure,
+cancellation effective date, refunds, failed payments, taxes/VAT, invoices,
+cooling-off rights, consumer exceptions, price-change notice, and Stripe role:
+`[APPROVED TERMS]`.
 
 Checkout copy, Customer Portal behavior, and these terms must match. Never use
 this placeholder section to charge a customer.

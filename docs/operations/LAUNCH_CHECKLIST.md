@@ -7,8 +7,36 @@ my machine,” fixture success, and code presence are not production proof.
 ## Current integrated local evidence
 
 Implementation candidate `73297a6cfdc99b025990b001b39cef399f4d235e`
-has `LOCAL_PASS` evidence. Every production box below remains unchecked until
-its own immutable remote or external evidence exists:
+has preserved historical `LOCAL_PASS` evidence. The product-completion working
+tree has newer local-only evidence but no attached immutable ending SHA or
+remote CI. Every production box below remains unchecked until its own immutable
+remote or external evidence exists.
+
+Observed for the product-completion working tree:
+
+- A fresh isolated PostgreSQL 16.14 database applied 23/23 migration files
+  through `0024` (with intentional `0009`/`0010` gaps) and seeded. The expanded
+  strict verifier matched 44 tables, 560 columns, 30 enums, 119 indexes, and
+  177 foreign-key/check constraints with zero unexpected objects.
+- `RUN_DATABASE_INTEGRATION=1 pnpm test` completed 119 files total: 118 passed
+  and 1 skipped. Of 715 tests, 710 passed and 5 skipped, with zero failures.
+- The runtime-role integration passed 1 file / 5 tests. Provisioning created
+  eight roles (migrator plus public, ops, worker, billing, retention, auth, and
+  member runtimes); all 7/7 runtime connections passed catalog-only verification
+  with migrator ownership true and `rowValuesRead=false`.
+- The final local suite passed 650 tests with 76 database-environment skips.
+  Typecheck, lint, Drizzle generation/check, OpenAPI generation, and the
+  optimized webpack build passed; the build emitted 45 route/page entries.
+- The split public/ops browser matrix passed 58 checks with two intentional
+  mobile skips. The localhost deployment verifier passed 25 public routes, two
+  private unknown-capability probes, `/login`, and the exact same-origin
+  `/dashboard` login redirect.
+- Strict `next-move-v1`, bounded context/provenance, Supabase Auth application
+  flows, project claims, member dashboard, project-key self-service,
+  claimed-project API, and scoped runtime roles are implemented locally. No
+  hosted Auth, API, role, or founder journey follows from code presence.
+
+The older immutable baseline remains separate:
 
 - PostgreSQL 16 replayed all 18 migration files through `0019`, with intentional
   `0009`/`0010` gaps and all hashes matched. The strict verifier matched 37/37
@@ -39,15 +67,17 @@ its own immutable remote or external evidence exists:
   tests exist using Stripe Node `^22.4.0` / API `2026-07-29.dahlia`, but no
   current catalog ID or application journey is recorded. The compromised
   sandbox credential must be rotated before any Stripe API verification.
-- No TrendsFast Supabase project, Vercel project/deployment, commercial Vercel
-  plan verification, DNS/TLS, production source/model read-back, hosted API,
-  three-product dogfood result, monitoring run, or legal/tax approval exists.
+- Isolated Free Supabase preview project `auxienkuufejeakaczlq` and protected
+  Hobby Vercel project `prj_nYn6zjWW4BcKd03QaVO6LTOF3CSC` exist with effects
+  disabled. No hosted migration, deployment, commercial Vercel plan, production
+  Supabase project, backup/restore, DNS/TLS, production source/model read-back,
+  hosted API, dogfood result, monitoring run, or legal/tax approval exists.
 
-This is `LOCAL_PASS` for the immutable implementation candidate, not production
-proof. See the
-[2026-08-12 local record](LOCAL_VERIFICATION_2026-08-12.md). Launch remains
-blocked on every applicable external, operational, provider, Stripe, dogfood,
-legal, and deployed-edge gate.
+Both records are local evidence, not production proof. See the
+[2026-08-13 product-completion record](LOCAL_VERIFICATION_2026-08-13.md) and
+[2026-08-12 historical record](LOCAL_VERIFICATION_2026-08-12.md). Launch remains
+blocked on immutable CI and every applicable external, operational, provider,
+Stripe, dogfood, legal, and deployed-edge gate.
 
 ## Ownership and truth
 
@@ -145,8 +175,10 @@ legal, and deployed-edge gate.
       only redacted rotation evidence is retained.
 - [ ] Exact-project deletion and `pnpm db:purge` (including eligible nonterminal
       scans, expired tokens, linked analytics, and orphan cleanup) are exercised
-      against PostgreSQL; authenticated request intake, scheduling, alerts,
-      backup expiry, legal holds, and completion audit are evidenced.
+      against PostgreSQL; the dedicated retention role's allowed purge and
+      denied sensitive-column paths pass; authenticated request intake,
+      deployed scheduling, alerts, backup expiry, legal holds, and completion
+      audit are evidenced.
 - [ ] Backup restoration and non-destructive rollback are rehearsed.
 - [ ] Security threat-model review is signed; no claim calls it an external audit.
 
@@ -208,10 +240,10 @@ declared launch-ready.
 ## Dogfood and distribution
 
 - [ ] Authorized production-equivalent live API scans are completed, in order,
-      for TrendsFast, Halio, and ShipToUsers; each has redacted JSON/Markdown
+      for Halio and ShipToUsers; each has private redacted JSON/Markdown
       review bundles, outputs differ materially, and generic repetition is a
       blocker.
-- [ ] External review approves all three bundles with
+- [ ] External review approves both bundles with
       `DOGFOOD_EXTERNAL_REVIEW_APPROVED=YES`, and every correction is resolved
       before public production or live Checkout.
 - [ ] Costs are measured from ledgers; unknowns remain unknown and fixtures are

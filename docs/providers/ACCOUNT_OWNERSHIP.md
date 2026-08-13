@@ -11,22 +11,23 @@ operator of TrendsFast's upstream stack.
 | `managed` | TrendsFast Cloud | TrendsFast operator | Server-side secret manager only             |
 | `byok`    | Self-hosting     | Self-host operator  | Server-side environment/secret manager only |
 
-Cloud customers receive one scoped TrendsFast API key. They do not connect
-xAI, DataForSEO, Tavily, Google, GitHub, or model accounts. Self-hosters create
-and fund their own accounts and accept the relevant terms.
+Cloud customers can create named, project-scoped TrendsFast API keys. Multiple
+keys share the project's allowance. They do not connect xAI, DataForSEO, Tavily,
+Google, GitHub, or model accounts. Self-hosters create and fund their own
+accounts and accept the relevant terms.
 
 ## Responsibility matrix
 
-| Responsibility                                   | Managed cloud                      | Self-hosted/BYOK              |
-| ------------------------------------------------ | ---------------------------------- | ----------------------------- |
-| Create/verify provider account                   | TrendsFast operator                | Self-host operator            |
-| Accept provider terms and confirm commercial use | TrendsFast operator + legal review | Self-host operator            |
-| Pay provider invoices and watch quota            | TrendsFast operator                | Self-host operator            |
-| Rotate/revoke upstream keys                      | TrendsFast operator                | Self-host operator            |
-| Configure per-scan ceilings                      | TrendsFast operator                | Self-host operator            |
-| Maintain adapters and fixtures                   | Project maintainers                | Project + local patches       |
-| Handle end-user data requests                    | TrendsFast operator                | Self-host operator            |
-| Receive one TrendsFast API key                   | Customer                           | Not applicable/local issuance |
+| Responsibility                                   | Managed cloud                      | Self-hosted/BYOK        |
+| ------------------------------------------------ | ---------------------------------- | ----------------------- |
+| Create/verify provider account                   | TrendsFast operator                | Self-host operator      |
+| Accept provider terms and confirm commercial use | TrendsFast operator + legal review | Self-host operator      |
+| Pay provider invoices and watch quota            | TrendsFast operator                | Self-host operator      |
+| Rotate/revoke upstream keys                      | TrendsFast operator                | Self-host operator      |
+| Configure per-scan ceilings                      | TrendsFast operator                | Self-host operator      |
+| Maintain adapters and fixtures                   | Project maintainers                | Project + local patches |
+| Handle end-user data requests                    | TrendsFast operator                | Self-host operator      |
+| Create project-scoped TrendsFast API keys        | Customer                           | Self-host operator      |
 
 The build agent cannot purchase accounts, accept terms, complete identity or
 payment checks, approve data rights, or enable production billing. Those are

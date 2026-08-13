@@ -17,6 +17,23 @@ needs a focused review queue without vanity dashboards.
 and protected `/ops`, `/ops/keys`, and `/ops/sources`, with
 mobile/accessibility/reduced-motion behavior.
 
+Deployments select one exact `TRENDSFAST_SURFACE`: `public` is the safe default;
+only `ops` exposes founder controls. On `public`, `/ops`, `/ops/**`, and
+`/api/ops/**` receive the same no-store `404` in Next.js Proxy before routing,
+database setup, or authentication. The ops surface keeps app session and CSRF
+authorization, applies response-wide `X-Robots-Tag: noindex`, disallows all
+crawlers, and suppresses its sitemap. The ops deployment allowlists only
+`/ops`, `/ops/**`, `/api/ops/**`, `robots.txt`, and required framework/static
+assets; marketing, private capabilities, `/v1`, billing/webhook, and worker
+routes receive the same early no-store `404` there.
+
+Hosted customer effects are independently default-off. `PUBLIC_SCANS_ENABLED`
+returns before free-scan request parsing or database work,
+`LIVE_API_CREATION_ENABLED` returns before API-key authentication, and
+`PROVIDER_CALLS_ENABLED` remains the deeper gate before non-fixture provider or
+model I/O. Existing private status/result reads remain available during an
+intake pause.
+
 ## Non-goals
 
 Dashboard zoo, fake progress percentages, testimonials/logos, customer account

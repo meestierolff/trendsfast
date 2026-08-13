@@ -114,8 +114,9 @@ version, and error without dumping rows. Prefer forward repair. Roll back app
 code only when schema compatibility is verified. Restore to a separate database
 first and compare; never overwrite production with an unverified backup.
 
-For migration `0007`, existing requests backfill a zero API cost reservation.
-Drain preexisting queued API work or perform a reviewed conservative backfill
+Legacy upgrade note: migration `0007` backfills existing requests with a zero
+API cost reservation. Operators upgrading across that historical migration must
+drain preexisting queued API work or perform a reviewed conservative backfill
 before allowing concurrent production creation. Do not assume a zero backfill
 represents the work's real maximum cost.
 

@@ -84,10 +84,10 @@ review on the dogfood set. Do not publish target metrics as achieved results.
 ## Limitations
 
 Relevance and saturation proxies are imperfect; model language remains
-probabilistic and founder review remains mandatory. Provider-reported actual
-model token usage is not yet settled, and the operator-supplied price schedule
-is not independently trusted, so model cost remains conservative/unknown rather
-than invoice-equivalent.
+probabilistic and founder review remains mandatory. Valid provider-reported
+model token usage settles the local reservation; missing or invalid usage stays
+conservative and unsettled. The operator-supplied price schedule is not
+independently trusted, so local model cost is never invoice-equivalent.
 
 ## Rollout
 

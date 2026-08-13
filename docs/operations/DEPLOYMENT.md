@@ -4,11 +4,15 @@ This is an unexecuted runbook for the intended Vercel + hosted PostgreSQL
 deployment. It does not prove that accounts, DNS, credentials, migrations,
 providers, or `trendsfast.com` are configured.
 
-Observed external state on 2026-08-12: no TrendsFast Supabase or Vercel project
-exists, the authenticated Vercel team `clarios-projects-05f6a57e` is on a Hobby
-plan, and `trendsfast.com` returns `NXDOMAIN`. The founder must upgrade that team
-to Pro, create the database/project, and later apply only Vercel's exact assigned
-DNS records. These are launch blockers, not permission to infer infrastructure.
+Observed external state on 2026-08-12: an isolated Free Supabase preview project
+(`auxienkuufejeakaczlq`) and one protected-dogfood Vercel project
+(`prj_nYn6zjWW4BcKd03QaVO6LTOF3CSC`) exist. The Vercel team remains Hobby; no
+hosted migration, deployment, alias, custom domain, cron, production Supabase
+project, backup restore, DNS assignment, or TLS proof exists. `trendsfast.com`
+is founder-owned at Spaceship, but exact Vercel-assigned records have not been
+applied or verified. The founder must upgrade Vercel and create/upgrade a
+Supabase Pro production organization. These are launch blockers, not permission
+to infer readiness.
 
 Do not execute this as a public launch while the current known gates remain
 open: live website/provider/model read-backs, scheduled retention and an
@@ -25,9 +29,9 @@ passes.
 
 1. Choose and record the exact release SHA; require green CI and all applicable
    unchecked items in [LAUNCH_CHECKLIST.md](LAUNCH_CHECKLIST.md).
-2. Founder creates/owns the GitHub repository, Vercel project with a suitable
-   commercial plan, Supabase project used only as PostgreSQL, provider accounts,
-   and monitoring/error-reporting project.
+2. Founder owns the GitHub repository and existing preview Vercel/Supabase
+   projects, provisions suitable Pro production projects/plans, and owns the
+   provider and monitoring/error-reporting accounts.
 3. Create separate preview and production databases/secrets. Restrict team
    access, enable MFA, backups, point-in-time recovery if available, and alerts.
 4. Confirm a direct PostgreSQL connection for controlled migrations and a
@@ -95,27 +99,39 @@ has an explicit production-safe fixture contract and has been reviewed. Record
 migration version and output with credentials redacted. Verify the new schema
 using read-only checks and application health before traffic.
 
-The current local working tree contains 18 migration files through latest
-`0019`, with intentional `0009`/`0010` numbering gaps. An isolated PostgreSQL 16
-replay passed with all 18 migration hashes matched, the fixture seed passed
-twice, and the strict hosted-schema verifier matched 37/37 public tables plus
-its exact columns, enums, indexes, constraints, and effective/default ACL denial
-for `PUBLIC`, `anon`, and `authenticated`. That is local evidence, not a hosted
-database read-back. Freeze the release, repeat the full replay and verifier at
-its immutable SHA using `DIRECT_DATABASE_URL`, record the exact ledger/version,
-and verify pooled runtime connectivity before traffic. Never seed preview or
-production. Run
-`pnpm db:purge` only from a reviewed, single-owner scheduled job with alerts and
-retained aggregate counts; the web application does not schedule retention
-itself.
+The earlier immutable baseline at
+`73297a6cfdc99b025990b001b39cef399f4d235e` replayed 18 migrations through
+`0019` and matched 37/37 tables. That result is historical. The current tree
+contains 23 migration files through `0024` (with intentional `0009`/`0010`
+gaps) and expects 44 application tables. A fresh isolated local PostgreSQL
+16.14 database applied 23/23 files and the initial strict verifier matched
+44/44 tables; 710 database-enabled tests and 5/5 runtime-role tests passed. The
+seven scoped runtime connections also passed catalog-only verification with no
+row values read. These results are not attached to an immutable release SHA;
+the expanded snapshot-manifest verifier remains pending, and no hosted
+migration/runtime-role read-back has run. Freeze the release, repeat the replay
+and both schema/role verifiers using a direct-capable runner, record the exact
+ledger/version, and verify every pooled runtime before traffic.
+Never seed preview or production. The private ops route and
+`apps/web/vercel.ops.json` provide code-local daily retention scheduling with
+aggregate health/alerts through `RETENTION_DATABASE_URL`; deployment and a
+successful production-shaped purge remain explicit gates.
 
 ## 4. Vercel deployment
 
-Import the verified GitHub repository into one founder-owned `trendsfast`
-project with `apps/web` as the Vercel Root Directory while retaining monorepo
-workspace access, a frozen pnpm install, and the application build. Confirm the
-team is on a suitable commercial plan and that Node/runtime/function limits
-match the bounded scan design. Never run migrations from a Vercel build.
+Use the already linked founder-owned public `trendsfast` project. Its verified remote
+Root Directory is the repository root (`.`), which retains access to every
+workspace package. Do not change that setting by assumption. Because the
+plan-specific Vercel files live under `apps/web`, reviewed CLI deployments must
+select one explicitly: `-A apps/web/vercel.hobby.json` while the team remains on
+Hobby, and only after Pro approval `-A apps/web/vercel.json` for the public
+ten-minute monitoring cron. Separately create/link a founder-owned
+`trendsfast-ops` project rooted at `.`, set `TRENDSFAST_SURFACE=ops`, give it
+its protected ops origin as `APP_URL`, the public canonical origin as
+`PUBLIC_APP_URL`, only ops/retention-scoped runtime URLs and private secrets, enable Deployment
+Protection, and deploy with `-A apps/web/vercel.ops.json`. No such ops project
+or deployment exists yet. Accept either deployment only after `vercel inspect`
+proves the intended project/config/cron. Never run migrations from a Vercel build.
 
 Deploy the release SHA to preview first. Run fixture smoke, security headers,
 private-token, durable API/ops admission, processing-fence/unknown-provider

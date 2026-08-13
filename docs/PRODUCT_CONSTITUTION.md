@@ -5,36 +5,43 @@ contradict this document require an explicit architecture/product decision.
 
 ## Category
 
-> **TrendsFast is the social and search trend intelligence API for founders and
-> their AI agents.**
+> **TrendsFast is the social and search trend intelligence API for founders,
+> creator-led brands, and their AI agents.**
 
 It is not primarily a trend dashboard, scraper, scheduler, auto-poster, social
 listening suite, or generic content generator.
 
 ## Promise
 
-**Spot the trends your users care about. Know what to distribute next.** Paste a
-product URL. TrendsFast combines
-bounded evidence about conversations, search demand, developer adoption, news
-triggers, and content performance to return one move: what to say, where to say
-it, why now, and the receipts behind it.
+**Find relevant trends and content opportunities fast. Know exactly what to
+publish, where to publish it, which conversation to reply to, what to remix, or
+what to wait on.**
+
+TrendsFast understands your brand, watches live social and search signals, and
+gives every AI agent one evidence-backed Next Move—with a channel, format, hook,
+tone, target, and time window.
 
 The first cohort is founder-reviewed. It requires no card before value and never
 auto-publishes.
 
 The primary outcome is to replace hours of manual distribution research with
-one relevant, evidence-backed action a founder can actually take.
+one relevant, evidence-backed action a founder can actually take, increasing
+the odds of breakout content by acting before a relevant opportunity saturates.
+This is never a guarantee of virality.
 
 ## Initial customer
 
-Build for technical solo founders and teams of 1–10 people making AI tools,
-B2B SaaS, or developer tools. They have a live product URL, ship faster than
-they distribute, lack a full-time distribution team, and value evidence and
-speed over a large dashboard.
+Build primarily for technical solo founders and small teams making AI tools,
+B2B SaaS, developer tools, and creator-led products. They have a live product
+URL, ship faster than they distribute, lack a full-time distribution team, and
+value evidence and speed over a large dashboard.
 
-Do not optimize the first cohort for enterprise surveillance, agencies and content
-calendars, consumer creator trends, bulk data resale, every social network,
-auto-posting, or guaranteed virality.
+Support growth operators and founder-creators responsible for distributing one
+specific product or brand without broadening into a generic creator database.
+
+Do not optimize the first cohort for enterprise surveillance, agencies managing
+many clients, generic entertainment creators, influencer discovery, bulk data
+resale, every social network, auto-posting, or guaranteed virality.
 
 ## Job to be done
 
@@ -96,8 +103,10 @@ origin are not independent.
 
 ## Product shape
 
-The first experience is `product URL -> result`, not signup -> integrations ->
-empty dashboard. The result page centers the Next Move card, receipts,
+The first experience is `product URL -> private result`, not signup ->
+integrations -> empty dashboard. After value, Google or magic-link sign-in can
+claim the exact result into a simple Today/Projects/History/Agents/Billing
+dashboard. The result page centers the Next Move card, action detail, receipts,
 limitations, confidence, validity window, review status, feedback, and
 `auto_publish=false`.
 
@@ -120,7 +129,7 @@ reduced, provider cost and review time are bounded, and users request recurring
 monitoring.
 
 Initial goals (20 requests, 15 deliveries, 60% relevant, 30% usable, three
-used moves, five repeat requests, median provider cost under $0.25, median
+used moves, five repeat requests, bounded private provider economics, median
 review under ten minutes, and zero fabricated evidence) are internal hypotheses
 until denominator-backed measurements exist. They must never be presented as
 results.

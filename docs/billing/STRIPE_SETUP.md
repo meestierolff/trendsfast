@@ -16,14 +16,17 @@ hard prerequisite.
 ## Catalog
 
 - Product: `TrendsFast Founder`
-- Price: `$39 USD / month`
-- Lookup key: `trendsfast_founder_monthly`
+- Price: `€39 EUR / month`
+- Lookup key: `trendsfast_founder_monthly_eur`
+- Tax behavior: `exclusive` (tax collection remains disabled until registrations are approved)
 - Internal entitlement: `founder_cloud`
 - Quantity/project limit: one
 - Scheduled runs: one per UTC day
 - Accepted on-demand runs: ten per billing period
 - Newly delivered Next Moves: at most one per UTC day
-- API: one project-scoped read/write key; polling does not consume research allowance
+- API: project-scoped read/write access; Checkout issues one initial key, while
+  owner-created keys share the same project allowance; polling does not consume
+  research allowance
 - History: 30 days
 
 Promotion codes, coupons, trials, and alternate plans are disabled. Prices and limits remain
@@ -37,8 +40,9 @@ PAID_MONITORING_ENABLED=false
 FOUNDING_100_ENABLED=false
 CLOUD_TRIAL_ENABLED=false
 STRIPE_MODE=test
-STRIPE_SANDBOX_KEY_ROTATED=NO
+STRIPE_SANDBOX_KEY_ROTATED=
 I_UNDERSTAND_LIVE_STRIPE=
+STRIPE_LIVE_CATALOG_APPROVED=
 STRIPE_LIVE_ENABLEMENT_APPROVED=
 STRIPE_SECRET_KEY=
 STRIPE_WEBHOOK_SECRET=
@@ -109,12 +113,13 @@ whether TrendsFast is legally registered where required.
 
 ```env
 I_UNDERSTAND_LIVE_STRIPE=YES
-STRIPE_LIVE_ENABLEMENT_APPROVED=YES
+STRIPE_LIVE_CATALOG_APPROVED=YES
 ```
 
 They can create/verify only the live Product and Price and stop before Checkout or a charge.
-Application configuration separately rejects live billing unless production mode and both
-acknowledgements are present; it also rejects test-mode billing in production and live mode outside
+`STRIPE_LIVE_ENABLEMENT_APPROVED=YES` is a separate runtime acknowledgement and does not authorize
+catalog mutation. Application configuration separately rejects live billing unless production mode
+and both runtime acknowledgements are present; it also rejects test-mode billing in production and live mode outside
 production. Sandbox Checkout is additionally fixture-only and can issue only a `tf_test_` key;
 managed/BYOK provider modes keep it closed, so test cards can never authorize paid upstream calls.
 Live production Checkout requires a non-fixture provider mode and is the only path that can issue a

@@ -76,9 +76,11 @@ Explain backups, legal holds, aggregation/anonymization, and provider-side
 retention. A config variable alone is not proof that deletion runs. The current
 repository supplies exact-project deletion and `pnpm db:purge` for eligible
 terminal/nonterminal scans, expired delivery tokens, linked analytics, and
-eligible orphan projects, but no privacy-request route, export,
-scheduler/alerts, backup-expiry proof, or legal-hold workflow; the deployed
-notice must describe only what operators have actually wired and tested.
+eligible orphan projects. It also supplies code-local authenticated retention
+scheduling and aggregate alerts, but no public privacy-request route, general
+rights export, deployed scheduler proof, backup-expiry proof, or approved
+legal-hold workflow; the deployed notice must describe only what operators have
+actually wired and tested.
 
 ## User choices and rights
 

@@ -40,7 +40,7 @@ by that token; it is not identity.
 | Model spend/accounting               | Explicit non-fixture input/output prices; conservative byte/output-token upper-bound estimate; provider/model attempts reserve durably before I/O; duplicate reservation refuses replay; valid provider-reported usage settles the reservation                                                       | Missing/invalid usage remains conservative and unsettled; operator price metadata and live provider usage are not independently verified         |
 | Stripe spoofing                      | Billing and paid monitoring are off by default; project-bound Checkout uses a hashed claim, raw-body signatures, event idempotency, exact Price/current-period checks, durable duplicate-Checkout recovery, and webhook-derived entitlement                                                          | Rotate the compromised sandbox key; no catalog or application Checkout/webhook/key/Portal journey is currently verified                          |
 | Retention/privacy failure            | Minimal excerpts; exact-project delete; `pnpm db:purge` covers retained terminal/nonterminal scans, expired delivery tokens, linked analytics, and eligible orphan projects; optional external analytics is privacy-filtered                                                                         | Repository/CLI/integration contracts exist; authenticated request intake, scheduling/alerts, export, backup expiry, and legal holds remain gates |
-| Supply-chain compromise              | Frozen lockfile, reviewed dependency updates, minimal workflow permissions, pinned actions by major/version policy, artifact provenance before release                                                                                                                                               | CI audit/review; founder chooses release policy                                                                                                  |
+| Supply-chain compromise              | Frozen lockfile, reviewed dependency updates, minimal workflow permissions, Actions pinned to reviewed full commit SHAs, CodeQL, dependency review, sensitive-path ownership and index guards, artifact provenance before release                                                                    | GitHub security settings and workflow runs require remote verification; founder chooses release policy                                           |
 | Ops compromise                       | Long server-only token; constant-time compare; signed secure cookie; same-origin login; CSRF for review actions; bounded bodies; in-process in-flight bound plus PostgreSQL-backed admission (5/fingerprint and 100/global per five-minute window); audit; optional network gate                     | Session/action/admission/origin tests; single-founder token auth and deployed access/proxy controls remain limitations                           |
 
 ## SSRF decision sequence
@@ -123,6 +123,13 @@ desktop/mobile axe checks; the local deployment verifier passed 26 routes plus
 two private unknown-capability `404` probes. The standard remote build,
 final-branch CI, and all external verification are still required. See the
 [2026-08-12 local record](../operations/LOCAL_VERIFICATION_2026-08-12.md).
+
+The later product-completion tree has a separate mutable local record: 23/23
+migrations through `0024`, an initial 44/44-table strict result, 710 passing
+database-enabled tests, and 5/5 runtime-role tests. The expanded strict manifest,
+immutable CI, and hosted role/Auth checks remain open; see the
+[2026-08-13 record](../operations/LOCAL_VERIFICATION_2026-08-13.md). These newer
+counts do not alter the immutable historical evidence above.
 
 Automatic recovery checks for a provider left `RUNNING` before the expired
 deadline label, records `PROVIDER_OUTCOME_UNKNOWN`, and invalidates stale workers

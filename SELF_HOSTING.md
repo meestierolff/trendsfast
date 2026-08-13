@@ -25,10 +25,11 @@ mode this repository claims without an operator-supplied read-back.
 The repository includes exact-project deletion and `pnpm db:purge`. The purge
 applies the configured cutoff to eligible terminal and nonterminal scans and
 removes expired delivery tokens, linked analytics, and eligible orphan projects.
-It does **not** currently expose a customer privacy-request endpoint, an export
-flow, or a scheduled retention worker. A production self-hoster must wrap those
-operations in an authenticated, reviewed procedure and schedule/monitor the
-purge.
+It also includes an authenticated ops-only retention route and separate ops
+deployment schedule template. Those code paths are not proof of an active
+scheduler or accepted privacy-request process. There is no public customer
+privacy-request endpoint or general rights export; a production self-hoster must
+deploy/monitor the purge and operate the reviewed request procedure.
 
 ## Required local configuration
 
@@ -58,8 +59,9 @@ Use separate development and production credentials.
 Non-fixture synthesis also requires explicit dated operator prices in
 `LLM_INPUT_PRICE_USD_PER_MILLION_TOKENS` and
 `LLM_OUTPUT_PRICE_USD_PER_MILLION_TOKENS`. They fund a conservative pre-call
-reservation; current code does not reconcile provider-reported actual model
-usage, so do not treat the reservation as invoice truth.
+reservation. Valid provider-reported token usage settles the local ledger;
+missing or invalid usage stays conservatively unsettled. Neither result is
+independent invoice truth.
 
 See the [environment reference](docs/operations/ENVIRONMENT.md) for every
 variable and fail-closed dependency.
@@ -71,8 +73,10 @@ and permission.
 
 ## Database and upgrades
 
-The core targets ordinary PostgreSQL 15+ and does not require Supabase Auth,
-Realtime, Storage, Edge Functions, RLS, or client-side database access.
+The core engine targets ordinary PostgreSQL 15+ and does not require Supabase
+Auth, Realtime, Storage, Edge Functions, RLS, or client-side database access.
+The included post-value claim/dashboard uses Supabase Auth for identity when a
+self-hoster enables it; business-table authorization still remains server-side.
 
 Before upgrading:
 
@@ -91,8 +95,9 @@ Never automatically roll back a destructive migration. See the
 Use TLS, a managed secret store, least-privilege database credentials, encrypted
 backups, log redaction, bounded egress, rate limits, CSRF protection, secure
 cookies, monitoring, and retention/deletion jobs. Keep `/ops` behind a strong
-server-only token and additional network/access controls; the alpha auth is a
-temporary founder control, not customer authentication.
+server-only token and additional network/access controls. Supabase Auth protects
+member/dashboard routes only; it does not replace the separate founder
+operations boundary.
 
 Set `APP_URL` to the exact canonical HTTPS origin. Run migrations separately
 from horizontally scaled request handlers. Do not run multiple scan workers
@@ -105,22 +110,22 @@ workers cannot mutate the run. Recovery refuses to replay a provider left
 deadline. Before using the explicit ops whole-scan retry for non-fixture work,
 reconcile whether the upstream effect or charge already occurred.
 
-The current ops surface can verify/reject evidence, approve, convert to `WAIT`,
-deliver, mark failed, and retry an entire failed persisted scan. It does not yet
-offer a source-only or synthesis-only rerun, manual evidence entry, or move-copy
-editing UI. Durable PostgreSQL admission bounds syntactically valid API-key
-attempts to 12 per fingerprint and 120 globally per minute, and ops-login
-attempts to 5 per fingerprint and 100 globally per five minutes before expensive
-verification. Verify the trusted-proxy/fingerprint boundary and capacity in the
-deployed environment; keep intake small and treat the missing workflow surfaces
-as operational limitations.
+The current ops surface can verify/reject evidence, edit within the immutable
+action boundary, approve, convert to `WAIT`, correct context, recompute from
+stored evidence, add bounded supplemental manual evidence, deliver, mark failed,
+and retry an entire failed persisted scan. It still does not offer a source-only
+or synthesis-only rerun. Durable PostgreSQL admission bounds syntactically valid
+API-key attempts to 12 per fingerprint and 120 globally per minute, and
+ops-login attempts to 5 per fingerprint and 100 globally per five minutes
+before expensive verification. Verify the trusted-proxy/fingerprint boundary
+and capacity in the deployed environment; keep intake small.
 
 API creation atomically locks the API-key row and admits projected rolling-hour
 cost in exact micro-USD units. Each request contributes the greater of its
 persisted reservation or summed run estimates/actuals; a new non-fixture request
-keeps its reservation for one hour if processing never commits. During an
-upgrade to migration `0007`, drain preexisting queued API work or operationally
-backfill its zero-valued reservations before enabling concurrent traffic.
+keeps its reservation for one hour if processing never commits. Before any
+migration upgrade, drain or reconcile preexisting queued work before enabling
+concurrent traffic on the new release.
 
 Public scan lookup capabilities use 256 random bits but have no independent
 durable lookup throttle. Put those routes behind verified edge/proxy abuse

@@ -34,8 +34,8 @@ release SHA, host, and deployment ID when present, and fails closed when that
 provenance is absent. No current production read-back exists, so Website, X,
 Google Trends, Hacker News, GitHub, Tavily/Open web, YouTube, and manual evidence
 must remain **Coming soon**/unverified; Reddit remains **Permission
-required**/`LEGAL_REVIEW`. No TrendsFast Supabase/Vercel project or live provider
-read-back exists.
+required**/`LEGAL_REVIEW`. Preview Supabase/Vercel projects now exist, but no
+deployed live provider read-back exists.
 
 ## Status-change gate
 
