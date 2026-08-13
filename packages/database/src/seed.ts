@@ -8,7 +8,14 @@ import {
   parseApiKey,
 } from "@trendsfast/core";
 import { loadEnv } from "@trendsfast/config";
-import type { ProjectContext, QueryPlan } from "@trendsfast/schemas";
+import {
+  ActionDetailsSchema,
+  BreakoutPotentialSchema,
+  NEXT_MOVE_CONTRACT_VERSION,
+  TrendWindowSchema,
+  type ProjectContext,
+  type QueryPlan,
+} from "@trendsfast/schemas";
 
 import type { TrendsFastDatabase } from "./client";
 import { createDatabaseFromEnv } from "./client";
@@ -44,6 +51,78 @@ const observedAt = new Date("2026-08-11T10:00:00.000Z");
 const publishedAt = new Date("2026-08-10T15:00:00.000Z");
 const completedAt = new Date("2026-08-11T10:00:08.000Z");
 const expiresAt = new Date("2036-08-11T10:00:00.000Z");
+const fixtureValidUntil = new Date("2036-08-14T10:00:00.000Z");
+
+const fixtureTrendWindow = TrendWindowSchema.parse({
+  state: "EVERGREEN",
+  basis: "CORROBORATED_INFERENCE",
+  observed_since: publishedAt.toISOString(),
+  last_confirmed_at: observedAt.toISOString(),
+  recommended_action_by: fixtureValidUntil.toISOString(),
+  valid_until: fixtureValidUntil.toISOString(),
+  recheck_at: fixtureValidUntil.toISOString(),
+  confidence: 0.82,
+  explanation:
+    "Three independent fixture source classes illustrate an evergreen product example; this is deterministic product evidence, not a live trend claim or duration estimate.",
+});
+
+const fixtureBreakoutPotential = BreakoutPotentialSchema.parse({
+  level: "medium",
+  basis: "HEURISTIC",
+  factors: {
+    audience_relevance: 0.91,
+    timing: 0.72,
+    novelty: 0.78,
+    product_credibility: 0.94,
+    format_fit: 0.8,
+    saturation_risk: 0.25,
+  },
+  explanation:
+    "The heuristic reflects fixture relevance, novelty, format fit, and saturation; it is not a probability or promised outcome.",
+});
+
+const fixtureOutline = [
+  "Describe the fragmented source-research loop.",
+  "Show how evidence is stored and independently corroborated.",
+  "Explain why one PUBLISH, REPLY, REMIX, or WAIT decision beats a feed.",
+];
+
+const fixtureActionDetails = ActionDetailsSchema.parse({
+  action: "PUBLISH",
+  content_type: "founder_text",
+  blueprint: {
+    content_premise:
+      "Show why founders need one evidence-backed distribution decision instead of another feed.",
+    audience_tension:
+      "Technical founders can ship quickly but still lose time deciding what is credible and timely enough to distribute.",
+    product_role:
+      "TrendsFast narrows bounded research to one founder-reviewed PUBLISH, REPLY, REMIX, or WAIT decision.",
+    format_family: "founder_text",
+    format_basis: "PRODUCT_FIT",
+    hook_family: "shipping-speed-versus-distribution-confidence",
+    hook_variants: [
+      {
+        style: "direct",
+        text: "Shipping software got faster. Deciding what to distribute did not.",
+      },
+      {
+        style: "contrarian",
+        text: "Founders do not need another trend feed; they need permission to wait when evidence is thin.",
+      },
+      {
+        style: "proof",
+        text: "Three independent evidence classes can change one distribution decision without pretending to predict virality.",
+      },
+    ],
+    tone: ["specific", "technical", "founder-led"],
+    structure: fixtureOutline,
+    cta: "Offer a founder-reviewed scan and ask founders whether they would use the move.",
+    asset_requirements: ["One product screenshot", "Three redacted evidence receipts"],
+    channel_instructions: ["Keep the opening self-contained", "Link only to the product result"],
+    production_options: ["FOUNDER_TEXT", "SCREEN_RECORDING"],
+  },
+  publish_by: fixtureValidUntil.toISOString(),
+});
 
 export const FIXTURE_PROJECT_CONTEXT: ProjectContext = {
   name: "TrendsFast",
@@ -149,13 +228,85 @@ export async function seedFixtureDatabase(
         credibleTopics: FIXTURE_PROJECT_CONTEXT.credibleTopics,
         assumptions: FIXTURE_PROJECT_CONTEXT.assumptions,
         context: FIXTURE_PROJECT_CONTEXT,
+        entityType: "PRODUCT",
+        contextProvenance: {
+          observed_facts: [
+            {
+              field: "product_name",
+              value: "TrendsFast",
+              source_url: "https://trendsfast.com",
+            },
+          ],
+          inferred_context: [
+            {
+              field: "audience",
+              value: FIXTURE_PROJECT_CONTEXT.audience,
+              rationale: "Deterministic fixture context for local product verification.",
+            },
+          ],
+          assumptions: FIXTURE_PROJECT_CONTEXT.assumptions,
+        },
+        voiceProfile: {
+          traits: ["specific", "technical", "restrained"],
+          preferred_phrases: ["one evidence-backed distribution move"],
+          avoid_phrases: ["guaranteed viral"],
+          sample_texts: [],
+          sample_urls: ["https://trendsfast.com"],
+        },
+        contentCapabilities: {
+          founder_text: true,
+          founder_on_camera: false,
+          screen_recording: true,
+          ai_avatar: false,
+          carousel: false,
+          product_demo: false,
+          long_form: false,
+        },
         sourceContentHash: "sha256:fixture-website-content",
         promptVersion: "fixture-context-v1",
         model: "fixture",
         createdBy: "fixture-seed",
         createdAt: observedAt,
       })
-      .onConflictDoNothing();
+      .onConflictDoUpdate({
+        target: projectContextVersions.id,
+        set: {
+          entityType: "PRODUCT",
+          contextProvenance: {
+            observed_facts: [
+              {
+                field: "product_name",
+                value: "TrendsFast",
+                source_url: "https://trendsfast.com",
+              },
+            ],
+            inferred_context: [
+              {
+                field: "audience",
+                value: FIXTURE_PROJECT_CONTEXT.audience,
+                rationale: "Deterministic fixture context for local product verification.",
+              },
+            ],
+            assumptions: FIXTURE_PROJECT_CONTEXT.assumptions,
+          },
+          voiceProfile: {
+            traits: ["specific", "technical", "restrained"],
+            preferred_phrases: ["one evidence-backed distribution move"],
+            avoid_phrases: ["guaranteed viral"],
+            sample_texts: [],
+            sample_urls: ["https://trendsfast.com"],
+          },
+          contentCapabilities: {
+            founder_text: true,
+            founder_on_camera: false,
+            screen_recording: true,
+            ai_avatar: false,
+            carousel: false,
+            product_demo: false,
+            long_form: false,
+          },
+        },
+      });
 
     await tx
       .insert(apiKeys)
@@ -192,6 +343,8 @@ export async function seedFixtureDatabase(
         language: "en",
         preferredChannels: ["x", "hacker_news", "github"],
         availableFormats: ["founder_text", "technical_post"],
+        generationLevel: "brief",
+        requestedContentCapabilities: ["founder_text", "screen_recording"],
         requestPayloadHash: digestNextMoveRequest({
           product_url: "https://trendsfast.com",
           goal: "qualified_signups",
@@ -199,6 +352,8 @@ export async function seedFixtureDatabase(
           language: "en",
           preferred_channels: ["x", "hacker_news", "github"],
           available_formats: ["founder_text", "technical_post"],
+          content_capabilities: ["founder_text", "screen_recording"],
+          generation_level: "brief",
         }),
         createdAt: observedAt,
         updatedAt: completedAt,
@@ -208,7 +363,21 @@ export async function seedFixtureDatabase(
       })
       .onConflictDoUpdate({
         target: scanRequests.id,
-        set: { normalizedUrl: "https://trendsfast.com/" },
+        set: {
+          normalizedUrl: "https://trendsfast.com/",
+          generationLevel: "brief",
+          requestedContentCapabilities: ["founder_text", "screen_recording"],
+          requestPayloadHash: digestNextMoveRequest({
+            product_url: "https://trendsfast.com",
+            goal: "qualified_signups",
+            market: "US",
+            language: "en",
+            preferred_channels: ["x", "hacker_news", "github"],
+            available_formats: ["founder_text", "technical_post"],
+            content_capabilities: ["founder_text", "screen_recording"],
+            generation_level: "brief",
+          }),
+        },
       });
 
     await tx
@@ -523,7 +692,7 @@ export async function seedFixtureDatabase(
           saturation: 0.25,
         },
         passesQualityFloor: true,
-        validUntil: new Date("2026-08-14T10:00:00.000Z"),
+        validUntil: fixtureValidUntil,
         scoreVersion: "opportunity-score-v1",
         createdAt: observedAt,
       })
@@ -546,11 +715,7 @@ export async function seedFixtureDatabase(
           "Show the manual research loop, the evidence quality floor, and why WAIT is a useful answer.",
         format: "founder_text",
         hook: "Shipping software got faster. Deciding what to distribute did not.",
-        outline: [
-          "Describe the fragmented source-research loop.",
-          "Show how evidence is stored and independently corroborated.",
-          "Explain why one PUBLISH/REPLY/REMIX/WAIT decision beats a feed.",
-        ],
+        outline: fixtureOutline,
         cta: "Offer a founder-reviewed scan and ask founders whether they would use the move.",
         priority: 86,
         confidence: "0.82000",
@@ -565,17 +730,36 @@ export async function seedFixtureDatabase(
           "Fixture evidence is illustrative and must not be presented as a live trend.",
           "A production scan requires successful provider read-backs.",
         ],
+        decisionContractVersion: NEXT_MOVE_CONTRACT_VERSION,
+        actionDetails: fixtureActionDetails,
+        trendWindow: fixtureTrendWindow,
+        breakoutPotential: fixtureBreakoutPotential,
+        generationLevel: "brief",
+        draftContent: null,
         founderReviewed: true,
         autoPublish: false,
         promptVersion: "fixture-synthesis-v1",
         scoreVersion: "opportunity-score-v1",
-        validUntil: new Date("2026-08-14T10:00:00.000Z"),
+        validUntil: fixtureValidUntil,
         createdAt: observedAt,
         updatedAt: completedAt,
         approvedAt: new Date("2026-08-11T10:00:07.000Z"),
         deliveredAt: completedAt,
       })
-      .onConflictDoNothing();
+      .onConflictDoUpdate({
+        target: nextMoves.id,
+        set: {
+          proposalStale: false,
+          decisionContractVersion: NEXT_MOVE_CONTRACT_VERSION,
+          actionDetails: fixtureActionDetails,
+          trendWindow: fixtureTrendWindow,
+          breakoutPotential: fixtureBreakoutPotential,
+          generationLevel: "brief",
+          draftContent: null,
+          validUntil: fixtureValidUntil,
+          updatedAt: completedAt,
+        },
+      });
 
     const verifiedAt = new Date("2026-08-11T10:00:07.000Z");
     await tx

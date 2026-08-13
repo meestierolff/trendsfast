@@ -3,15 +3,19 @@ import { pathToFileURL } from "node:url";
 
 import { loadEnv } from "@trendsfast/config";
 
-import { createDatabaseFromEnv } from "./client";
+import { createDatabaseFromRoleEnv } from "./client";
 import { loadCliEnvironment } from "./load-cli-env";
 import { createRepositories } from "./repositories/index";
 
-export async function purgeRetainedData(now = new Date()) {
+export async function purgeRetainedData() {
   const env = loadEnv();
-  const client = createDatabaseFromEnv(env);
+  if (!env.MANAGED_POLICY_REVISION) {
+    throw new Error("Managed retention policy is not configured");
+  }
+  const client = createDatabaseFromRoleEnv(env, "retention");
+  const repositories = createRepositories(client.db);
   try {
-    return await createRepositories(client.db).privacy.purgeExpired(now, env.SCAN_RETENTION_DAYS);
+    return await repositories.privacy.purgeManaged(env.MANAGED_POLICY_REVISION);
   } finally {
     await client.close();
   }

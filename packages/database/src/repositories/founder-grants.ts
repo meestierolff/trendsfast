@@ -1,9 +1,10 @@
-import { and, desc, eq, gt, isNull, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, lte } from "drizzle-orm";
 
 import { redactRecord, redactSecrets } from "@trendsfast/core";
 
 import type { TrendsFastDatabase } from "../client";
 import { founderEntitlementGrantEvents, founderEntitlementGrants, projects } from "../schema";
+import { lockProjectEntitlementScope } from "./founder-usage";
 
 const MAX_GRANT_MS = 30 * 24 * 60 * 60 * 1_000;
 
@@ -50,7 +51,7 @@ export class FounderGrantRepository {
     }
 
     return this.db.transaction(async (tx) => {
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${input.projectId}, 0))`);
+      await lockProjectEntitlementScope(tx as unknown as TrendsFastDatabase, input.projectId);
       const [project] = await tx
         .select({ id: projects.id, status: projects.status })
         .from(projects)
@@ -129,9 +130,7 @@ export class FounderGrantRepository {
         .where(eq(founderEntitlementGrants.id, input.grantId))
         .limit(1);
       if (!identity) return null;
-      await tx.execute(
-        sql`SELECT pg_advisory_xact_lock(hashtextextended(${identity.projectId}, 0))`,
-      );
+      await lockProjectEntitlementScope(tx as unknown as TrendsFastDatabase, identity.projectId);
       const [before] = await tx
         .select()
         .from(founderEntitlementGrants)

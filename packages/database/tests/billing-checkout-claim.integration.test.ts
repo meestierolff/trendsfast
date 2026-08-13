@@ -237,7 +237,7 @@ databaseDescribe("delivered-result Checkout claim", () => {
         claimHash,
         stripeCheckoutSessionId: checkoutSessionId,
         now: new Date(now.getTime() + 3_500),
-        rateLimitPerHour: 20,
+        rateLimitPerHour: 37,
         providerCostLimitUsd: configuredProviderCostLimitUsd,
       }),
     ).resolves.toEqual({ status: "WAITING" });
@@ -283,8 +283,8 @@ databaseDescribe("delivered-result Checkout claim", () => {
         claimHash,
         stripeCheckoutSessionId: checkoutSessionId,
         now: new Date(now.getTime() + 4_600),
-        rateLimitPerHour: 20,
-        providerCostLimitUsd: 5,
+        rateLimitPerHour: 37,
+        providerCostLimitUsd: configuredProviderCostLimitUsd,
       }),
     ).resolves.toEqual({ status: "WAITING" });
     expect(
@@ -320,7 +320,7 @@ databaseDescribe("delivered-result Checkout claim", () => {
           claimHash,
           stripeCheckoutSessionId: checkoutSessionId,
           now: new Date(now.getTime() + 5_000),
-          rateLimitPerHour: 20,
+          rateLimitPerHour: 37,
           providerCostLimitUsd: configuredProviderCostLimitUsd,
         }),
       ).rejects.toThrow(/billing_checkout_sessions|checkout claim/i);
@@ -350,7 +350,7 @@ databaseDescribe("delivered-result Checkout claim", () => {
         claimHash,
         stripeCheckoutSessionId: checkoutSessionId,
         now: new Date(now.getTime() + 6_000),
-        rateLimitPerHour: 20,
+        rateLimitPerHour: 37,
         providerCostLimitUsd: configuredProviderCostLimitUsd,
       }),
       repositories.billing.consumeCheckoutClaim({
@@ -358,7 +358,7 @@ databaseDescribe("delivered-result Checkout claim", () => {
         claimHash,
         stripeCheckoutSessionId: checkoutSessionId,
         now: new Date(now.getTime() + 6_000),
-        rateLimitPerHour: 20,
+        rateLimitPerHour: 37,
         providerCostLimitUsd: configuredProviderCostLimitUsd,
       }),
     ]);
@@ -384,7 +384,7 @@ databaseDescribe("delivered-result Checkout claim", () => {
       environment: "test",
       status: "ACTIVE",
       scopes: ["next_move:read", "next_move:write"],
-      rateLimitPerHour: 20,
+      rateLimitPerHour: 37,
       providerCostLimitUsd: "7.2500",
       expiresAt: periodEnd,
     });
@@ -427,7 +427,7 @@ databaseDescribe("delivered-result Checkout claim", () => {
         claimHash,
         stripeCheckoutSessionId: checkoutSessionId,
         now: new Date(now.getTime() + 6_500),
-        rateLimitPerHour: 20,
+        rateLimitPerHour: 37,
         providerCostLimitUsd: configuredProviderCostLimitUsd,
       }),
     ).resolves.toEqual({

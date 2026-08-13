@@ -4,6 +4,7 @@ import {
   createPrefixedId,
   createPublicScanToken,
   digestNextMoveRequest,
+  digestNextMoveRequestWithContext,
   hashOpaqueToken,
   redactRecord,
   redactSecrets,
@@ -23,7 +24,7 @@ import {
   scanRequests,
   scanRuns,
 } from "../schema";
-import { admitFounderUsage } from "./founder-usage";
+import { admitFounderUsage, lockProjectEntitlementScope } from "./founder-usage";
 
 const USD_MICROS = 1_000_000;
 
@@ -134,6 +135,7 @@ export type AdmitApiScanRequestResult =
   | { status: "CREATED"; request: ScanRequestRecord }
   | { status: "REUSED"; request: ScanRequestRecord }
   | { status: "IDEMPOTENCY_CONFLICT"; request: ScanRequestRecord }
+  | { status: "PROJECT_MISMATCH" }
   | { status: "KEY_INACTIVE" }
   | {
       status: "COST_LIMITED";
@@ -146,6 +148,7 @@ export type AdmitApiScanRequestResult =
 export type AdmitPublicScanRequestResult =
   | { status: "CREATED" | "REUSED"; scanRequestId: string; publicToken: string }
   | { status: "RATE_LIMITED" }
+  | { status: "PROJECT_ALREADY_EXISTS" }
   | {
       status: "GLOBAL_CAPACITY_REACHED" | "GLOBAL_BUDGET_REACHED";
       admittedCount: number;
@@ -169,6 +172,8 @@ type StoredRequestDigestSource = Pick<
   | "language"
   | "preferredChannels"
   | "availableFormats"
+  | "generationLevel"
+  | "requestedContentCapabilities"
 >;
 
 function digestStoredRequest(request: StoredRequestDigestSource): string {
@@ -183,6 +188,10 @@ function digestStoredRequest(request: StoredRequestDigestSource): string {
         ? {}
         : { preferred_channels: request.preferredChannels }),
       ...(request.availableFormats === null ? {} : { available_formats: request.availableFormats }),
+      ...(request.requestedContentCapabilities === null
+        ? {}
+        : { content_capabilities: request.requestedContentCapabilities }),
+      generation_level: request.generationLevel,
     })
   );
 }
@@ -190,15 +199,20 @@ function digestStoredRequest(request: StoredRequestDigestSource): string {
 export function isSameIdempotentRequest(
   stored: StoredRequestDigestSource,
   request: NextMoveRequest,
+  projectContextVersionId?: string,
 ): boolean {
-  return digestStoredRequest(stored) === digestNextMoveRequest(request);
+  return (
+    digestStoredRequest(stored) ===
+    digestNextMoveRequestWithContext(request, projectContextVersionId)
+  );
 }
 
 function resolveStoredIdempotency(
   stored: ScanRequestRecord,
   request: NextMoveRequest,
+  projectContextVersionId?: string,
 ): Exclude<ResolveApiIdempotencyResult, null> {
-  if (isSameIdempotentRequest(stored, request)) {
+  if (isSameIdempotentRequest(stored, request, projectContextVersionId)) {
     return { request: stored, idempotencyConflict: false };
   }
   return { request: stored, idempotencyConflict: true };
@@ -245,11 +259,13 @@ export class ScanRepository {
         state: "QUEUED",
         submittedUrl: input.request.product_url,
         normalizedUrl: normalizeProductUrl(input.request.product_url),
-        goal: input.request.goal ?? null,
+        goal: input.request.objective ?? input.request.goal ?? null,
         market: input.request.market ?? null,
         language: input.request.language ?? null,
         preferredChannels: input.request.preferred_channels ?? null,
         availableFormats: input.request.available_formats ?? null,
+        generationLevel: input.request.generation_level ?? "brief",
+        requestedContentCapabilities: input.request.content_capabilities ?? null,
         idempotencyKeyHash,
         requestPayloadHash,
         requesterFingerprintHash: input.requesterFingerprintHash ?? null,
@@ -321,9 +337,12 @@ export class ScanRepository {
     apiKeyId: string;
     idempotencyKey: string;
     request: NextMoveRequest;
+    projectContextVersionId?: string;
   }): Promise<ResolveApiIdempotencyResult> {
     const request = await this.getByApiIdempotency(input.apiKeyId, input.idempotencyKey);
-    return request ? resolveStoredIdempotency(request, input.request) : null;
+    return request
+      ? resolveStoredIdempotency(request, input.request, input.projectContextVersionId)
+      : null;
   }
 
   /**
@@ -337,6 +356,7 @@ export class ScanRepository {
     idempotencyKey: string;
     request: NextMoveRequest;
     projectId?: string;
+    projectContextVersionId?: string;
     requesterFingerprintHash?: string;
     costReservationUsd: number;
     since: Date;
@@ -357,10 +377,51 @@ export class ScanRepository {
     }
 
     const idempotencyKeyHash = hashOpaqueToken(input.idempotencyKey);
-    const requestPayloadHash = digestNextMoveRequest(input.request);
+    const requestPayloadHash = digestNextMoveRequestWithContext(
+      input.request,
+      input.projectContextVersionId,
+    );
     const reservationMicros = toUsdMicros(input.costReservationUsd, "nearest");
 
     return this.db.transaction(async (tx) => {
+      if (input.projectId) {
+        await lockProjectEntitlementScope(tx as unknown as TrendsFastDatabase, input.projectId);
+        const [project] = await tx
+          .select({
+            id: projects.id,
+            normalizedUrl: projects.normalizedUrl,
+            status: projects.status,
+          })
+          .from(projects)
+          .where(eq(projects.id, input.projectId))
+          .limit(1);
+        if (
+          !project ||
+          project.status !== "ACTIVE" ||
+          project.normalizedUrl !== normalizeProductUrl(input.request.product_url)
+        ) {
+          return { status: "PROJECT_MISMATCH" as const };
+        }
+      }
+      if (input.projectContextVersionId && !input.projectId) {
+        throw new Error("A pinned project context requires a project-scoped API request");
+      }
+      if (input.projectContextVersionId) {
+        const [pinnedContext] = await tx
+          .select({ id: projectContextVersions.id })
+          .from(projectContextVersions)
+          .where(
+            and(
+              eq(projectContextVersions.id, input.projectContextVersionId),
+              eq(projectContextVersions.projectId, input.projectId!),
+              eq(projectContextVersions.isCurrent, true),
+            ),
+          )
+          .limit(1);
+        if (!pinnedContext) {
+          throw new Error("The claimed-project context changed before API admission");
+        }
+      }
       const [apiKey] = await tx
         .select({
           id: apiKeys.id,
@@ -401,7 +462,11 @@ export class ScanRepository {
         )
         .limit(1);
       if (existing) {
-        const resolved = resolveStoredIdempotency(existing, input.request);
+        const resolved = resolveStoredIdempotency(
+          existing,
+          input.request,
+          input.projectContextVersionId,
+        );
         return resolved.idempotencyConflict
           ? { status: "IDEMPOTENCY_CONFLICT" as const, request: existing }
           : { status: "REUSED" as const, request: existing };
@@ -499,11 +564,13 @@ export class ScanRepository {
           state: "QUEUED",
           submittedUrl: input.request.product_url,
           normalizedUrl: normalizeProductUrl(input.request.product_url),
-          goal: input.request.goal ?? null,
+          goal: input.request.objective ?? input.request.goal ?? null,
           market: input.request.market ?? null,
           language: input.request.language ?? null,
           preferredChannels: input.request.preferred_channels ?? null,
           availableFormats: input.request.available_formats ?? null,
+          generationLevel: input.request.generation_level ?? "brief",
+          requestedContentCapabilities: input.request.content_capabilities ?? null,
           idempotencyKeyHash,
           requestPayloadHash,
           requesterFingerprintHash: input.requesterFingerprintHash ?? null,
@@ -517,6 +584,18 @@ export class ScanRepository {
           .update(founderUsageEvents)
           .set({ scanRequestId: created.id })
           .where(eq(founderUsageEvents.id, founderUsageEventId));
+      }
+      if (input.projectContextVersionId) {
+        const [queuedRun] = await tx
+          .insert(scanRuns)
+          .values({
+            scanRequestId: created.id,
+            projectContextVersionId: input.projectContextVersionId,
+            attempt: 1,
+            state: "QUEUED",
+          })
+          .returning({ id: scanRuns.id });
+        if (!queuedRun) throw new Error("Could not pin the claimed-project context version");
       }
       return { status: "CREATED" as const, request: created };
     });
@@ -567,6 +646,74 @@ export class ScanRepository {
     return {
       request,
       run,
+      move,
+      context: contextRow?.context ?? null,
+      project: contextRow?.project ?? null,
+      delivery: delivery ?? null,
+      evidence,
+    };
+  }
+
+  /**
+   * Capability-safe status projection for the anonymous/API data plane.
+   * Keep the run projection deliberately free of model payloads, failures,
+   * fences, and monetary fields; founder ops uses getStatusByPublicId instead.
+   */
+  async getPublicStatusByPublicId(publicId: string) {
+    const request = await this.getByPublicId(publicId);
+    if (!request) return null;
+    const [run] = await this.db
+      .select({
+        id: scanRuns.id,
+        scanRequestId: scanRuns.scanRequestId,
+        attempt: scanRuns.attempt,
+        queryPlan: scanRuns.queryPlan,
+      })
+      .from(scanRuns)
+      .where(eq(scanRuns.scanRequestId, request.id))
+      .orderBy(desc(scanRuns.attempt))
+      .limit(1);
+    const [move] = await this.db
+      .select()
+      .from(nextMoves)
+      .where(eq(nextMoves.scanRequestId, request.id))
+      .orderBy(desc(nextMoves.createdAt))
+      .limit(1);
+    if (!move) {
+      return {
+        request,
+        run: run ?? null,
+        move: null,
+        context: null,
+        project: null,
+        delivery: null,
+        evidence: [],
+      };
+    }
+    const [contextRow] = await this.db
+      .select({ context: projectContextVersions.context, project: projects })
+      .from(projectContextVersions)
+      .innerJoin(projects, eq(projectContextVersions.projectId, projects.id))
+      .where(eq(projectContextVersions.id, move.projectContextVersionId))
+      .limit(1);
+    const evidence = await this.db
+      .select()
+      .from(evidenceReceipts)
+      .where(
+        and(
+          eq(evidenceReceipts.nextMoveId, move.id),
+          eq(evidenceReceipts.moveVersion, move.reviewVersion),
+        ),
+      );
+    const [delivery] = await this.db
+      .select()
+      .from(deliveryTokens)
+      .where(eq(deliveryTokens.nextMoveId, move.id))
+      .orderBy(desc(deliveryTokens.createdAt))
+      .limit(1);
+    return {
+      request,
+      run: run ?? null,
       move,
       context: contextRow?.context ?? null,
       project: contextRow?.project ?? null,
@@ -649,18 +796,28 @@ export class ScanRepository {
         );
       if ((recent?.value ?? 0) >= dailyLimit) return { status: "RATE_LIMITED" as const };
 
-      const [duplicate] = await tx
-        .select()
-        .from(scanRequests)
-        .where(
-          and(
-            eq(scanRequests.requesterFingerprintHash, input.requesterFingerprintHash),
-            eq(scanRequests.normalizedUrl, normalizedUrl),
-            gte(scanRequests.submittedAt, input.since),
-          ),
-        )
-        .orderBy(desc(scanRequests.submittedAt))
-        .limit(1);
+      const [duplicate] = input.anonymousSessionHash
+        ? await tx
+            .select({ id: scanRequests.id, publicId: scanRequests.publicId })
+            .from(scanRequests)
+            .innerJoin(
+              analyticsEvents,
+              and(
+                eq(analyticsEvents.scanRequestId, scanRequests.id),
+                eq(analyticsEvents.name, "free_scan_submitted"),
+                eq(analyticsEvents.anonymousSessionHash, input.anonymousSessionHash),
+              ),
+            )
+            .where(
+              and(
+                eq(scanRequests.requesterFingerprintHash, input.requesterFingerprintHash),
+                eq(scanRequests.normalizedUrl, normalizedUrl),
+                gte(scanRequests.submittedAt, input.since),
+              ),
+            )
+            .orderBy(desc(scanRequests.submittedAt))
+            .limit(1)
+        : [];
       if (duplicate) {
         await recordSubmission(duplicate.id, true);
         return {
@@ -668,6 +825,25 @@ export class ScanRepository {
           scanRequestId: duplicate.id,
           publicToken: duplicate.publicId,
         };
+      }
+
+      // A public scan is a project-creation path, not an anonymous refresh of
+      // an existing workspace. The global admission lock serializes parallel
+      // fingerprints so a second caller cannot queue work for the same URL.
+      const [[existingRequest], [existingProject]] = await Promise.all([
+        tx
+          .select({ id: scanRequests.id })
+          .from(scanRequests)
+          .where(eq(scanRequests.normalizedUrl, normalizedUrl))
+          .limit(1),
+        tx
+          .select({ id: projects.id })
+          .from(projects)
+          .where(eq(projects.normalizedUrl, normalizedUrl))
+          .limit(1),
+      ]);
+      if (existingRequest || existingProject) {
+        return { status: "PROJECT_ALREADY_EXISTS" as const };
       }
 
       const publicReservations = await tx
@@ -872,6 +1048,19 @@ export class ScanRepository {
       let run = latestRun;
       const processingFence = createPrefixedId("fence");
       if (decision === "CLAIM_NEW_RUN") {
+        const [currentProjectContext] = request.projectId
+          ? await tx
+              .select({ id: projectContextVersions.id })
+              .from(projectContextVersions)
+              .where(
+                and(
+                  eq(projectContextVersions.projectId, request.projectId),
+                  eq(projectContextVersions.isCurrent, true),
+                ),
+              )
+              .limit(1)
+              .for("update")
+          : [];
         const [attemptRow] = await tx
           .select({ latest: max(scanRuns.attempt) })
           .from(scanRuns)
@@ -880,6 +1069,7 @@ export class ScanRepository {
           .insert(scanRuns)
           .values({
             scanRequestId: request.id,
+            projectContextVersionId: currentProjectContext?.id ?? null,
             attempt: (attemptRow?.latest ?? 0) + 1,
             state: "RUNNING",
             hardDeadlineAt: deadline,
@@ -891,6 +1081,22 @@ export class ScanRepository {
         run = created;
       } else {
         if (!run) throw new Error("A resumable claim is missing its scan run");
+        if (run.projectContextVersionId) {
+          const [pinnedContext] = await tx
+            .select({ id: projectContextVersions.id })
+            .from(projectContextVersions)
+            .where(
+              and(
+                eq(projectContextVersions.id, run.projectContextVersionId),
+                request.projectId
+                  ? eq(projectContextVersions.projectId, request.projectId)
+                  : sql`true`,
+              ),
+            )
+            .limit(1)
+            .for("update");
+          if (!pinnedContext) throw new Error("The pinned project context is unavailable");
+        }
         const [renewed] = await tx
           .update(scanRuns)
           .set({

@@ -15,7 +15,9 @@ import { ScanDataRepository } from "./scan-data";
 import { PrivacyRepository } from "./privacy";
 import { ManualEvidenceRepository } from "./manual-evidence";
 import { MonitoringRepository } from "./monitoring";
+import { OperationsRepository } from "./operations";
 import { ProviderVerificationRepository } from "./provider-verification";
+import { MemberRepository } from "./members";
 
 export * from "./analytics";
 export * from "./auth-admission";
@@ -25,6 +27,7 @@ export * from "./founder-grants";
 export * from "./founder-launch-interest";
 export * from "./monitoring-model";
 export * from "./monitoring";
+export * from "./operations";
 export * from "./api-keys";
 export * from "./costs";
 export * from "./delivery";
@@ -36,6 +39,7 @@ export * from "./scan-data";
 export * from "./privacy";
 export * from "./manual-evidence";
 export * from "./provider-verification";
+export * from "./members";
 
 export function createRepositories(
   db: TrendsFastDatabase,
@@ -53,7 +57,9 @@ export function createRepositories(
     founderGrants: new FounderGrantRepository(db),
     founderUsage: new FounderUsageRepository(db),
     manualEvidence: new ManualEvidenceRepository(db),
+    members: new MemberRepository(db, options.apiKeyPepper),
     monitoring: new MonitoringRepository(db),
+    operations: new OperationsRepository(db),
     privacy: new PrivacyRepository(db),
     providerVerifications: new ProviderVerificationRepository(db),
     reviews: new ReviewRepository(db),

@@ -20,6 +20,43 @@ import { FIXTURE_PROJECT_CONTEXT } from "../src/seed";
 
 const databaseDescribe = process.env.RUN_DATABASE_INTEGRATION === "1" ? describe : describe.skip;
 
+function waitDecisionContract(validUntil: Date) {
+  const boundary = validUntil.toISOString();
+  return {
+    decisionContractVersion: "next-move-v1",
+    actionDetails: {
+      action: "WAIT",
+      considered_opportunity: "A feedback fixture",
+      failure_reasons: ["WEAK_EVIDENCE"],
+      do_not_act_on: ["Do not publish from this fixture."],
+      watch_conditions: ["Wait for stronger evidence."],
+      recheck_at: boundary,
+    },
+    trendWindow: {
+      state: "UNKNOWN",
+      basis: "UNKNOWN",
+      last_confirmed_at: boundary,
+      valid_until: boundary,
+      recheck_at: boundary,
+      confidence: 0.2,
+      explanation: "The fixture makes no measured timing claim.",
+    },
+    breakoutPotential: {
+      level: "unknown",
+      basis: "INSUFFICIENT_DATA",
+      factors: {
+        audience_relevance: 0,
+        timing: 0,
+        novelty: 0,
+        product_credibility: 0,
+        format_fit: 0,
+        saturation_risk: 0,
+      },
+      explanation: "The fixture makes no breakout claim.",
+    },
+  } as const;
+}
+
 databaseDescribe("private feedback deduplication", () => {
   const client = createDatabaseFromEnv();
   const repositories = createRepositories(client.db);
@@ -92,6 +129,7 @@ databaseDescribe("private feedback deduplication", () => {
       })
       .returning();
     if (!run) throw new Error("feedback run setup failed");
+    const validUntil = new Date(Date.now() + 86_400_000);
     const [move] = await client.db
       .insert(nextMoves)
       .values({
@@ -118,7 +156,8 @@ databaseDescribe("private feedback deduplication", () => {
         autoPublish: false,
         promptVersion: "integration",
         scoreVersion: "integration",
-        validUntil: new Date(Date.now() + 86_400_000),
+        validUntil,
+        ...waitDecisionContract(validUntil),
         approvedAt: new Date(),
         deliveredAt: new Date(),
       })

@@ -158,7 +158,7 @@ databaseDescribe("atomic model cost reservations", () => {
       provider: "hacker_news",
       operation: "collect:attempt:1",
       estimatedCostUsd: 0.02,
-      maximumCostUsd: 0.25,
+      maximumCostUsd: 0.317,
       unitMetadata: {
         accounting: "conservative_pre_call_reservation",
         usage_status: "unknown_not_settled",
@@ -183,7 +183,7 @@ databaseDescribe("atomic model cost reservations", () => {
         provider: "hacker_news",
         operation: "collect:attempt:1",
         estimatedCostUsd: 0.02,
-        maximumCostUsd: 0.25,
+        maximumCostUsd: 0.317,
         unitMetadata: { usage_status: "unknown_not_settled" },
       }),
     ).resolves.toMatchObject({ created: false });

@@ -29,14 +29,23 @@ export class FeedbackRepository {
         metadata: input.metadata ? sanitizeAnalyticsProperties(input.metadata) : null,
       };
       const insert = tx.insert(feedbackEvents).values(values);
+      const returning = {
+        id: feedbackEvents.id,
+        nextMoveId: feedbackEvents.nextMoveId,
+        deliveryTokenId: feedbackEvents.deliveryTokenId,
+        kind: feedbackEvents.kind,
+        createdAt: feedbackEvents.createdAt,
+      };
       const inserted = input.deliveryTokenId
-        ? await insert.onConflictDoNothing({ target: feedbackEvents.deliveryTokenId }).returning()
-        : await insert.onConflictDoNothing().returning();
+        ? await insert
+            .onConflictDoNothing({ target: feedbackEvents.deliveryTokenId })
+            .returning(returning)
+        : await insert.onConflictDoNothing().returning(returning);
       let event = inserted[0];
       const created = event !== undefined;
       if (!event && input.deliveryTokenId) {
         [event] = await tx
-          .select()
+          .select(returning)
           .from(feedbackEvents)
           .where(eq(feedbackEvents.deliveryTokenId, input.deliveryTokenId))
           .limit(1);

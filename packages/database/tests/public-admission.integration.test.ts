@@ -7,6 +7,7 @@ import {
   analyticsEvents,
   createDatabaseFromEnv,
   createRepositories,
+  projects,
   scanRequests,
 } from "../src/index";
 
@@ -50,7 +51,7 @@ databaseDescribe("atomic public scan admission", () => {
           requesterFingerprintHash: fingerprint,
           anonymousSessionHash: sessionHash,
           since,
-          dailyLimit: 20,
+          dailyLimit: 31,
           ...globalPolicy,
           now,
         }),
@@ -69,6 +70,77 @@ databaseDescribe("atomic public scan admission", () => {
     expect(events).toHaveLength(8);
     expect(events.filter((event) => event.properties?.reused === false)).toHaveLength(1);
     expect(events.filter((event) => event.properties?.reused === true)).toHaveLength(7);
+  });
+
+  it("never shares a private scan capability across sessions on the same network", async () => {
+    const sharedFingerprint = `${fingerprint}-shared-network`;
+    const firstSession = randomUUID().replaceAll("-", "").repeat(2);
+    const secondSession = randomUUID().replaceAll("-", "").repeat(2);
+    const sharedUrl = `https://shared-network-${randomUUID()}.example/`;
+    try {
+      const created = await repositories.scans.admitPublicRequest({
+        submittedUrl: sharedUrl,
+        normalizedUrl: sharedUrl,
+        requesterFingerprintHash: sharedFingerprint,
+        anonymousSessionHash: firstSession,
+        since,
+        dailyLimit: 31,
+        ...globalPolicy,
+        now,
+      });
+      expect(created.status).toBe("CREATED");
+
+      const rejected = await repositories.scans.admitPublicRequest({
+        submittedUrl: sharedUrl,
+        normalizedUrl: sharedUrl,
+        requesterFingerprintHash: sharedFingerprint,
+        anonymousSessionHash: secondSession,
+        since,
+        dailyLimit: 31,
+        ...globalPolicy,
+        now: new Date(now.getTime() + 1_000),
+      });
+      expect(rejected).toEqual({ status: "PROJECT_ALREADY_EXISTS" });
+      expect("publicToken" in rejected).toBe(false);
+    } finally {
+      await client.db
+        .delete(scanRequests)
+        .where(eq(scanRequests.requesterFingerprintHash, sharedFingerprint));
+    }
+  });
+
+  it("rejects a new anonymous scan for an existing project without reserving work", async () => {
+    const existingFingerprint = `${fingerprint}-existing-project`;
+    const existingUrl = `https://existing-project-${randomUUID()}.example/`;
+    const [project] = await client.db
+      .insert(projects)
+      .values({
+        publicId: `project_${randomUUID()}`,
+        url: existingUrl,
+        normalizedUrl: existingUrl,
+      })
+      .returning();
+    if (!project) throw new Error("existing project fixture was not created");
+    try {
+      const rejected = await repositories.scans.admitPublicRequest({
+        submittedUrl: existingUrl,
+        normalizedUrl: existingUrl,
+        requesterFingerprintHash: existingFingerprint,
+        since,
+        dailyLimit: 31,
+        ...globalPolicy,
+        now,
+      });
+      expect(rejected).toEqual({ status: "PROJECT_ALREADY_EXISTS" });
+      expect(
+        await client.db
+          .select()
+          .from(scanRequests)
+          .where(eq(scanRequests.requesterFingerprintHash, existingFingerprint)),
+      ).toEqual([]);
+    } finally {
+      await client.db.delete(projects).where(eq(projects.id, project.id));
+    }
   });
 
   it("atomically holds parallel unique submissions to the daily cap", async () => {
@@ -153,11 +225,11 @@ databaseDescribe("atomic public scan admission", () => {
             normalizedUrl: url,
             requesterFingerprintHash: `${prefix}-${index}`,
             since: globalStart,
-            dailyLimit: 1,
+            dailyLimit: 3,
             globalSince: globalStart,
             globalDailyLimit: 4,
-            globalDailyBudgetUsd: 100,
-            costReservationUsd: 1,
+            globalDailyBudgetUsd: 811.333,
+            costReservationUsd: 17.111,
             now: globalNow,
           });
         }),
@@ -179,20 +251,22 @@ databaseDescribe("atomic public scan admission", () => {
       const unique = await Promise.all(
         Array.from({ length: 8 }, (_, index) => {
           const url = `https://${prefix}-${index}.example/`;
+          const anonymousSessionHash = randomUUID().replaceAll("-", "").repeat(2);
           return repositories.scans
             .admitPublicRequest({
               submittedUrl: url,
               normalizedUrl: url,
               requesterFingerprintHash: `${prefix}-${index}`,
+              anonymousSessionHash,
               since: budgetStart,
-              dailyLimit: 10,
+              dailyLimit: 11,
               globalSince: budgetStart,
-              globalDailyLimit: 20,
-              globalDailyBudgetUsd: 5,
-              costReservationUsd: 2,
+              globalDailyLimit: 23,
+              globalDailyBudgetUsd: 7,
+              costReservationUsd: 3,
               now: budgetNow,
             })
-            .then((result) => ({ index, result }));
+            .then((result) => ({ anonymousSessionHash, index, result }));
         }),
       );
       expect(unique.filter(({ result }) => result.status === "CREATED")).toHaveLength(2);
@@ -200,18 +274,20 @@ databaseDescribe("atomic public scan admission", () => {
         6,
       );
 
-      const admittedIndex = unique.find(({ result }) => result.status === "CREATED")!.index;
+      const admitted = unique.find(({ result }) => result.status === "CREATED")!;
+      const admittedIndex = admitted.index;
       const duplicateUrl = `https://${prefix}-${admittedIndex}.example/`;
       const replay = await repositories.scans.admitPublicRequest({
         submittedUrl: duplicateUrl,
         normalizedUrl: duplicateUrl,
         requesterFingerprintHash: `${prefix}-${admittedIndex}`,
+        anonymousSessionHash: admitted.anonymousSessionHash,
         since: budgetStart,
-        dailyLimit: 10,
+        dailyLimit: 11,
         globalSince: budgetStart,
-        globalDailyLimit: 2,
-        globalDailyBudgetUsd: 4,
-        costReservationUsd: 2,
+        globalDailyLimit: 3,
+        globalDailyBudgetUsd: 6,
+        costReservationUsd: 3,
         now: new Date(budgetNow.getTime() + 1_000),
       });
       expect(replay.status).toBe("REUSED");

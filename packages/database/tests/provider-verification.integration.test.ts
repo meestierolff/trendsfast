@@ -102,8 +102,8 @@ databaseDescribe("durable provider verification truth", () => {
       deploymentHost: "preview.trendsfast.example",
       deploymentId: "preview_verification_concurrency",
       initiatedBy: actorId,
-      estimatedCostReservationUsd: 0.2,
-      maximumCostUsd: 1,
+      estimatedCostReservationUsd: 7.111,
+      maximumCostUsd: 91.333,
       startedAt: new Date("2026-08-11T14:00:00.000Z"),
     };
     const results = await Promise.all(
@@ -123,7 +123,7 @@ databaseDescribe("durable provider verification truth", () => {
       limitations: ["The conservative reservation remains unsettled."],
     });
     expect(unknown).toMatchObject({
-      estimatedCostUsd: "0.200000",
+      estimatedCostUsd: "7.111000",
       actualCostUsd: null,
       limitations: ["The conservative reservation remains unsettled."],
     });
@@ -140,8 +140,8 @@ databaseDescribe("durable provider verification truth", () => {
       ...shared,
       attemptId: deniedId,
       requestHash: "c".repeat(64),
-      estimatedCostReservationUsd: 1.01,
-      maximumCostUsd: 1,
+      estimatedCostReservationUsd: 91.334,
+      maximumCostUsd: 91.333,
     });
     expect(denied).toMatchObject({
       created: true,
@@ -157,8 +157,8 @@ databaseDescribe("durable provider verification truth", () => {
       ...shared,
       attemptId: deniedId,
       requestHash: "c".repeat(64),
-      estimatedCostReservationUsd: 1.01,
-      maximumCostUsd: 1,
+      estimatedCostReservationUsd: 91.334,
+      maximumCostUsd: 91.333,
     });
     expect(deniedReplay).toMatchObject({ created: false, admitted: false });
   });

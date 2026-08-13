@@ -37,21 +37,21 @@ databaseDescribe("paid API entitlement enforcement", () => {
         secretHash: "integration-test-only",
         scopes: ["next_move:read", "next_move:write"],
         environment: "live",
-        rateLimitPerHour: 20,
-        providerCostLimitUsd: "5.0000",
+        rateLimitPerHour: 37,
+        providerCostLimitUsd: "7.2500",
         createdAt: now,
         expiresAt: new Date("2027-08-11T12:00:00.000Z"),
       })
       .returning();
     if (!existingLiveKey) throw new Error("Live API-key fixture setup failed");
 
-    const admit = (label: string) =>
+    const admit = () =>
       repositories.scans.admitApiRequest({
         apiKeyId: existingLiveKey.id,
         projectId: project.id,
         idempotencyKey: randomUUID(),
-        request: { product_url: `${projectUrl}/${label}` },
-        costReservationUsd: 0.25,
+        request: { product_url: projectUrl },
+        costReservationUsd: 0.317,
         since: new Date(now.getTime() - 3_600_000),
         now,
       });
@@ -61,12 +61,24 @@ databaseDescribe("paid API entitlement enforcement", () => {
         name: "Founder agent",
         environment: "live",
         scopes: ["next_move:read", "next_move:write"],
-        rateLimitPerHour: 20,
-        providerCostLimitUsd: 5,
+        rateLimitPerHour: 37,
+        providerCostLimitUsd: 7.25,
         expiresAt: new Date("2027-08-11T12:00:00.000Z"),
       });
 
-    await expect(admit("missing-entitlement")).resolves.toEqual({
+    await expect(
+      repositories.scans.admitApiRequest({
+        apiKeyId: existingLiveKey.id,
+        projectId: project.id,
+        idempotencyKey: randomUUID(),
+        request: { product_url: `https://stale-${randomUUID()}.example` },
+        costReservationUsd: 0.317,
+        since: new Date(now.getTime() - 3_600_000),
+        now,
+      }),
+    ).resolves.toEqual({ status: "PROJECT_MISMATCH" });
+
+    await expect(admit()).resolves.toEqual({
       status: "USAGE_LIMITED",
       reason: "ENTITLEMENT_INACTIVE",
     });
@@ -101,7 +113,7 @@ databaseDescribe("paid API entitlement enforcement", () => {
       expectedLivemode: false,
       expectedPriceId: "price_founder",
     });
-    await expect(admit("inactive-entitlement")).resolves.toEqual({
+    await expect(admit()).resolves.toEqual({
       status: "USAGE_LIMITED",
       reason: "ENTITLEMENT_INACTIVE",
     });
@@ -132,7 +144,7 @@ databaseDescribe("paid API entitlement enforcement", () => {
       record: { projectId: project.id, environment: "live" },
       rawKey: expect.stringMatching(/^tf_live_/),
     });
-    await expect(admit("active-entitlement")).resolves.toMatchObject({ status: "CREATED" });
+    await expect(admit()).resolves.toMatchObject({ status: "CREATED" });
 
     await client.db
       .update(projectEntitlements)

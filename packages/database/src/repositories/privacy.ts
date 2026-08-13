@@ -1,4 +1,4 @@
-import { and, count, eq, inArray, isNull, lt, lte, notExists, or } from "drizzle-orm";
+import { and, count, eq, inArray, isNull, lt, lte, notExists, or, sql } from "drizzle-orm";
 
 import type { TrendsFastDatabase } from "../client";
 import {
@@ -14,6 +14,7 @@ import {
   founderEntitlementGrants,
   founderUsageEvents,
   nextMoves,
+  projectMemberships,
   projects,
   scanRequests,
   stripeCustomers,
@@ -29,6 +30,24 @@ export function retentionCutoff(now: Date, retentionDays: number): Date {
   }
   if (Number.isNaN(now.getTime())) throw new Error("Retention time is invalid");
   return new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1_000);
+}
+
+type ManagedRetentionPurgeRow = {
+  retention_cutoff: Date | string;
+  deleted_scan_requests: number | string;
+  deleted_delivery_tokens: number | string;
+  deleted_analytics_events: number | string;
+  deleted_founder_launch_interests: number | string;
+  remaining_expired_founder_launch_interests: number | string;
+  deleted_orphan_projects: number | string;
+};
+
+function boundedCount(value: number | string, field: string): number {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new Error(`Managed retention returned an invalid ${field} count`);
+  }
+  return parsed;
 }
 
 export class PrivacyRepository {
@@ -152,6 +171,47 @@ export class PrivacyRepository {
     });
   }
 
+  /** Function-only hosted retention path; policy and cutoff remain database-owned. */
+  async purgeManaged(expectedRevision: string) {
+    if (!/^[A-Za-z0-9_-]{32,200}$/.test(expectedRevision)) {
+      throw new Error("Managed runtime policy revision is invalid");
+    }
+    const result = await this.db.execute<ManagedRetentionPurgeRow>(sql`
+      select retention_cutoff,
+             deleted_scan_requests,
+             deleted_delivery_tokens,
+             deleted_analytics_events,
+             deleted_founder_launch_interests,
+             remaining_expired_founder_launch_interests,
+             deleted_orphan_projects
+        from public.trendsfast_purge_retained_data(${expectedRevision})
+    `);
+    const row = result.rows[0];
+    if (!row || result.rows.length !== 1) {
+      throw new Error("Managed retention did not return its aggregate result");
+    }
+    const cutoff =
+      row.retention_cutoff instanceof Date ? row.retention_cutoff : new Date(row.retention_cutoff);
+    if (Number.isNaN(cutoff.getTime())) {
+      throw new Error("Managed retention returned an invalid cutoff");
+    }
+    return {
+      cutoff,
+      deletedScanRequests: boundedCount(row.deleted_scan_requests, "scan request"),
+      deletedDeliveryTokens: boundedCount(row.deleted_delivery_tokens, "delivery token"),
+      deletedAnalyticsEvents: boundedCount(row.deleted_analytics_events, "analytics event"),
+      deletedFounderLaunchInterests: boundedCount(
+        row.deleted_founder_launch_interests,
+        "founder launch interest",
+      ),
+      remainingExpiredFounderLaunchInterests: boundedCount(
+        row.remaining_expired_founder_launch_interests,
+        "expired founder launch interest backlog",
+      ),
+      deletedOrphanProjects: boundedCount(row.deleted_orphan_projects, "orphan project"),
+    };
+  }
+
   async purgeExpired(now: Date, retentionDays: number) {
     const cutoff = retentionCutoff(now, retentionDays);
     return this.db.transaction(async (tx) => {
@@ -268,6 +328,12 @@ export class PrivacyRepository {
                 .select({ id: founderEntitlementGrants.id })
                 .from(founderEntitlementGrants)
                 .where(eq(founderEntitlementGrants.projectId, projects.id)),
+            ),
+            notExists(
+              tx
+                .select({ id: projectMemberships.id })
+                .from(projectMemberships)
+                .where(eq(projectMemberships.projectId, projects.id)),
             ),
           ),
         )

@@ -19,6 +19,8 @@ import {
   stripeCustomers,
   subscriptions,
 } from "../schema";
+import { lockProjectEntitlementScope } from "./founder-usage";
+import { enqueueOperationsAlert, operationsCode } from "./operations";
 
 export type BillingSubscriptionStatus =
   | "incomplete"
@@ -94,6 +96,14 @@ export class WebhookPayloadConflictError extends Error {
   constructor(eventId: string) {
     super(`Stripe event ${eventId} was replayed with a different payload hash`);
     this.name = "WebhookPayloadConflictError";
+  }
+}
+
+/** Projection failed after Stripe authenticity and event normalization passed. */
+export class StripeWebhookProjectionError extends Error {
+  constructor(options: { cause: unknown }) {
+    super("The verified Stripe webhook could not be projected", options);
+    this.name = "StripeWebhookProjectionError";
   }
 }
 
@@ -176,6 +186,13 @@ async function lockWebhookReceipt(
   if (existing.payloadHash !== input.payloadHash) {
     throw new WebhookPayloadConflictError(input.event.eventId);
   }
+  if (existing.state === "FAILED") {
+    await tx
+      .update(billingWebhookEvents)
+      .set({ state: "RECEIVED", failureCode: null, processedAt: null })
+      .where(eq(billingWebhookEvents.stripeEventId, input.event.eventId));
+    return "NEW";
+  }
   return "DUPLICATE";
 }
 
@@ -216,12 +233,12 @@ async function appendBillingAnalytics(
 }
 
 async function ensureProject(tx: TrendsFastDatabase, projectId: string) {
+  await lockProjectEntitlementScope(tx, projectId);
   const [project] = await tx
-    .select()
+    .select({ id: projects.id, status: projects.status })
     .from(projects)
     .where(eq(projects.id, projectId))
-    .limit(1)
-    .for("update");
+    .limit(1);
   if (!project || project.status !== "ACTIVE") {
     throw new Error("Stripe billing requires an existing active project");
   }
@@ -270,14 +287,19 @@ async function ensureCustomer(
   tx: TrendsFastDatabase,
   input: { projectId: string; stripeCustomerId: string },
 ) {
+  const customerProjection = {
+    id: stripeCustomers.id,
+    projectId: stripeCustomers.projectId,
+    stripeCustomerId: stripeCustomers.stripeCustomerId,
+  };
   const [byExternal] = await tx
-    .select()
+    .select(customerProjection)
     .from(stripeCustomers)
     .where(eq(stripeCustomers.stripeCustomerId, input.stripeCustomerId))
     .limit(1)
     .for("update");
   const [byProject] = await tx
-    .select()
+    .select(customerProjection)
     .from(stripeCustomers)
     .where(eq(stripeCustomers.projectId, input.projectId))
     .limit(1)
@@ -294,7 +316,7 @@ async function ensureCustomer(
         .update(stripeCustomers)
         .set({ projectId: input.projectId, updatedAt: new Date() })
         .where(eq(stripeCustomers.id, byExternal.id))
-        .returning();
+        .returning(customerProjection);
       if (!updated) throw new Error("The Stripe customer project binding could not be updated");
       return updated;
     }
@@ -303,7 +325,7 @@ async function ensureCustomer(
   const [created] = await tx
     .insert(stripeCustomers)
     .values({ projectId: input.projectId, stripeCustomerId: input.stripeCustomerId })
-    .returning();
+    .returning(customerProjection);
   if (!created) throw new Error("The Stripe customer binding could not be created");
   return created;
 }
@@ -353,6 +375,7 @@ async function syncEntitlement(
   },
 ) {
   if (!input.subscription.projectId) return null;
+  await lockProjectEntitlementScope(tx, input.subscription.projectId);
   const active = entitlementActive({
     status: input.subscription.status,
     paymentState: input.payment?.state ?? null,
@@ -427,7 +450,7 @@ async function syncEntitlement(
         .update(apiKeys)
         .set({ expiresAt: input.subscription.currentPeriodEnd })
         .where(and(eq(apiKeys.id, checkoutIssuedKey.apiKeyId), eq(apiKeys.status, "ACTIVE")))
-        .returning();
+        .returning({ id: apiKeys.id, expiresAt: apiKeys.expiresAt });
       if (extended) {
         await tx.insert(apiKeyManagementEvents).values({
           projectId: input.subscription.projectId,
@@ -446,7 +469,7 @@ async function syncEntitlement(
         .update(apiKeys)
         .set({ status: "REVOKED", revokedAt })
         .where(and(eq(apiKeys.id, checkoutIssuedKey.apiKeyId), eq(apiKeys.status, "ACTIVE")))
-        .returning();
+        .returning({ id: apiKeys.id, status: apiKeys.status });
       if (revoked) {
         await tx.insert(apiKeyManagementEvents).values({
           projectId: input.subscription.projectId,
@@ -461,7 +484,7 @@ async function syncEntitlement(
   }
 
   const [monitoring] = await tx
-    .select()
+    .select({ id: monitoringSubscriptions.id, nextDueAt: monitoringSubscriptions.nextDueAt })
     .from(monitoringSubscriptions)
     .where(eq(monitoringSubscriptions.projectId, entitlement.projectId))
     .limit(1)
@@ -487,12 +510,16 @@ async function syncEntitlement(
           leaseExpiresAt: null,
           completedAt: now,
           failureCode: "ENTITLEMENT_INACTIVE",
+          failureDisposition: "KNOWN_TERMINAL",
+          nextRetryAt: null,
+          quarantinedAt: null,
+          deadLetteredAt: null,
           updatedAt: now,
         })
         .where(
           and(
             eq(monitoringRuns.monitoringSubscriptionId, monitoring.id),
-            eq(monitoringRuns.state, "PROCESSING"),
+            inArray(monitoringRuns.state, ["PROCESSING", "RETRY_WAIT"]),
           ),
         );
     }
@@ -518,7 +545,7 @@ async function resolveSubscriptionProject(
     .limit(1)
     .for("update");
   const [customer] = await tx
-    .select()
+    .select({ projectId: stripeCustomers.projectId })
     .from(stripeCustomers)
     .where(eq(stripeCustomers.stripeCustomerId, event.customerId))
     .limit(1)
@@ -966,7 +993,11 @@ export class BillingRepository {
 
   async customerForProject(projectId: string) {
     const [customer] = await this.db
-      .select()
+      .select({
+        id: stripeCustomers.id,
+        projectId: stripeCustomers.projectId,
+        stripeCustomerId: stripeCustomers.stripeCustomerId,
+      })
       .from(stripeCustomers)
       .where(eq(stripeCustomers.projectId, projectId))
       .limit(1);
@@ -1074,11 +1105,24 @@ export class BillingRepository {
     }
     return this.db.transaction(async (rawTx) => {
       const tx = rawTx as unknown as TrendsFastDatabase;
+      const [candidateClaim] = await tx
+        .select({ id: billingCheckoutSessions.id, projectId: billingCheckoutSessions.projectId })
+        .from(billingCheckoutSessions)
+        .where(
+          and(
+            eq(billingCheckoutSessions.checkoutClaimHash, input.claimHash),
+            eq(billingCheckoutSessions.stripeCheckoutSessionId, input.stripeCheckoutSessionId),
+          ),
+        )
+        .limit(1);
+      if (!candidateClaim) return { status: "INVALID" as const };
+      await ensureProject(tx, candidateClaim.projectId);
       const [claim] = await tx
         .select()
         .from(billingCheckoutSessions)
         .where(
           and(
+            eq(billingCheckoutSessions.id, candidateClaim.id),
             eq(billingCheckoutSessions.checkoutClaimHash, input.claimHash),
             eq(billingCheckoutSessions.stripeCheckoutSessionId, input.stripeCheckoutSessionId),
           ),
@@ -1150,7 +1194,18 @@ export class BillingRepository {
           createdAt: input.now,
           expiresAt: entitlement.periodEnd,
         })
-        .returning();
+        .returning({
+          id: apiKeys.id,
+          projectId: apiKeys.projectId,
+          name: apiKeys.name,
+          visiblePrefix: apiKeys.visiblePrefix,
+          scopes: apiKeys.scopes,
+          environment: apiKeys.environment,
+          status: apiKeys.status,
+          rateLimitPerHour: apiKeys.rateLimitPerHour,
+          providerCostLimitUsd: apiKeys.providerCostLimitUsd,
+          expiresAt: apiKeys.expiresAt,
+        });
       if (!issued) throw new Error("Checkout API-key issuance failed");
       await tx.insert(apiKeyManagementEvents).values({
         projectId: claim.projectId,
@@ -1204,7 +1259,7 @@ export class BillingRepository {
     if (input.event.livemode !== input.expectedLivemode) {
       throw new Error("Stripe webhook mode does not match the configured billing mode");
     }
-    return this.db.transaction(async (rawTx) => {
+    const projection = this.db.transaction(async (rawTx) => {
       const tx = rawTx as unknown as TrendsFastDatabase;
       if ((await lockWebhookReceipt(tx, input)) === "DUPLICATE") {
         return { status: "DUPLICATE" as const };
@@ -1436,6 +1491,19 @@ export class BillingRepository {
         await finishReceipt(tx, input.event.eventId, "IGNORED", "INVOICE_SUBSCRIPTION_UNRESOLVED");
         return { status: "IGNORED" as const, reason: "INVOICE_SUBSCRIPTION_UNRESOLVED" };
       }
+      // Resolve the project without a row lock, then take the shared project
+      // entitlement lock before locking any payment/subscription rows. If the
+      // subscription is concurrently created after this read, that projection
+      // will consume this durable payment state; this invoice must not begin an
+      // entitlement projection without the project lock.
+      const [candidateSubscription] = await tx
+        .select({ id: subscriptions.id, projectId: subscriptions.projectId })
+        .from(subscriptions)
+        .where(eq(subscriptions.stripeSubscriptionId, input.event.subscriptionId))
+        .limit(1);
+      if (candidateSubscription?.projectId) {
+        await ensureProject(tx, candidateSubscription.projectId);
+      }
       const [existingPayment] = await tx
         .select()
         .from(billingPaymentStates)
@@ -1489,12 +1557,17 @@ export class BillingRepository {
             updatedAt: new Date(),
           },
         });
-      const [subscription] = await tx
-        .select()
-        .from(subscriptions)
-        .where(eq(subscriptions.stripeSubscriptionId, input.event.subscriptionId))
-        .limit(1)
-        .for("update");
+      const [subscription] = candidateSubscription
+        ? await tx
+            .select()
+            .from(subscriptions)
+            .where(eq(subscriptions.id, candidateSubscription.id))
+            .limit(1)
+            .for("update")
+        : [];
+      if (subscription?.projectId !== candidateSubscription?.projectId) {
+        throw new Error("Stripe subscription project binding changed during invoice projection");
+      }
       const entitlement = subscription
         ? await syncEntitlement(tx, {
             subscription,
@@ -1521,6 +1594,51 @@ export class BillingRepository {
         entitlementActive: entitlement?.active ?? null,
         entitlementActivated: entitlement?.activated ?? false,
       };
+    });
+    return projection.catch(async (error) => {
+      if (error instanceof WebhookPayloadConflictError) throw error;
+      const failedAt = new Date();
+      const failureCode = operationsCode(
+        error instanceof Error ? error.name : "STRIPE_WEBHOOK_PROJECTION_FAILED",
+      );
+      await this.db
+        .insert(billingWebhookEvents)
+        .values({
+          stripeEventId: input.event.eventId,
+          eventType: input.event.type,
+          payloadHash: input.payloadHash,
+          stripeCreatedAt: input.event.createdAt,
+          livemode: input.event.livemode,
+          state: "FAILED",
+          failureCode,
+          receivedAt: failedAt,
+          processedAt: failedAt,
+        })
+        .onConflictDoNothing();
+      const [failedReceipt] = await this.db
+        .update(billingWebhookEvents)
+        .set({ state: "FAILED", failureCode, processedAt: failedAt })
+        .where(
+          and(
+            eq(billingWebhookEvents.stripeEventId, input.event.eventId),
+            eq(billingWebhookEvents.payloadHash, input.payloadHash),
+            inArray(billingWebhookEvents.state, ["RECEIVED", "FAILED"]),
+          ),
+        )
+        .returning({ id: billingWebhookEvents.stripeEventId });
+      // A concurrent identical delivery may already have committed the whole
+      // projection. Never downgrade its terminal receipt or alert on a stale
+      // failed attempt.
+      if (failedReceipt) {
+        await enqueueOperationsAlert(this.db, {
+          eventType: "STRIPE_WEBHOOK_FAILURE",
+          severity: "critical",
+          dedupeKey: `${input.event.eventId}:${input.payloadHash}`,
+          payload: { code: "STRIPE_WEBHOOK_PROJECTION_FAILED", count: 1 },
+          occurredAt: failedAt,
+        });
+      }
+      throw new StripeWebhookProjectionError({ cause: error });
     });
   }
 }

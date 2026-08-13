@@ -3,6 +3,16 @@ import { readdir, readFile } from "node:fs/promises";
 
 import { createDatabaseClient } from "@trendsfast/database";
 
+import {
+  compareHostedSchemaCatalog,
+  readPinned0024HostedSchemaManifest,
+} from "./hosted-schema-manifest";
+
+/**
+ * Human-readable launch sentinels retained for targeted review tests. The complete, exact
+ * table/column/index/FK/CHECK manifest is loaded from the immutable 0024 Drizzle snapshot below.
+ */
+
 const EXPECTED_TABLES = [
   "analytics_events",
   "api_auth_admission_buckets",
@@ -24,12 +34,18 @@ const EXPECTED_TABLES = [
   "founder_usage_events",
   "monitoring_runs",
   "monitoring_subscriptions",
+  "managed_runtime_policy",
+  "operations_alert_queue",
+  "operations_health_checks",
+  "operations_reconciliation_runs",
   "next_move_revisions",
   "next_moves",
   "opportunities",
   "outcomes",
   "project_context_versions",
+  "project_claims",
   "project_entitlements",
+  "project_memberships",
   "projects",
   "provider_cost_ledger",
   "provider_verification_records",
@@ -41,10 +57,12 @@ const EXPECTED_TABLES = [
   "source_runs",
   "stripe_customers",
   "subscriptions",
+  "user_profiles",
 ] as const;
 
 const EXPECTED_ENUMS = [
   "api_auth_outcome",
+  "app_membership_role",
   "api_key_environment",
   "api_key_management_action",
   "api_key_status",
@@ -56,12 +74,15 @@ const EXPECTED_ENUMS = [
   "evidence_binding_role",
   "feedback_kind",
   "founder_usage_kind",
+  "generation_level",
   "monitoring_run_state",
   "monitoring_subscription_state",
   "next_move_action",
   "next_move_state",
   "outcome_kind",
   "provider_verification_state",
+  "project_claim_outcome",
+  "project_entity_type",
   "review_action",
   "saturation",
   "scan_origin",
@@ -109,17 +130,32 @@ const EXPECTED_INDEXES = [
   "monitoring_runs_lease_idx",
   "monitoring_runs_one_open_uidx",
   "monitoring_runs_project_state_idx",
+  "monitoring_runs_retry_idx",
   "monitoring_runs_slot_uidx",
   "monitoring_subscriptions_due_idx",
   "monitoring_subscriptions_project_uidx",
   "monitoring_subscriptions_subscription_uidx",
+  "operations_alert_queue_dedupe_uidx",
+  "operations_alert_queue_due_idx",
+  "operations_alert_queue_event_occurred_idx",
+  "operations_reconciliation_period_uidx",
+  "operations_reconciliation_state_lease_idx",
   "next_move_revisions_context_created_idx",
   "next_move_revisions_move_version_uidx",
   "next_moves_public_id_uidx",
   "next_moves_scan_run_uidx",
+  "next_moves_valid_until_state_idx",
   "opportunities_scan_version_rank_uidx",
   "project_context_one_current_uidx",
   "project_context_project_version_uidx",
+  "project_claims_delivery_created_idx",
+  "project_claims_delivery_open_uidx",
+  "project_claims_expiry_idx",
+  "project_claims_project_created_idx",
+  "project_claims_secret_hash_uidx",
+  "project_memberships_one_owner_uidx",
+  "project_memberships_project_user_uidx",
+  "project_memberships_user_created_idx",
   "projects_normalized_url_uidx",
   "projects_public_id_uidx",
   "project_entitlements_active_period_idx",
@@ -129,6 +165,7 @@ const EXPECTED_INDEXES = [
   "provider_verification_state_completed_idx",
   "scan_requests_api_idempotency_uidx",
   "scan_requests_public_id_uidx",
+  "scan_requests_project_generation_created_idx",
   "scan_runs_one_active_uidx",
   "scan_runs_request_attempt_uidx",
   "signals_run_source_source_id_uidx",
@@ -140,6 +177,8 @@ const EXPECTED_INDEXES = [
   "subscriptions_project_nonterminal_uidx",
   "subscriptions_project_status_idx",
   "subscriptions_external_uidx",
+  "user_profiles_auth_user_uidx",
+  "user_profiles_email_idx",
 ] as const;
 
 const EXPECTED_CONSTRAINTS = [
@@ -181,8 +220,27 @@ const EXPECTED_CONSTRAINTS = [
   "founder_usage_period_check",
   "monitoring_runs_attempt_check",
   "monitoring_runs_completion_check",
+  "monitoring_runs_failure_shape_check",
   "monitoring_runs_lease_check",
+  "monitoring_runs_retry_policy_check",
   "monitoring_subscriptions_interval_check",
+  "managed_runtime_policy_api_check",
+  "managed_runtime_policy_public_scan_check",
+  "managed_runtime_policy_retention_check",
+  "managed_runtime_policy_revision_check",
+  "managed_runtime_policy_singleton_check",
+  "managed_runtime_policy_version_check",
+  "operations_alert_queue_attempt_check",
+  "operations_alert_queue_dedupe_check",
+  "operations_alert_queue_delivery_check",
+  "operations_alert_queue_event_check",
+  "operations_alert_queue_payload_check",
+  "operations_alert_queue_severity_check",
+  "operations_alert_queue_state_check",
+  "operations_health_checks_failure_check",
+  "operations_health_checks_type_check",
+  "operations_reconciliation_shape_check",
+  "operations_reconciliation_state_check",
   // PostgreSQL truncates identifiers to 63 bytes.
   "next_move_revisions_context_version_id_project_context_versions",
   "next_move_revisions_kind_check",
@@ -191,10 +249,21 @@ const EXPECTED_CONSTRAINTS = [
   "next_move_revisions_reviewer_check",
   "next_move_revisions_version_check",
   "next_moves_never_autopublish_check",
+  "next_moves_decision_contract_shape_check",
+  "next_moves_draft_content_check",
   "next_moves_review_version_positive_check",
   "opportunities_move_version_positive_check",
   "project_entitlements_name_check",
   "project_entitlements_period_check",
+  "project_claims_consumption_shape_check",
+  "project_claims_consumed_by_user_profile_id_user_profiles_id_fk",
+  "project_claims_delivery_token_id_delivery_tokens_id_fk",
+  "project_claims_expiry_check",
+  "project_claims_invalidation_check",
+  "project_claims_project_id_projects_id_fk",
+  "project_claims_secret_hash_check",
+  "project_memberships_project_id_projects_id_fk",
+  "project_memberships_user_profile_id_user_profiles_id_fk",
   "provider_cost_currency_check",
   "provider_cost_nonnegative_check",
   "provider_verification_completion_check",
@@ -210,6 +279,8 @@ const EXPECTED_CONSTRAINTS = [
   "api_key_auth_events_request_kind_check",
   "subscriptions_event_rank_nonnegative_check",
   "subscriptions_entitlement_check",
+  "user_profiles_avatar_url_check",
+  "user_profiles_email_normalized_check",
 ] as const;
 
 const EXPECTED_COLUMNS = [
@@ -224,6 +295,14 @@ const EXPECTED_COLUMNS = [
   "billing_payment_states.period_start",
   "evidence_receipts.move_version",
   "founder_usage_events.founder_grant_id",
+  "monitoring_runs.dead_lettered_at",
+  "monitoring_runs.failure_disposition",
+  "monitoring_runs.max_attempts",
+  "monitoring_runs.next_retry_at",
+  "monitoring_runs.quarantined_at",
+  "monitoring_runs.retry_base_seconds",
+  "managed_runtime_policy.revision",
+  "managed_runtime_policy.policy_version",
   "next_move_revisions.after",
   "next_move_revisions.before",
   "next_move_revisions.change_kind",
@@ -239,8 +318,24 @@ const EXPECTED_COLUMNS = [
   "next_move_revisions.version",
   "next_moves.proposal_stale",
   "next_moves.review_version",
+  "next_moves.decision_contract_version",
+  "next_moves.action_details",
+  "next_moves.trend_window",
+  "next_moves.breakout_potential",
+  "next_moves.generation_level",
+  "next_moves.draft_content",
   "opportunities.move_version",
+  "project_claims.claim_secret_hash",
+  "project_claims.consumption_outcome",
+  "project_context_versions.entity_type",
+  "project_context_versions.context_provenance",
+  "project_context_versions.voice_profile",
+  "project_context_versions.content_capabilities",
+  "project_memberships.role",
+  "scan_requests.generation_level",
+  "scan_requests.requested_content_capabilities",
   "scan_requests.public_cost_reservation_usd",
+  "user_profiles.auth_user_id",
 ] as const;
 
 function difference(expected: readonly string[], actual: ReadonlySet<string>) {
@@ -265,6 +360,23 @@ async function main() {
   const journal = JSON.parse(
     await readFile(new URL("meta/_journal.json", migrationsDirectory), "utf8"),
   ) as { entries?: Array<{ tag?: unknown; when?: unknown }> };
+  const snapshot0024 = await readFile(new URL("meta/0024_snapshot.json", migrationsDirectory));
+  const expectedCatalog = readPinned0024HostedSchemaManifest(snapshot0024);
+  const sentinelGroups = [
+    ["tables", EXPECTED_TABLES, expectedCatalog.tables],
+    ["columns", EXPECTED_COLUMNS, expectedCatalog.columns],
+    ["enums", EXPECTED_ENUMS, expectedCatalog.enums],
+    ["indexes", EXPECTED_INDEXES, expectedCatalog.indexes],
+    ["constraints", EXPECTED_CONSTRAINTS, expectedCatalog.constraints],
+  ] as const;
+  for (const [label, sentinels, completeManifest] of sentinelGroups) {
+    const absentSentinels = difference(sentinels, new Set<string>(completeManifest));
+    if (absentSentinels.length > 0) {
+      throw new Error(
+        `The committed 0024 snapshot is missing hosted ${label} sentinels: ${absentSentinels.join(", ")}`,
+      );
+    }
+  }
   const expectedMigrations = await Promise.all(
     (journal.entries ?? []).map(async (entry) => {
       if (typeof entry.tag !== "string" || typeof entry.when !== "number") {
@@ -287,6 +399,7 @@ async function main() {
   }
   const client = createDatabaseClient({
     connectionString: requireDirectUrl(),
+    ...(process.env.DATABASE_SSL_CA?.trim() ? { sslCa: process.env.DATABASE_SSL_CA.trim() } : {}),
     maxConnections: 1,
     applicationName: "trendsfast-schema-verifier",
     connectionTimeoutMs: 10_000,
@@ -308,22 +421,51 @@ async function main() {
       unsafeSequenceGrantResult,
       unsafeFunctionGrantResult,
       unsafeDefaultGrantResult,
+      apiPolicyDefaultResult,
     ] = await Promise.all([
       pool.query<{ version: string }>("select version() as version"),
       pool.query<{ table_name: string }>(
         "select table_name from information_schema.tables where table_schema = 'public' and table_type = 'BASE TABLE' order by table_name",
       ),
       pool.query<{ column_name: string }>(
-        "select table_name || '.' || column_name as column_name from information_schema.columns where table_schema = 'public' order by table_name, ordinal_position",
+        `
+          select columns.table_name || '.' || columns.column_name as column_name
+          from information_schema.columns columns
+          join information_schema.tables tables
+            on tables.table_schema = columns.table_schema
+           and tables.table_name = columns.table_name
+          where columns.table_schema = 'public'
+            and tables.table_type = 'BASE TABLE'
+          order by columns.table_name, columns.ordinal_position
+        `,
       ),
       pool.query<{ enum_name: string }>(
         "select t.typname as enum_name from pg_type t join pg_namespace n on n.oid = t.typnamespace where n.nspname = 'public' and t.typtype = 'e' order by t.typname",
       ),
       pool.query<{ index_name: string }>(
-        "select indexname as index_name from pg_indexes where schemaname = 'public' order by indexname",
+        `
+          select index_class.relname as index_name
+          from pg_index index_metadata
+          join pg_class table_class on table_class.oid = index_metadata.indrelid
+          join pg_namespace namespace on namespace.oid = table_class.relnamespace
+          join pg_class index_class on index_class.oid = index_metadata.indexrelid
+          left join pg_constraint constraint_metadata
+            on constraint_metadata.conindid = index_metadata.indexrelid
+          where namespace.nspname = 'public'
+            and table_class.relkind in ('r', 'p')
+            and constraint_metadata.oid is null
+          order by index_class.relname
+        `,
       ),
       pool.query<{ constraint_name: string }>(
-        "select con.conname as constraint_name from pg_constraint con join pg_namespace n on n.oid = con.connamespace where n.nspname = 'public' order by con.conname",
+        `
+          select constraint_metadata.conname as constraint_name
+          from pg_constraint constraint_metadata
+          join pg_namespace namespace on namespace.oid = constraint_metadata.connamespace
+          where namespace.nspname = 'public'
+            and constraint_metadata.contype in ('f', 'c')
+          order by constraint_metadata.conname
+        `,
       ),
       pool.query<{ id: number; hash: string; created_at: string }>(
         "select id, hash, created_at::text as created_at from drizzle.__drizzle_migrations order by id",
@@ -403,20 +545,28 @@ async function main() {
             )
           order by owner_role.rolname, grantee, object_type, expanded.privilege_type
         `),
+      pool.query<{ column_name: string; column_default: string | null }>(`
+          select column_name, column_default
+            from information_schema.columns
+           where table_schema = 'public'
+             and table_name = 'api_keys'
+             and column_name in ('rate_limit_per_hour', 'provider_cost_limit_usd')
+           order by column_name
+        `),
     ]);
 
-    const tables = new Set(tableResult.rows.map((row) => row.table_name));
-    const columns = new Set(columnResult.rows.map((row) => row.column_name));
-    const enums = new Set(enumResult.rows.map((row) => row.enum_name));
-    const indexes = new Set(indexResult.rows.map((row) => row.index_name));
-    const constraints = new Set(constraintResult.rows.map((row) => row.constraint_name));
-    const missingTables = difference(EXPECTED_TABLES, tables);
-    const missingColumns = difference(EXPECTED_COLUMNS, columns);
-    const missingEnums = difference(EXPECTED_ENUMS, enums);
-    const missingIndexes = difference(EXPECTED_INDEXES, indexes);
-    const missingConstraints = difference(EXPECTED_CONSTRAINTS, constraints);
-    const extraTables = [...tables].filter((table) => !new Set<string>(EXPECTED_TABLES).has(table));
-    const strictExtraTables = process.env.STRICT_HOSTED_SCHEMA === "1";
+    const actualCatalog = {
+      tables: tableResult.rows.map((row) => row.table_name),
+      columns: columnResult.rows.map((row) => row.column_name),
+      enums: enumResult.rows.map((row) => row.enum_name),
+      indexes: indexResult.rows.map((row) => row.index_name),
+      constraints: constraintResult.rows.map((row) => row.constraint_name),
+    };
+    const strictExtras = process.env.STRICT_HOSTED_SCHEMA === "1";
+    const schemaDrift = compareHostedSchemaCatalog(expectedCatalog, actualCatalog, strictExtras);
+    const apiPolicyColumnsHaveNoDefault =
+      apiPolicyDefaultResult.rows.length === 2 &&
+      apiPolicyDefaultResult.rows.every((row) => row.column_default === null);
     const appliedMigrations = migrationResult.rows;
     const migrationComparisons = expectedMigrations.map((expected, index) => {
       const applied = appliedMigrations[index];
@@ -434,17 +584,13 @@ async function main() {
       );
     const ok =
       migrationsMatch &&
-      missingTables.length === 0 &&
-      missingColumns.length === 0 &&
-      missingEnums.length === 0 &&
-      missingIndexes.length === 0 &&
-      missingConstraints.length === 0 &&
+      schemaDrift.ok &&
       unsafeSchemaGrantResult.rows.length === 0 &&
       unsafeTableGrantResult.rows.length === 0 &&
       unsafeSequenceGrantResult.rows.length === 0 &&
       unsafeFunctionGrantResult.rows.length === 0 &&
       unsafeDefaultGrantResult.rows.length === 0 &&
-      (!strictExtraTables || extraTables.length === 0);
+      apiPolicyColumnsHaveNoDefault;
     console.info(
       JSON.stringify(
         {
@@ -461,14 +607,20 @@ async function main() {
             ),
           },
           schema: {
-            expectedTables: EXPECTED_TABLES.length,
-            actualPublicTables: tables.size,
-            missingTables,
-            missingColumns,
-            extraTables,
-            missingEnums,
-            missingIndexes,
-            missingConstraints,
+            snapshotId: expectedCatalog.snapshotId,
+            strictExtras,
+            expectedTables: expectedCatalog.tables.length,
+            actualPublicTables: actualCatalog.tables.length,
+            expectedColumns: expectedCatalog.columns.length,
+            actualPublicTableColumns: actualCatalog.columns.length,
+            expectedEnums: expectedCatalog.enums.length,
+            actualPublicEnums: actualCatalog.enums.length,
+            expectedIndexes: expectedCatalog.indexes.length,
+            actualPublicExplicitIndexes: actualCatalog.indexes.length,
+            expectedForeignKeyAndCheckConstraints: expectedCatalog.constraints.length,
+            actualPublicForeignKeyAndCheckConstraints: actualCatalog.constraints.length,
+            ...schemaDrift,
+            apiPolicyColumnsHaveNoDefault,
           },
           privacy: {
             rowValuesInspected: false,

@@ -37,7 +37,7 @@ databaseDescribe("atomic API-key hourly cost admission", () => {
   });
 
   it("holds parallel unique idempotency keys at the exact hourly cap", async () => {
-    const apiKey = await issueKey(0.5);
+    const apiKey = await issueKey(0.634);
     const admissionWindow = window();
     const outcomes = await Promise.all(
       Array.from({ length: 8 }, (_, index) =>
@@ -45,7 +45,7 @@ databaseDescribe("atomic API-key hourly cost admission", () => {
           apiKeyId: apiKey.id,
           idempotencyKey: randomUUID(),
           request: { product_url: `https://parallel-cost-${index}-${randomUUID()}.example` },
-          costReservationUsd: 0.25,
+          costReservationUsd: 0.317,
           ...admissionWindow,
         }),
       ),
@@ -59,12 +59,12 @@ databaseDescribe("atomic API-key hourly cost admission", () => {
       .where(eq(scanRequests.apiKeyId, apiKey.id));
     expect(requests).toHaveLength(2);
     expect(requests.reduce((total, request) => total + Number(request.reservationUsd), 0)).toBe(
-      0.5,
+      0.634,
     );
   });
 
   it("reserves only once for simultaneous same-payload idempotency replays", async () => {
-    const apiKey = await issueKey(0.25);
+    const apiKey = await issueKey(0.317);
     const admissionWindow = window();
     const idempotencyKey = randomUUID();
     const request = { product_url: `https://parallel-replay-${randomUUID()}.example` };
@@ -74,7 +74,7 @@ databaseDescribe("atomic API-key hourly cost admission", () => {
           apiKeyId: apiKey.id,
           idempotencyKey,
           request,
-          costReservationUsd: 0.25,
+          costReservationUsd: 0.317,
           ...admissionWindow,
         }),
       ),
@@ -86,11 +86,11 @@ databaseDescribe("atomic API-key hourly cost admission", () => {
       .select({ reservationUsd: scanRequests.apiCostReservationUsd })
       .from(scanRequests)
       .where(eq(scanRequests.apiKeyId, apiKey.id));
-    expect(requests).toEqual([{ reservationUsd: "0.250000" }]);
+    expect(requests).toEqual([{ reservationUsd: "0.317000" }]);
   });
 
   it("persists one reservation when different payloads race on one idempotency key", async () => {
-    const apiKey = await issueKey(0.5);
+    const apiKey = await issueKey(0.634);
     const admissionWindow = window();
     const idempotencyKey = randomUUID();
     const outcomes = await Promise.all([
@@ -98,14 +98,14 @@ databaseDescribe("atomic API-key hourly cost admission", () => {
         apiKeyId: apiKey.id,
         idempotencyKey,
         request: { product_url: `https://conflict-a-${randomUUID()}.example` },
-        costReservationUsd: 0.25,
+        costReservationUsd: 0.317,
         ...admissionWindow,
       }),
       repositories.scans.admitApiRequest({
         apiKeyId: apiKey.id,
         idempotencyKey,
         request: { product_url: `https://conflict-b-${randomUUID()}.example` },
-        costReservationUsd: 0.25,
+        costReservationUsd: 0.317,
         ...admissionWindow,
       }),
     ]);
@@ -118,39 +118,39 @@ databaseDescribe("atomic API-key hourly cost admission", () => {
       .select({ reservationUsd: scanRequests.apiCostReservationUsd })
       .from(scanRequests)
       .where(eq(scanRequests.apiKeyId, apiKey.id));
-    expect(requests).toEqual([{ reservationUsd: "0.250000" }]);
+    expect(requests).toEqual([{ reservationUsd: "0.317000" }]);
   });
 
   it("does not let a reservation mask higher settled run cost", async () => {
-    const apiKey = await issueKey(0.5);
+    const apiKey = await issueKey(0.731);
     const admissionWindow = window();
     const first = await repositories.scans.admitApiRequest({
       apiKeyId: apiKey.id,
       idempotencyKey: randomUUID(),
       request: { product_url: `https://settled-cost-${randomUUID()}.example` },
-      costReservationUsd: 0.1,
+      costReservationUsd: 0.113,
       ...admissionWindow,
     });
     if (first.status !== "CREATED") throw new Error("Initial cost reservation was not admitted");
     const run = await repositories.scans.createRun({ scanRequestId: first.request.id });
     await repositories.scanData.updateRunSummary(run.id, {
-      estimatedCostUsd: 0.1,
-      actualCostUsd: 0.3,
+      estimatedCostUsd: 0.113,
+      actualCostUsd: 0.419,
     });
 
     const next = await repositories.scans.admitApiRequest({
       apiKeyId: apiKey.id,
       idempotencyKey: randomUUID(),
       request: { product_url: `https://settled-cost-next-${randomUUID()}.example` },
-      costReservationUsd: 0.25,
+      costReservationUsd: 0.317,
       ...admissionWindow,
     });
 
     expect(next).toMatchObject({
       status: "COST_LIMITED",
-      committedCostUsd: 0.3,
-      projectedCostUsd: 0.55,
-      maximumCostUsd: 0.5,
+      committedCostUsd: 0.419,
+      projectedCostUsd: 0.736,
+      maximumCostUsd: 0.731,
     });
   });
 
@@ -159,7 +159,7 @@ databaseDescribe("atomic API-key hourly cost admission", () => {
       name: `revoked-admission-${randomUUID()}`,
       environment: "test",
       rateLimitPerHour: 100,
-      providerCostLimitUsd: 1,
+      providerCostLimitUsd: 91.333,
     });
     apiKeyIds.push(revokedMaterial.record.id);
     await expect(
@@ -171,7 +171,7 @@ databaseDescribe("atomic API-key hourly cost admission", () => {
       apiKeyId: revokedMaterial.record.id,
       idempotencyKey: randomUUID(),
       request: { product_url: `https://revoked-${randomUUID()}.example` },
-      costReservationUsd: 0.25,
+      costReservationUsd: 0.317,
       ...window(),
     });
     expect(revoked).toEqual({ status: "KEY_INACTIVE" });
@@ -181,7 +181,7 @@ databaseDescribe("atomic API-key hourly cost admission", () => {
       name: `expired-admission-${randomUUID()}`,
       environment: "test",
       rateLimitPerHour: 100,
-      providerCostLimitUsd: 1,
+      providerCostLimitUsd: 91.333,
       expiresAt: boundary,
     });
     apiKeyIds.push(expiringMaterial.record.id);
@@ -189,7 +189,7 @@ databaseDescribe("atomic API-key hourly cost admission", () => {
       apiKeyId: expiringMaterial.record.id,
       idempotencyKey: randomUUID(),
       request: { product_url: `https://expired-${randomUUID()}.example` },
-      costReservationUsd: 0.25,
+      costReservationUsd: 0.317,
       since: new Date(boundary.getTime() - 3_600_000),
       now: boundary,
     });

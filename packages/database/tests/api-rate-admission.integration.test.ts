@@ -24,7 +24,7 @@ databaseDescribe("atomic API create/status rate admission", () => {
     const issued = await repositories.apiKeys.issue({
       name: `rate-admission-${randomUUID()}`,
       environment: "test",
-      rateLimitPerHour: 20,
+      rateLimitPerHour: 37,
       providerCostLimitUsd: 0,
     });
     apiKeyId = issued.record.id;
@@ -56,7 +56,7 @@ databaseDescribe("atomic API create/status rate admission", () => {
             requestId,
             requestKind: "CREATE",
             since,
-            maximum: 20,
+            maximum: 37,
           }),
         ),
       ),
@@ -67,15 +67,15 @@ databaseDescribe("atomic API create/status rate admission", () => {
             requestId,
             requestKind: "STATUS",
             since,
-            maximum: 300,
+            maximum: 317,
           }),
         ),
       ),
     ]);
-    expect(creates.filter(Boolean)).toHaveLength(20);
+    expect(creates.filter(Boolean)).toHaveLength(37);
     expect(statuses.filter(Boolean)).toHaveLength(40);
     await expect(repositories.apiKeys.usageSince({ apiKeyId, since })).resolves.toMatchObject({
-      createRequests: 20,
+      createRequests: 37,
       statusRequests: 40,
     });
   });

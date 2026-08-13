@@ -20,6 +20,43 @@ import { FIXTURE_PROJECT_CONTEXT } from "../src/seed";
 const databaseDescribe = process.env.RUN_DATABASE_INTEGRATION === "1" ? describe : describe.skip;
 const payloadHash = `sha256:${"e".repeat(64)}`;
 
+function waitDecisionContract(validUntil: Date) {
+  const boundary = validUntil.toISOString();
+  return {
+    decisionContractVersion: "next-move-v1",
+    actionDetails: {
+      action: "WAIT",
+      considered_opportunity: "A bounded delivery fixture",
+      failure_reasons: ["WEAK_EVIDENCE"],
+      do_not_act_on: ["Do not publish from this fixture."],
+      watch_conditions: ["Wait for stronger evidence."],
+      recheck_at: boundary,
+    },
+    trendWindow: {
+      state: "UNKNOWN",
+      basis: "UNKNOWN",
+      last_confirmed_at: boundary,
+      valid_until: boundary,
+      recheck_at: boundary,
+      confidence: 0.2,
+      explanation: "The fixture makes no measured timing claim.",
+    },
+    breakoutPotential: {
+      level: "unknown",
+      basis: "INSUFFICIENT_DATA",
+      factors: {
+        audience_relevance: 0,
+        timing: 0,
+        novelty: 0,
+        product_credibility: 0,
+        format_fit: 0,
+        saturation_risk: 0,
+      },
+      explanation: "The fixture makes no breakout claim.",
+    },
+  } as const;
+}
+
 databaseDescribe("Founder delivery limits", () => {
   const client = createDatabaseFromEnv();
   const repositories = createRepositories(client.db);
@@ -38,22 +75,34 @@ databaseDescribe("Founder delivery limits", () => {
   });
 
   async function createApprovedMove(projectId: string, label: string) {
-    const [context] = await client.db
-      .insert(projectContextVersions)
-      .values({
-        projectId,
-        version: Number(label.replace(/\D/g, "")) || 1,
-        isCurrent: label.endsWith("1"),
-        inferredName: "Delivery integration",
-        category: "test",
-        audience: "founders",
-        problem: "delivery limits",
-        language: "en",
-        credibleTopics: ["billing"],
-        assumptions: ["integration test"],
-        context: { ...FIXTURE_PROJECT_CONTEXT, url: `https://${label}.example` },
-      })
-      .returning();
+    let [context] = await client.db
+      .select()
+      .from(projectContextVersions)
+      .where(
+        and(
+          eq(projectContextVersions.projectId, projectId),
+          eq(projectContextVersions.isCurrent, true),
+        ),
+      )
+      .limit(1);
+    if (!context) {
+      [context] = await client.db
+        .insert(projectContextVersions)
+        .values({
+          projectId,
+          version: 1,
+          isCurrent: true,
+          inferredName: "Delivery integration",
+          category: "test",
+          audience: "founders",
+          problem: "delivery limits",
+          language: "en",
+          credibleTopics: ["billing"],
+          assumptions: ["integration test"],
+          context: { ...FIXTURE_PROJECT_CONTEXT, url: `https://${label}.example` },
+        })
+        .returning();
+    }
     const [request] = await client.db
       .insert(scanRequests)
       .values({
@@ -76,6 +125,7 @@ databaseDescribe("Founder delivery limits", () => {
       })
       .returning();
     if (!run) throw new Error("delivery run setup failed");
+    const validUntil = new Date(Date.now() + 86_400_000);
     const [move] = await client.db
       .insert(nextMoves)
       .values({
@@ -101,7 +151,8 @@ databaseDescribe("Founder delivery limits", () => {
         founderReviewed: true,
         promptVersion: "integration",
         scoreVersion: "integration",
-        validUntil: new Date(Date.now() + 86_400_000),
+        validUntil,
+        ...waitDecisionContract(validUntil),
         approvedAt: new Date(),
       })
       .returning();
@@ -152,6 +203,39 @@ databaseDescribe("Founder delivery limits", () => {
       scanRequestId: request.id,
       properties: { created: true },
     });
+  });
+
+  it("refuses to deliver an approved move after its project context is superseded", async () => {
+    const projectHost = `stale-delivery-${randomUUID()}.example`;
+    const [project] = await client.db
+      .insert(projects)
+      .values({
+        publicId: `project_stale_delivery_${randomUUID()}`,
+        url: `https://${projectHost}`,
+        normalizedUrl: `https://${projectHost}/`,
+      })
+      .returning();
+    if (!project) throw new Error("stale delivery project setup failed");
+    projectIds.push(project.id);
+    const { move } = await createApprovedMove(project.id, "stale1");
+    await client.db
+      .update(projectContextVersions)
+      .set({ isCurrent: false })
+      .where(eq(projectContextVersions.id, move.projectContextVersionId));
+    await client.db.update(nextMoves).set({ proposalStale: true }).where(eq(nextMoves.id, move.id));
+
+    await expect(
+      repositories.delivery.deliver({
+        nextMoveId: move.id,
+        reviewerId: "founder:stale-context",
+        expiresAt: new Date(Date.now() + 86_400_000),
+      }),
+    ).rejects.toThrow(/stale.*recomputed/i);
+    const tokens = await client.db
+      .select()
+      .from(deliveryTokens)
+      .where(eq(deliveryTokens.nextMoveId, move.id));
+    expect(tokens).toEqual([]);
   });
 
   it("records one paid delivery and rejects a second delivery that UTC day", async () => {

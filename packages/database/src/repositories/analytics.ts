@@ -13,7 +13,7 @@ import type { TrendsFastDatabase } from "../client";
 import { analyticsEvents } from "../schema";
 
 const FORBIDDEN_PROPERTY =
-  /(email|api.?key|authorization|token|secret|password|evidence.?text|model.?prompt|provider.?payload|product.?url|private.?url|submitted.?url)/i;
+  /(email|api.?key|authorization|token|secret|password|evidence.?text|model.?prompt|provider.?payload|product.?url|private.?url|submitted.?url|cost|price|currency|amount|spend|budget|margin|revenue|usd|eur)/i;
 const SECRET_VALUE = /tf_(?:test|live)_[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|Bearer\s+/i;
 const ATTRIBUTION_KEYS = new Set([
   "ref",
@@ -136,10 +136,12 @@ export class AnalyticsRepository {
   constructor(private readonly db: TrendsFastDatabase) {}
 
   async append(input: AnalyticsAppendInput) {
-    const [event] = await this.db
-      .insert(analyticsEvents)
-      .values(analyticsValues(input))
-      .returning();
+    const [event] = await this.db.insert(analyticsEvents).values(analyticsValues(input)).returning({
+      id: analyticsEvents.id,
+      name: analyticsEvents.name,
+      scanRequestId: analyticsEvents.scanRequestId,
+      occurredAt: analyticsEvents.occurredAt,
+    });
     if (!event) throw new Error("Could not append analytics event");
     return event;
   }
@@ -150,7 +152,12 @@ export class AnalyticsRepository {
       .insert(analyticsEvents)
       .values(analyticsValues(input))
       .onConflictDoNothing()
-      .returning();
+      .returning({
+        id: analyticsEvents.id,
+        name: analyticsEvents.name,
+        scanRequestId: analyticsEvents.scanRequestId,
+        occurredAt: analyticsEvents.occurredAt,
+      });
     return { created: Boolean(event), event: event ?? null };
   }
 }

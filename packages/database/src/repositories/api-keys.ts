@@ -21,6 +21,7 @@ import {
   scanRequests,
   scanRuns,
 } from "../schema";
+import { lockProjectEntitlementScope } from "./founder-usage";
 
 async function requireActiveFounderEntitlement(
   db: TrendsFastDatabase,
@@ -32,7 +33,7 @@ async function requireActiveFounderEntitlement(
       "Live API keys require a paid project entitlement or founder design-partner grant",
     );
   }
-  await db.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${projectId}, 0))`);
+  await lockProjectEntitlementScope(db, projectId);
   const [entitlement] = await db
     .select({ projectId: projectEntitlements.projectId })
     .from(projectEntitlements)
@@ -115,8 +116,8 @@ function safeScopes(input: string[] | undefined): ApiKeyScope[] {
   return unique as ApiKeyScope[];
 }
 
-function assertLimits(input: { rateLimitPerHour?: number; providerCostLimitUsd?: number }) {
-  const rate = input.rateLimitPerHour ?? 20;
+function assertLimits(input: { rateLimitPerHour: number; providerCostLimitUsd: number }) {
+  const rate = input.rateLimitPerHour;
   const cost = input.providerCostLimitUsd;
   if (!Number.isSafeInteger(rate) || rate < 1 || rate > 10_000) {
     throw new Error("API key hourly rate limit is invalid");
@@ -144,11 +145,40 @@ function auditSnapshot(record: ApiKeyControlView): Record<string, unknown> {
 }
 
 export type ApiAuthResult =
-  | { ok: true; apiKey: typeof apiKeys.$inferSelect }
+  | { ok: true; apiKey: ApiKeyAuthenticationRecord }
   | {
       ok: false;
       reason: "NOT_FOUND" | "INVALID" | "REVOKED" | "EXPIRED";
     };
+
+export type ApiKeyAuthenticationRecord = Pick<
+  typeof apiKeys.$inferSelect,
+  | "id"
+  | "projectId"
+  | "visiblePrefix"
+  | "secretHash"
+  | "scopes"
+  | "environment"
+  | "status"
+  | "rateLimitPerHour"
+  | "providerCostLimitUsd"
+  | "expiresAt"
+  | "revokedAt"
+>;
+
+const authenticationSelection = {
+  id: apiKeys.id,
+  projectId: apiKeys.projectId,
+  visiblePrefix: apiKeys.visiblePrefix,
+  secretHash: apiKeys.secretHash,
+  scopes: apiKeys.scopes,
+  environment: apiKeys.environment,
+  status: apiKeys.status,
+  rateLimitPerHour: apiKeys.rateLimitPerHour,
+  providerCostLimitUsd: apiKeys.providerCostLimitUsd,
+  expiresAt: apiKeys.expiresAt,
+  revokedAt: apiKeys.revokedAt,
+} as const;
 
 export type ApiAuthOutcome = ApiAuthResult extends infer Result
   ? Result extends { ok: false; reason: infer Reason }
@@ -188,8 +218,8 @@ export class ApiKeyRepository {
     environment: ApiKeyEnvironment;
     projectId?: string;
     scopes?: string[];
-    rateLimitPerHour?: number;
-    providerCostLimitUsd?: number;
+    rateLimitPerHour: number;
+    providerCostLimitUsd: number;
     expiresAt?: Date;
     actorId?: string;
   }) {
@@ -266,7 +296,7 @@ export class ApiKeyRepository {
     const parsed = parseApiKey(input.rawKey);
     const [record] = parsed
       ? await this.db
-          .select()
+          .select(authenticationSelection)
           .from(apiKeys)
           .where(
             and(
@@ -464,6 +494,8 @@ export class ApiKeyRepository {
     actorId: string;
     name?: string;
     expiresAt?: Date | null;
+    rateLimitPerHour?: number;
+    providerCostLimitUsd?: number;
   }) {
     return this.replace({ ...input, action: "ROTATED", requireInactive: false });
   }
@@ -473,6 +505,8 @@ export class ApiKeyRepository {
     actorId: string;
     name?: string;
     expiresAt?: Date | null;
+    rateLimitPerHour?: number;
+    providerCostLimitUsd?: number;
   }) {
     return this.replace({ ...input, action: "REISSUED", requireInactive: true });
   }
@@ -484,19 +518,30 @@ export class ApiKeyRepository {
     requireInactive: boolean;
     name?: string;
     expiresAt?: Date | null;
+    rateLimitPerHour?: number;
+    providerCostLimitUsd?: number;
   }) {
     const issuedAt = new Date();
     if (input.expiresAt && input.expiresAt <= issuedAt) {
       throw new Error("API key expiry must be after its creation time");
     }
     return this.db.transaction(async (tx) => {
+      const [identity] = await tx
+        .select({ projectId: apiKeys.projectId })
+        .from(apiKeys)
+        .where(eq(apiKeys.id, input.apiKeyId))
+        .limit(1);
+      if (!identity?.projectId) throw new Error("Project-scoped API key was not found");
+      await lockProjectEntitlementScope(tx as unknown as TrendsFastDatabase, identity.projectId);
       const [before] = await tx
         .select(controlSelection)
         .from(apiKeys)
         .where(eq(apiKeys.id, input.apiKeyId))
         .for("update")
         .limit(1);
-      if (!before || !before.projectId) throw new Error("Project-scoped API key was not found");
+      if (!before || before.projectId !== identity.projectId) {
+        throw new Error("Project-scoped API key was not found");
+      }
       if (before.environment === "live") {
         await requireActiveFounderEntitlement(
           tx as unknown as TrendsFastDatabase,
@@ -532,6 +577,16 @@ export class ApiKeyRepository {
         throw new Error("Replacement API key expiry must be in the future");
       }
       const replacementIssued = await createApiKey(before.environment, this.pepper);
+      if ((input.rateLimitPerHour === undefined) !== (input.providerCostLimitUsd === undefined)) {
+        throw new Error("Replacement API key policy must be supplied as a complete pair");
+      }
+      const limits =
+        input.rateLimitPerHour === undefined || input.providerCostLimitUsd === undefined
+          ? { rate: before.rateLimitPerHour, cost: Number(before.providerCostLimitUsd) }
+          : assertLimits({
+              rateLimitPerHour: input.rateLimitPerHour,
+              providerCostLimitUsd: input.providerCostLimitUsd,
+            });
       const [replacement] = await tx
         .insert(apiKeys)
         .values({
@@ -543,8 +598,8 @@ export class ApiKeyRepository {
           secretHash: replacementIssued.secretHash,
           scopes: safeScopes(before.scopes),
           environment: before.environment,
-          rateLimitPerHour: before.rateLimitPerHour,
-          providerCostLimitUsd: before.providerCostLimitUsd,
+          rateLimitPerHour: limits.rate,
+          providerCostLimitUsd: String(limits.cost),
           createdAt: issuedAt,
           expiresAt: replacementExpiry,
         })

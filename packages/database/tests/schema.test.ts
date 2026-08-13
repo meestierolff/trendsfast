@@ -29,6 +29,9 @@ import {
   monitoringSubscriptions,
   nextMoveRevisions,
   nextMoves,
+  operationsAlertQueue,
+  operationsHealthChecks,
+  operationsReconciliationRuns,
   opportunities,
   outcomes,
   projectContextVersions,
@@ -84,6 +87,9 @@ const minimumTableNames = [
   "founder_entitlement_grant_events",
   "monitoring_subscriptions",
   "monitoring_runs",
+  "operations_alert_queue",
+  "operations_health_checks",
+  "operations_reconciliation_runs",
   "founder_launch_interests",
   "founder_launch_interest_events",
   "next_move_revisions",
@@ -119,6 +125,9 @@ describe("portable PostgreSQL schema", () => {
       founderEntitlementGrantEvents,
       monitoringSubscriptions,
       monitoringRuns,
+      operationsAlertQueue,
+      operationsHealthChecks,
+      operationsReconciliationRuns,
       outcomes,
       apiKeys,
       apiKeyManagementEvents,
@@ -409,6 +418,92 @@ describe("portable PostgreSQL schema", () => {
     );
     expect(migration).toContain(
       '"checkout_claim_consumed_at" IS NOT NULL AND "billing_checkout_sessions"."issued_api_key_id" IS NOT NULL',
+    );
+  });
+
+  it("reserves 0020 for bounded monitoring recovery and redacted operations queues", () => {
+    expect(Object.keys(monitoringRuns)).toEqual(
+      expect.arrayContaining([
+        "maxAttempts",
+        "retryBaseSeconds",
+        "failureDisposition",
+        "nextRetryAt",
+        "quarantinedAt",
+        "deadLetteredAt",
+      ]),
+    );
+    expect(Object.keys(operationsAlertQueue)).not.toEqual(
+      expect.arrayContaining(["email", "url", "providerPayload", "evidence"]),
+    );
+    expect(Object.keys(operationsAlertQueue)).toEqual(
+      expect.arrayContaining(["eventType", "severity", "dedupeHash", "payload", "state"]),
+    );
+    expect(Object.keys(operationsHealthChecks)).toEqual(
+      expect.arrayContaining(["checkType", "lastSucceededAt", "lastFailedAt", "failureCode"]),
+    );
+    expect(Object.keys(operationsReconciliationRuns)).toEqual(
+      expect.arrayContaining(["periodStart", "state", "leaseOwner", "summary"]),
+    );
+
+    const migration = readFileSync(
+      fileURLToPath(new URL("../migrations/0020_perfect_blob.sql", import.meta.url)),
+      "utf8",
+    );
+    expect(migration).toContain('CREATE TYPE "public"."monitoring_run_state_v2"');
+    expect(migration).toContain(
+      'ALTER TYPE "public"."monitoring_run_state_v2" RENAME TO "monitoring_run_state"',
+    );
+    expect(migration).toContain('DROP INDEX "monitoring_runs_project_state_idx"');
+    expect(migration).toContain('CREATE INDEX "monitoring_runs_project_state_idx"');
+    expect(migration).toContain(`WHERE "monitoring_runs"."state" IN ('PROCESSING','RETRY_WAIT')`);
+    expect(migration).not.toContain("ADD VALUE 'RETRY_WAIT'");
+    expect(migration).toContain('CREATE TABLE "operations_alert_queue"');
+    expect(migration).toContain('CREATE TABLE "operations_reconciliation_runs"');
+    expect(migration).toContain('CREATE TABLE "operations_health_checks"');
+    expect(migration).toContain("monitoring_runs_retry_policy_check");
+    expect(migration).toContain("monitoring_runs_failure_shape_check");
+    expect(migration).toContain("operations_alert_queue_payload_check");
+    expect(migration).toContain(`"operations_alert_queue"."payload"->>'code' IN (`);
+    expect(migration).toContain("'STRIPE_WEBHOOK_PROJECTION_FAILED'");
+    expect(migration).not.toContain(`"operations_alert_queue"."payload"->>'code' ~`);
+    expect(migration).toContain(
+      'REVOKE ALL PRIVILEGES ON TABLE "operations_alert_queue" FROM PUBLIC',
+    );
+  });
+
+  it("removes legacy API-key defaults only through forward migrations", () => {
+    const rateLimitColumn = getTableConfig(apiKeys).columns.find(
+      (column) => column.name === "rate_limit_per_hour",
+    );
+    const providerCostLimitColumn = getTableConfig(apiKeys).columns.find(
+      (column) => column.name === "provider_cost_limit_usd",
+    );
+    expect(rateLimitColumn?.default).toBeUndefined();
+    expect(providerCostLimitColumn?.default).toBeUndefined();
+
+    const foundation = readFileSync(
+      fileURLToPath(new URL("../migrations/0000_fixture_foundation.sql", import.meta.url)),
+      "utf8",
+    );
+    expect(foundation).toContain('"rate_limit_per_hour" integer DEFAULT 20 NOT NULL');
+    expect(foundation).toContain(
+      "\"provider_cost_limit_usd\" numeric(10, 4) DEFAULT '5.0000' NOT NULL",
+    );
+
+    const providerMigration = readFileSync(
+      fileURLToPath(new URL("../migrations/0018_commercial_admission.sql", import.meta.url)),
+      "utf8",
+    );
+    expect(providerMigration).toContain(
+      'ALTER TABLE "api_keys" ALTER COLUMN "provider_cost_limit_usd" DROP DEFAULT;',
+    );
+
+    const rateMigration = readFileSync(
+      fileURLToPath(new URL("../migrations/0021_famous_sebastian_shaw.sql", import.meta.url)),
+      "utf8",
+    );
+    expect(rateMigration.trim()).toBe(
+      'ALTER TABLE "api_keys" ALTER COLUMN "rate_limit_per_hour" DROP DEFAULT;',
     );
   });
 

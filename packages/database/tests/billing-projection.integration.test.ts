@@ -5,12 +5,14 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import {
   BillingCheckoutConflictError,
+  StripeWebhookProjectionError,
   analyticsEvents,
   billingCheckoutSessions,
   billingWebhookEvents,
   createDatabaseFromEnv,
   createRepositories,
   monitoringSubscriptions,
+  operationsAlertQueue,
   projectEntitlements,
   projects,
   subscriptions,
@@ -27,6 +29,10 @@ const unboundCheckoutSessionId = `cs_test_unbound_${suffix}`;
 const eventId = (name: string) => `evt_${name}_${suffix}`;
 const billingDedupe = (name: string, id: string) =>
   createHash("sha256").update(`trendsfast:billing:v1\0${name}\0${id}`).digest("hex");
+const operationsAlertDedupe = (eventType: string, id: string) =>
+  `sha256:${createHash("sha256")
+    .update(`trendsfast:ops-alert:v1\0${eventType}\0${id}`)
+    .digest("hex")}`;
 
 databaseDescribe("Stripe webhook-authoritative billing projection", () => {
   const client = createDatabaseFromEnv();
@@ -726,17 +732,47 @@ databaseDescribe("Stripe webhook-authoritative billing projection", () => {
           expectedLivemode: false,
           expectedPriceId: "price_founder",
         }),
-      ).rejects.toThrow(/analytics_events/i);
+      ).rejects.toMatchObject({
+        name: "StripeWebhookProjectionError",
+        cause: expect.objectContaining({ message: expect.stringMatching(/analytics_events/i) }),
+      } satisfies Partial<StripeWebhookProjectionError>);
       const [afterFailure] = await client.db
         .select()
         .from(projectEntitlements)
         .where(eq(projectEntitlements.projectId, project.id));
       expect(afterFailure?.active).toBe(false);
-      const failedReceipt = await client.db
+      const failedReceipts = await client.db
         .select()
         .from(billingWebhookEvents)
         .where(eq(billingWebhookEvents.stripeEventId, paidEvent.eventId));
-      expect(failedReceipt).toHaveLength(0);
+      expect(failedReceipts).toHaveLength(1);
+      expect(failedReceipts[0]).toMatchObject({
+        stripeEventId: paidEvent.eventId,
+        eventType: paidEvent.type,
+        payloadHash: hashA,
+        state: "FAILED",
+      });
+      await expect(
+        repositories.billing.projectWebhook({
+          event: paidEvent,
+          payloadHash: hashB,
+          expectedLivemode: false,
+          expectedPriceId: "price_founder",
+        }),
+      ).rejects.toThrow(/different payload hash/i);
+      const alertHash = operationsAlertDedupe(
+        "STRIPE_WEBHOOK_FAILURE",
+        `${paidEvent.eventId}:${hashA}`,
+      );
+      const failureAlerts = await client.db
+        .select()
+        .from(operationsAlertQueue)
+        .where(eq(operationsAlertQueue.dedupeHash, alertHash));
+      expect(failureAlerts).toHaveLength(1);
+      expect(failureAlerts[0]).toMatchObject({
+        eventType: "STRIPE_WEBHOOK_FAILURE",
+        payload: { code: "STRIPE_WEBHOOK_PROJECTION_FAILED", count: 1 },
+      });
     } finally {
       await client.pool.query(`
         DROP TRIGGER IF EXISTS billing_subscription_analytics_failure_${triggerSuffix} ON analytics_events;
@@ -751,6 +787,16 @@ databaseDescribe("Stripe webhook-authoritative billing projection", () => {
         expectedPriceId: "price_founder",
       }),
     ).resolves.toMatchObject({ status: "APPLIED", entitlementActive: true });
+    const completedReceipts = await client.db
+      .select()
+      .from(billingWebhookEvents)
+      .where(eq(billingWebhookEvents.stripeEventId, paidEvent.eventId));
+    expect(completedReceipts).toHaveLength(1);
+    expect(completedReceipts[0]).toMatchObject({
+      payloadHash: hashA,
+      state: "PROCESSED",
+      failureCode: null,
+    });
     const events = await client.db
       .select()
       .from(analyticsEvents)
