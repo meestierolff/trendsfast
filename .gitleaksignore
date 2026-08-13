@@ -1,0 +1,26 @@
+# Reviewed synthetic fixture/example findings in immutable historical commits.
+# Each entry is fingerprint-specific so new or moved lookalikes still fail.
+072d5fcceab9a131ff7b2772bb6e38821aec462d:apps/web/app/docs/page.tsx:generic-api-key:7
+072d5fcceab9a131ff7b2772bb6e38821aec462d:apps/web/tests/unit/api.test.ts:generic-api-key:291
+072d5fcceab9a131ff7b2772bb6e38821aec462d:apps/web/tests/unit/api.test.ts:generic-api-key:305
+072d5fcceab9a131ff7b2772bb6e38821aec462d:apps/web/tests/unit/mutation-body-bounds.test.ts:generic-api-key:27
+072d5fcceab9a131ff7b2772bb6e38821aec462d:apps/web/tests/unit/ops-session.test.ts:generic-api-key:9
+59fee774d142c20d34adc7ed6e469f945b174550:apps/web/components/api-preview.tsx:generic-api-key:3
+69c320d0f4b15c790154d24b68f203922065e942:apps/web/tests/unit/monitoring-cron-route.test.ts:generic-api-key:7
+69c320d0f4b15c790154d24b68f203922065e942:packages/config/tests/env.test.ts:stripe-access-token:128
+69c320d0f4b15c790154d24b68f203922065e942:packages/config/tests/env.test.ts:stripe-access-token:167
+69c320d0f4b15c790154d24b68f203922065e942:packages/config/tests/env.test.ts:stripe-access-token:175
+69c320d0f4b15c790154d24b68f203922065e942:packages/config/tests/env.test.ts:stripe-access-token:192
+69c320d0f4b15c790154d24b68f203922065e942:packages/config/tests/env.test.ts:stripe-access-token:204
+73297a6cfdc99b025990b001b39cef399f4d235e:apps/web/tests/unit/delivered-billing-routes.test.ts:generic-api-key:67
+73297a6cfdc99b025990b001b39cef399f4d235e:apps/web/tests/unit/delivered-billing-routes.test.ts:generic-api-key:69
+73297a6cfdc99b025990b001b39cef399f4d235e:packages/config/tests/env.test.ts:stripe-access-token:259
+73297a6cfdc99b025990b001b39cef399f4d235e:packages/config/tests/env.test.ts:stripe-access-token:296
+73297a6cfdc99b025990b001b39cef399f4d235e:packages/config/tests/env.test.ts:stripe-access-token:323
+8c9a5777201efde3c6fd33283f9b021398361951:README.md:generic-api-key:85
+a8b09b118afceaa04016d4ec3206c06d38c8b3e4:packages/config/tests/env.test.ts:stripe-access-token:248
+cd8102aa928638d2f09aead957ad7790b33eb0ae:apps/web/tests/unit/delivered-billing-routes.test.ts:generic-api-key:67
+cd8102aa928638d2f09aead957ad7790b33eb0ae:apps/web/tests/unit/delivered-billing-routes.test.ts:generic-api-key:69
+cd8102aa928638d2f09aead957ad7790b33eb0ae:packages/config/tests/env.test.ts:stripe-access-token:259
+cd8102aa928638d2f09aead957ad7790b33eb0ae:packages/config/tests/env.test.ts:stripe-access-token:296
+cd8102aa928638d2f09aead957ad7790b33eb0ae:packages/config/tests/env.test.ts:stripe-access-token:323

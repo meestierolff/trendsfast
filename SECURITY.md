@@ -47,6 +47,10 @@ leakage, unguessable-token access, API-key verification, CSRF, idempotency,
 webhook signatures, cross-tenant access, evidence fabrication, and retention.
 See [the threat model](docs/security/THREAT_MODEL.md).
 
+Repository-level controls, sensitive-path ownership, workflow pinning, and the
+remote-settings verification procedure are documented in the
+[repository security runbook](docs/security/REPOSITORY_SECURITY.md).
+
 No build or test result should be represented as a third-party security audit.
 
 ## Known pre-launch gaps
@@ -57,7 +61,8 @@ proxy/abuse-boundary verification, including an independent edge throttle for
 public capability lookups; scheduled retention and authenticated privacy-request
 operations; backup/restore rehearsal; explicit operator policy for uncertain
 post-charge retries; and final review of model cost settlement and price
-metadata. The final read-only code audit found no open P0/P1; this is not an
-external security approval. See the
+metadata. The current hosted-launch code and database-role audit remains open;
+no clean P0/P1 conclusion is claimed until it is tied to an immutable release
+SHA. See the
 [launch checklist](docs/operations/LAUNCH_CHECKLIST.md). Do not treat this list
 as exhaustive or as risk acceptance.
