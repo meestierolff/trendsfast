@@ -5,6 +5,7 @@ import {
   createDeliveryToken,
   createPublicScanToken,
   digestNextMoveRequest,
+  digestNextMoveRequestWithContext,
   hashOpaqueToken,
   parseApiKey,
   redactSecrets,
@@ -78,7 +79,7 @@ describe("semantic API request digests", () => {
       available_formats: ["screen_recording", "founder_text"],
     });
     expect(left).toBe(right);
-    expect(left).toMatch(/^next-move-request-v1:sha256:[a-f0-9]{64}$/);
+    expect(left).toMatch(/^next-move-request-v2:sha256:[a-f0-9]{64}$/);
   });
 
   it("changes when a material request field changes", () => {
@@ -92,6 +93,28 @@ describe("semantic API request digests", () => {
         goal: "awareness",
       }),
     ).not.toBe(base);
+  });
+
+  it("canonicalizes legacy goal and new objective to the same request meaning", () => {
+    expect(
+      digestNextMoveRequest({
+        product_url: "https://example.com",
+        goal: "qualified_signups",
+      }),
+    ).toBe(
+      digestNextMoveRequest({
+        product_url: "https://example.com",
+        objective: "qualified_signups",
+      }),
+    );
+  });
+
+  it("pins claimed-project idempotency to the accepted context version", () => {
+    const request = { product_url: "https://example.com", objective: "Grow responsibly" };
+    expect(digestNextMoveRequestWithContext(request, "context_v1")).not.toBe(
+      digestNextMoveRequestWithContext(request, "context_v2"),
+    );
+    expect(digestNextMoveRequestWithContext(request)).toBe(digestNextMoveRequest(request));
   });
 
   it("preserves array and query ordering because either can carry request meaning", () => {

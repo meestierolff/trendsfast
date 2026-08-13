@@ -36,10 +36,10 @@ describe("live adapter degradation", () => {
     const runtime = createProviderContext({
       credentialMode: "byok",
       env: {
-        DATAFORSEO_ESTIMATED_COST_USD_PER_TASK: "0.05",
-        XAI_ESTIMATED_COST_USD_PER_SEARCH: "0.1",
-        TAVILY_ESTIMATED_COST_USD_PER_CREDIT: "0.05",
-        YOUTUBE_INTERNAL_QUOTA_VALUE_USD: "0.01",
+        DATAFORSEO_ESTIMATED_COST_USD_PER_TASK: "7.111",
+        XAI_ESTIMATED_COST_USD_PER_SEARCH: "9.333",
+        TAVILY_ESTIMATED_COST_USD_PER_CREDIT: "7.111",
+        YOUTUBE_INTERNAL_QUOTA_VALUE_USD: "3.777",
       },
       fetch,
     });

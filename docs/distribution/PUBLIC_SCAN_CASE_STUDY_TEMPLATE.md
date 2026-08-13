@@ -54,9 +54,8 @@ URLs carry the `MANUAL_FOUNDER_EVIDENCE` label.
 
 Do not attribute causality to TrendsFast from one observation.
 
-## Cost and research time
+## Review and research time
 
-- Provider cost: `[LEDGER-DERIVED USD / UNKNOWN; EXCLUDE FIXTURE]`
 - Founder review time: `[MINUTES]`
 - Research time replaced: `[SELF-REPORTED / ESTIMATE / UNKNOWN]`
 

@@ -1,10 +1,12 @@
-import { WebhookPayloadConflictError } from "@trendsfast/database";
+import { StripeWebhookProjectionError, WebhookPayloadConflictError } from "@trendsfast/database";
 
 import {
   projectStripeWebhook,
+  StripeWebhookUnavailableError,
   StripeWebhookVerificationError,
 } from "../../../../lib/billing-service";
 import { readBoundedBodyBytes } from "../../../../lib/bounded-json";
+import { dispatchOperationsAlerts } from "../../../../lib/ops-alert-service";
 
 export const runtime = "nodejs";
 
@@ -45,6 +47,15 @@ export async function POST(request: Request) {
     }
     if (error instanceof StripeWebhookVerificationError) {
       return json({ error: "The Stripe webhook could not be verified." }, 400);
+    }
+    if (error instanceof StripeWebhookUnavailableError) {
+      return json({ error: "The Stripe webhook projection is temporarily unavailable." }, 503);
+    }
+    if (error instanceof StripeWebhookProjectionError) {
+      // The repository durably queued a redacted alert before raising this
+      // marker. Delivery is best-effort here; the authenticated cron is the
+      // independent retry/drain path and this response must remain a Stripe 5xx.
+      await dispatchOperationsAlerts().catch(() => undefined);
     }
     // A transient projection failure must stay non-2xx so Stripe retries it.
     return json({ error: "The Stripe webhook projection is temporarily unavailable." }, 500);

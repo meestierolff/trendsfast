@@ -27,7 +27,7 @@ import {
   type ModelClient,
 } from "@trendsfast/orchestration";
 
-import { getRepositories } from "./server-database";
+import { getWorkerRepositories } from "./server-database";
 
 const logger = createLogger({});
 
@@ -87,8 +87,17 @@ export function createConfiguredModelClient(
 
 export async function runPersistedScan(publicId: string) {
   const env = loadEnv();
-  const repositories = getRepositories();
   const fixture = env.PROVIDER_CREDENTIAL_MODE === "fixture";
+  if (!fixture && !env.PROVIDER_CALLS_ENABLED) {
+    throw new Error("PROVIDER_CALLS_NOT_ENABLED");
+  }
+  const repositories = getWorkerRepositories();
+  if (!fixture) {
+    if (!env.MANAGED_POLICY_REVISION) {
+      throw new Error("MANAGED_POLICY_REVISION_REQUIRED");
+    }
+    await repositories.operations.assertManagedPolicyRevision(env.MANAGED_POLICY_REVISION);
+  }
   const client = fixture ? null : createConfiguredModelClient(env);
   const providerContext = createProviderContext({
     credentialMode: env.PROVIDER_CREDENTIAL_MODE,
@@ -120,7 +129,6 @@ export async function runPersistedScan(publicId: string) {
       properties: {
         state: result.state,
         credentialMode: env.PROVIDER_CREDENTIAL_MODE,
-        costUsd: result.costUsd,
       },
     })
     .catch((error) => {

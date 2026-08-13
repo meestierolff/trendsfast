@@ -20,8 +20,8 @@ describe("launch-hardening ops validation", () => {
       name: "Founder agent",
       environment: "test",
       scopes: ["next_move:read", "next_move:write"],
-      rateLimitPerHour: 20,
-      providerCostLimitUsd: 5,
+      rateLimitPerHour: 37,
+      providerCostLimitUsd: 7.25,
       expiresAt: "2026-09-11T12:00:00.000Z",
     };
     expect(ApiKeyIssueBodySchema.safeParse(valid).success).toBe(true);

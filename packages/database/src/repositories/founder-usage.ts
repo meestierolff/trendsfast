@@ -21,6 +21,18 @@ export type FounderUsageAdmission =
   | { status: "REUSED"; event: typeof founderUsageEvents.$inferSelect }
   | { status: "LIMITED"; reason: FounderUsageDenial };
 
+/**
+ * Serializes every entitlement decision and entitlement/grant writer for one
+ * project. Call this before taking row locks in any transaction that can
+ * enable, disable, consume, or project Founder access.
+ */
+export async function lockProjectEntitlementScope(
+  db: TrendsFastDatabase,
+  projectId: string,
+): Promise<void> {
+  await db.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${projectId}, 0))`);
+}
+
 export async function admitFounderUsage(
   db: TrendsFastDatabase,
   input: {
@@ -37,7 +49,7 @@ export async function admitFounderUsage(
   if (Number.isNaN(input.occurredAt.getTime())) {
     throw new Error("Founder usage admission requires a valid occurrence time");
   }
-  await db.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${input.projectId}, 0))`);
+  await lockProjectEntitlementScope(db, input.projectId);
 
   const [existing] = await db
     .select()
@@ -52,14 +64,28 @@ export async function admitFounderUsage(
   }
 
   const [row] = await db
-    .select({ entitlement: projectEntitlements, subscription: subscriptions })
+    .select({
+      entitlement: {
+        projectId: projectEntitlements.projectId,
+        subscriptionId: projectEntitlements.subscriptionId,
+        active: projectEntitlements.active,
+        periodStart: projectEntitlements.periodStart,
+        periodEnd: projectEntitlements.periodEnd,
+      },
+      subscriptionId: subscriptions.id,
+    })
     .from(projectEntitlements)
     .innerJoin(subscriptions, eq(projectEntitlements.subscriptionId, subscriptions.id))
     .where(eq(projectEntitlements.projectId, input.projectId))
-    .limit(1)
-    .for("update");
+    .limit(1);
   const [grant] = await db
-    .select()
+    .select({
+      id: founderEntitlementGrants.id,
+      projectId: founderEntitlementGrants.projectId,
+      createdAt: founderEntitlementGrants.createdAt,
+      expiresAt: founderEntitlementGrants.expiresAt,
+      revokedAt: founderEntitlementGrants.revokedAt,
+    })
     .from(founderEntitlementGrants)
     .where(
       and(
@@ -69,8 +95,7 @@ export async function admitFounderUsage(
         gt(founderEntitlementGrants.expiresAt, input.occurredAt),
       ),
     )
-    .limit(1)
-    .for("update");
+    .limit(1);
   const paidStart = row?.entitlement.periodStart ?? null;
   const paidEnd = row?.entitlement.periodEnd ?? null;
   const paidPeriodValid = Boolean(paidStart && paidEnd && paidStart < paidEnd);
@@ -123,7 +148,7 @@ export async function admitFounderUsage(
     .insert(founderUsageEvents)
     .values({
       projectId: input.projectId,
-      subscriptionId: paidActive ? row!.subscription.id : null,
+      subscriptionId: paidActive ? row!.subscriptionId : null,
       founderGrantId: paidActive ? null : grant!.id,
       scanRequestId: input.scanRequestId ?? null,
       kind: input.kind,

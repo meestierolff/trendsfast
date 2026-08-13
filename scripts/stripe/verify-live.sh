@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "${I_UNDERSTAND_LIVE_STRIPE:-}" != "YES" || "${STRIPE_LIVE_ENABLEMENT_APPROVED:-}" != "YES" ]]; then
-  echo "Live verification requires both live acknowledgements." >&2
+if [[ "${I_UNDERSTAND_LIVE_STRIPE:-}" != "YES" || "${STRIPE_LIVE_CATALOG_APPROVED:-}" != "YES" ]]; then
+  echo "Live catalog verification requires both catalog acknowledgements." >&2
   exit 1
 fi
 

@@ -3,7 +3,7 @@ set -euo pipefail
 
 stripe_api_version="2026-07-29.dahlia"
 catalog_key="trendsfast_founder"
-lookup_key="trendsfast_founder_monthly"
+lookup_key="trendsfast_founder_monthly_eur"
 product_name="TrendsFast Founder"
 
 require_cli_identity() {
@@ -53,10 +53,11 @@ verify_catalog_json() {
     if (prices.length !== 1) failures.push("Founder lookup key must resolve to exactly one price");
     if (price?.active !== true) failures.push("Founder price is inactive");
     if (price?.unit_amount !== 3900) failures.push("Founder price is not 3900 cents");
-    if (price?.currency !== "usd") failures.push("Founder price currency is not USD");
+    if (price?.currency !== "eur") failures.push("Founder price currency is not EUR");
+    if (price?.tax_behavior !== "exclusive") failures.push("Founder price tax behavior is not exclusive");
     if (price?.recurring?.interval !== "month") failures.push("Founder price is not monthly");
     if (price?.recurring?.usage_type && price.recurring.usage_type !== "licensed") failures.push("Founder price is not licensed recurring billing");
-    if (price?.lookup_key !== "trendsfast_founder_monthly") failures.push("Founder lookup key mismatch");
+    if (price?.lookup_key !== "trendsfast_founder_monthly_eur") failures.push("Founder lookup key mismatch");
     if (product?.active !== true) failures.push("Founder product is inactive");
     if (product?.name !== "TrendsFast Founder") failures.push("Founder product name mismatch");
     if (price?.product !== product?.id) failures.push("Founder price belongs to another product");

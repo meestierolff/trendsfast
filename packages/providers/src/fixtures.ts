@@ -23,10 +23,10 @@ const METADATA: Record<ProviderSlug, ProviderMetadata> = {
     declaredStatus: "LIVE",
     capabilities: ["CONTEXT"],
     requiredEnvironmentVariables: [],
-    timeoutMs: 8_000,
+    timeoutMs: 15_000,
     retryPolicy: RETRY_POLICY,
-    maxCallsPerScan: 1,
-    maxResultsPerScan: 1,
+    maxCallsPerScan: 5,
+    maxResultsPerScan: 5,
   },
   google_trends: {
     slug: "google_trends",

@@ -4,7 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import { loadEnv } from "@trendsfast/config";
 
 import { OpsReviewDetail } from "../../../components/ops-review-detail";
-import { getRepositories } from "../../../lib/server-database";
+import { getOpsRepositories } from "../../../lib/server-database";
 import { getOpsPageAuthorization } from "../_auth";
 
 import "../ops.css";
@@ -26,7 +26,7 @@ export default async function OpsScanDetailPage({
   const { scanId } = await params;
   if (!/^[A-Za-z0-9_.-]{1,100}$/.test(scanId)) notFound();
 
-  const repositories = getRepositories();
+  const repositories = getOpsRepositories();
   const detail = await repositories.scans.getStatusByPublicId(scanId);
   if (!detail) notFound();
 

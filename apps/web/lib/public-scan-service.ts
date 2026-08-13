@@ -6,10 +6,15 @@ export class PublicScanError extends Error {
       | "INVALID_URL"
       | "ABUSE_REJECTED"
       | "RATE_LIMITED"
+      | "PROJECT_ALREADY_EXISTS"
       | "TURNSTILE_FAILED"
       | "TODAYS_FOUNDER_REVIEW_CAPACITY_REACHED",
     message: string,
-    readonly status: 400 | 429 = code === "RATE_LIMITED" ? 429 : 400,
+    readonly status: 400 | 409 | 429 = code === "RATE_LIMITED"
+      ? 429
+      : code === "PROJECT_ALREADY_EXISTS"
+        ? 409
+        : 400,
     readonly retryAfterSeconds?: number,
   ) {
     super(message);
@@ -32,6 +37,7 @@ export type PublicScanRepository = {
   }): Promise<
     | { status: "CREATED" | "REUSED"; scanRequestId: string; publicToken: string }
     | { status: "RATE_LIMITED" }
+    | { status: "PROJECT_ALREADY_EXISTS" }
     | { status: "GLOBAL_CAPACITY_REACHED" }
     | { status: "GLOBAL_BUDGET_REACHED" }
   >;
@@ -51,8 +57,9 @@ export function publicScanCredentialModeAvailable(
   appUrl: string,
   deploymentEnvironment?: string,
   hostedPlatform = false,
+  providerCallsEnabled = false,
 ): boolean {
-  if (credentialMode !== "fixture") return true;
+  if (credentialMode !== "fixture") return providerCallsEnabled;
   if (
     hostedPlatform ||
     deploymentEnvironment === "production" ||
@@ -127,6 +134,13 @@ export async function acceptPublicScan(
   });
   if (admission.status === "RATE_LIMITED") {
     throw new PublicScanError("RATE_LIMITED", "The free-scan daily limit has been reached.");
+  }
+  if (admission.status === "PROJECT_ALREADY_EXISTS") {
+    throw new PublicScanError(
+      "PROJECT_ALREADY_EXISTS",
+      "A new public scan cannot be started for this product. Its owner can request a refresh after signing in.",
+      409,
+    );
   }
   if (
     admission.status === "GLOBAL_CAPACITY_REACHED" ||

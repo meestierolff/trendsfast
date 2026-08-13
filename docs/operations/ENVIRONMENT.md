@@ -6,36 +6,59 @@ commit values or paste them into support, issues, logs, or screenshots.
 
 ## Runtime and database
 
-| Variable                               | Default/example         | Purpose                                                    |
-| -------------------------------------- | ----------------------- | ---------------------------------------------------------- |
-| `NODE_ENV`                             | `development`           | Runtime environment; managed production uses `production`. |
-| `APP_URL`                              | `http://localhost:3000` | Exact canonical origin; managed mode requires HTTPS.       |
-| `DATABASE_URL`                         | local PostgreSQL URL    | Server-only pooled/runtime PostgreSQL 15+ connection.      |
-| `DIRECT_DATABASE_URL`                  | local PostgreSQL URL    | Direct connection required for controlled migrate/verify.  |
-| `PROVIDER_CREDENTIAL_MODE`             | `fixture`               | `fixture`, `managed`, or `byok`.                           |
-| `PUBLIC_SCAN_PROCESSING`               | `inline`                | Scan executor policy (`inline` or `manual`).               |
-| `PUBLIC_SCAN_DAILY_LIMIT`              | `1`                     | Accepted submissions per fingerprint/rolling 24 hours.     |
-| `PUBLIC_SCAN_GLOBAL_DAILY_LIMIT`       | `20`                    | New free scans admitted per UTC day across all instances.  |
-| `PUBLIC_SCAN_GLOBAL_DAILY_BUDGET_USD`  | `5`                     | UTC-day reserved/actual free-scan budget.                  |
-| `API_CREATE_RATE_LIMIT_PER_HOUR`       | `20`                    | Expensive create authentications per key/rolling hour.     |
-| `API_STATUS_RATE_LIMIT_PER_HOUR`       | `300`                   | Status reads per key/rolling hour.                         |
-| `API_AUTH_FAILURE_LIMIT_PER_HOUR`      | `20`                    | Failed auth outcomes per fingerprint/rolling hour.         |
-| `API_PROVIDER_COST_LIMIT_USD_PER_HOUR` | empty                   | Required live rolling-hour key cost ceiling.               |
-| `SCAN_RETENTION_DAYS`                  | `90` in template        | Cutoff used by `pnpm db:purge`; no scheduler is included.  |
-| `MAX_SCAN_DURATION_SECONDS`            | `240`                   | Hard scan duration budget.                                 |
-| `PROVIDER_TIMEOUT_MS`                  | `15000`                 | Per-provider attempt timeout.                              |
-| `MAX_PROVIDER_COST_USD_PER_SCAN`       | empty                   | Required live admission ceiling; zero only in fixture.     |
+| Variable                               | Default/example         | Purpose                                                                                                           |
+| -------------------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `NODE_ENV`                             | `development`           | Runtime environment; managed production uses `production`.                                                        |
+| `APP_URL`                              | `http://localhost:3000` | Exact canonical origin; managed mode requires HTTPS.                                                              |
+| `PUBLIC_APP_URL`                       | empty                   | Ops-only exact public origin used for private delivery links; required on hosted ops and distinct from `APP_URL`. |
+| `TRENDSFAST_SURFACE`                   | `public`                | Exact `public` or `ops`; only `ops` exposes founder routes.                                                       |
+| `DATABASE_URL`                         | local PostgreSQL URL    | Server-only pooled/runtime PostgreSQL 15+ connection.                                                             |
+| `MEMBER_DATABASE_URL`                  | empty/local fallback    | Authenticated claim, dashboard, membership, and owner key-management role URL.                                    |
+| `OPS_DATABASE_URL`                     | empty/local fallback    | Founder-control-plane role URL; required on hosted ops.                                                           |
+| `WORKER_DATABASE_URL`                  | empty/local fallback    | Scan, monitoring, reconciliation, and alert role URL.                                                             |
+| `BILLING_DATABASE_URL`                 | empty/local fallback    | Stripe projection and Checkout-claim role URL.                                                                    |
+| `AUTH_DATABASE_URL`                    | empty/local fallback    | API-key authentication and admission role URL.                                                                    |
+| `RETENTION_DATABASE_URL`               | empty/local fallback    | Function-only scheduled/manual purge role URL.                                                                    |
+| `DATABASE_SSL_CA`                      | empty locally           | PEM CA required to verify every non-loopback role URL.                                                            |
+| `DIRECT_DATABASE_URL`                  | local PostgreSQL URL    | Direct connection required for controlled migrate/verify.                                                         |
+| `PROVIDER_CREDENTIAL_MODE`             | `fixture`               | `fixture`, `managed`, or `byok`.                                                                                  |
+| `PROVIDER_CALLS_ENABLED`               | `false`                 | Explicit gate before non-fixture provider/model work.                                                             |
+| `PUBLIC_SCANS_ENABLED`                 | `false`                 | Independent gate before free-scan body/DB work.                                                                   |
+| `LIVE_API_CREATION_ENABLED`            | `false`                 | Independent gate before API create auth/DB work.                                                                  |
+| `PUBLIC_SCAN_PROCESSING`               | `inline`                | Scan executor policy (`inline` or `manual`).                                                                      |
+| `MANAGED_POLICY_REVISION`              | private/required        | Opaque revision fence for database-owned managed policy.                                                          |
+| `MANAGED_POLICY_FILE`                  | empty/operator-only     | Mode-`0600` complete policy input for `db:sync-policy`; never deploy.                                             |
+| `PUBLIC_SCAN_DAILY_LIMIT`              | private/required        | Accepted submissions per fingerprint/rolling 24 hours.                                                            |
+| `PUBLIC_SCAN_GLOBAL_DAILY_LIMIT`       | private/required        | New free scans admitted per UTC day across all instances.                                                         |
+| `PUBLIC_SCAN_GLOBAL_DAILY_BUDGET_USD`  | private/required        | UTC-day reserved/actual free-scan budget.                                                                         |
+| `API_CREATE_RATE_LIMIT_PER_HOUR`       | private/required        | Expensive create authentications per key/rolling hour.                                                            |
+| `API_STATUS_RATE_LIMIT_PER_HOUR`       | private/required        | Status reads per key/rolling hour.                                                                                |
+| `API_AUTH_FAILURE_LIMIT_PER_HOUR`      | private/required        | Failed auth outcomes per fingerprint/rolling hour.                                                                |
+| `API_PROVIDER_COST_LIMIT_USD_PER_HOUR` | empty                   | Required live rolling-hour key cost ceiling.                                                                      |
+| `BILLING_CHECKOUT_ENABLED`             | `false`                 | Independent gate before creating a new Checkout.                                                                  |
+| `SCAN_RETENTION_DAYS`                  | private/required        | Cutoff synchronized into the owner-only managed policy.                                                           |
+| `MAX_SCAN_DURATION_SECONDS`            | `240`                   | Hard scan duration budget.                                                                                        |
+| `PROVIDER_TIMEOUT_MS`                  | `15000`                 | Per-provider attempt timeout.                                                                                     |
+| `MAX_PROVIDER_COST_USD_PER_SCAN`       | empty                   | Required live admission ceiling; zero only in fixture.                                                            |
 
 ## Founder/auth/abuse secrets
 
-| Variable                         | Exposure             | Rule                                                                                  |
-| -------------------------------- | -------------------- | ------------------------------------------------------------------------------------- |
-| `OPS_TOKEN`                      | server secret        | 32+ random characters; managed mode requires it.                                      |
-| `SESSION_SECRET`                 | server secret        | 32+ random characters; managed mode requires it.                                      |
-| `API_KEY_PEPPER`                 | server secret        | 32+ random characters; managed mode requires it; rotation needs key-reissue planning. |
-| `TURNSTILE_ENABLED`              | server config        | `false` by default.                                                                   |
-| `TURNSTILE_SECRET_KEY`           | server secret        | Required with site key when Turnstile is enabled.                                     |
-| `NEXT_PUBLIC_TURNSTILE_SITE_KEY` | intentionally public | The only provider-adjacent value intended for browser exposure.                       |
+| Variable                               | Exposure             | Rule                                                                                  |
+| -------------------------------------- | -------------------- | ------------------------------------------------------------------------------------- |
+| `NEXT_PUBLIC_SUPABASE_URL`             | intentionally public | Exact Supabase project URL; set only with the publishable key.                        |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | intentionally public | Supabase Auth publishable key; never a service-role key or business-table credential. |
+| `OPS_TOKEN`                            | ops-only secret      | 32+ random characters on ops; forbidden on the public surface.                        |
+| `SESSION_SECRET`                       | server secret        | 32+ random characters; use distinct values for public and ops.                        |
+| `API_KEY_PEPPER`                       | server secret        | 32+ random characters; managed mode requires it; rotation needs key-reissue planning. |
+| `TURNSTILE_ENABLED`                    | server config        | `false` by default.                                                                   |
+| `TURNSTILE_SECRET_KEY`                 | server secret        | Required with site key when Turnstile is enabled.                                     |
+| `NEXT_PUBLIC_TURNSTILE_SITE_KEY`       | intentionally public | The only provider-adjacent value intended for browser exposure.                       |
+
+Supabase's publishable pair enables Auth only. Hosted configuration also
+requires the server-only `MEMBER_DATABASE_URL`; `anon` and `authenticated`
+remain denied on every TrendsFast business table. Google provider credentials
+and custom SMTP are configured in Supabase, not added to browser environment
+variables. See [Supabase Auth setup](SUPABASE_AUTH.md).
 
 Authentication-admission limits are currently code defaults, not environment
 variables: syntactically valid `/v1` attempts are bounded to 12 per fingerprint
@@ -61,6 +84,14 @@ configured `PUBLIC_SCAN_DAILY_LIMIT` instead of bypassing the requester cap.
 New work additionally reserves cost inside one PostgreSQL global admission
 lock and must fit both UTC-day global limits. Exact duplicate work is reused and
 does not reserve global cost twice.
+
+Run `pnpm private:bootstrap` to create ignored `.var/private/` state with mode
+`0700` directories and mode `0600` policy files. Keep managed limits in
+`managed-policy.env` and dated operator/provider prices in
+`provider-prices.env`. Do not copy their values into source, documentation,
+analytics, public pages, APIs, issues, CI artifacts, or support output. A managed
+preview can boot with `PROVIDER_CALLS_ENABLED=false`; enabling provider work
+without every applicable private input is rejected.
 
 ## Evidence/model providers
 
@@ -90,11 +121,10 @@ Non-fixture modes require DataForSEO plus at least X or Tavily launch-minimum
 coverage and a complete configured synthesis provider. That configuration is
 still not a production read-back.
 
-`managed` fails closed without all applicable prices and ceilings. `byok` does
-the same unless the self-hoster explicitly sets
-`BYOK_ACCEPT_CONSERVATIVE_COST_ESTIMATES=YES`, which selects documented public
-samples that must be checked against the self-hoster's own invoices. See
-[the commercial boundary](../COMMERCIAL_BOUNDARY.md).
+`managed` and `byok` fail closed when provider calls are enabled without all
+applicable operator-supplied prices, admission limits, and ceilings. Self-hosted
+operators must provide their own current assumptions; no sample dollar amounts
+ship in the repository. See [the commercial boundary](../COMMERCIAL_BOUNDARY.md).
 
 The model client bounds input at 65,536 bytes, response bytes at 262,144,
 configured output at no more than 8,192 tokens, and calls at one initial attempt
@@ -113,20 +143,27 @@ These variables describe a code-local implementation, not a verified paid
 journey. Keep both enablement flags false until the frozen release passes the
 complete billing/monitoring gate.
 
-| Variable                        | Current gate                                                                                              |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `BILLING_ENABLED`               | Must remain `false` until the explicit live gate.                                                         |
-| `PAID_MONITORING_ENABLED`       | Must remain `false` until durable scheduled runs pass deployment checks.                                  |
-| `FOUNDING_100_ENABLED`          | Must remain `false`; no promotion/coupon is part of the launch catalog.                                   |
-| `CLOUD_TRIAL_ENABLED`           | Must remain `false` until monitoring and ownership are self-service.                                      |
-| `STRIPE_MODE`                   | `test` until live approval.                                                                               |
-| `STRIPE_SECRET_KEY`             | Server secret; required only when billing is enabled.                                                     |
-| `STRIPE_WEBHOOK_SECRET`         | Server secret; paired with Stripe secret.                                                                 |
-| `STRIPE_FOUNDER_CLOUD_PRICE_ID` | Server-side allowlisted price ID; never browser-selected.                                                 |
-| `STRIPE_PORTAL_LOGIN_URL`       | Stripe-hosted `/p/login/...` URL; never a local arbitrary-customer route.                                 |
-| `CRON_SECRET`                   | 32+ character server secret required for paid monitoring.                                                 |
-| `MONITORING_CRON_BATCH_SIZE`    | Sequential due-work batch; default 1, schema maximum 10, and constrained by the 300s route formula below. |
-| `MONITORING_LEASE_SECONDS`      | Durable claim lease; must be at least `MAX_SCAN_DURATION_SECONDS + 30`.                                   |
+| Variable                              | Current gate                                                                                               |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `BILLING_ENABLED`                     | Must remain `false` until the explicit live gate.                                                          |
+| `PAID_MONITORING_ENABLED`             | Must remain `false` until durable scheduled runs pass deployment checks.                                   |
+| `MONITORING_ENABLED`                  | Independent kill switch; must match paid-monitoring admission.                                             |
+| `PAID_HOSTING_APPROVED`               | Exact `YES` required for production monitoring after the paid host is confirmed.                           |
+| `FOUNDING_100_ENABLED`                | Must remain `false`; no promotion/coupon is part of the launch catalog.                                    |
+| `CLOUD_TRIAL_ENABLED`                 | Must remain `false` until monitoring and ownership are self-service.                                       |
+| `STRIPE_MODE`                         | `test` until live approval.                                                                                |
+| `STRIPE_SECRET_KEY`                   | Server secret; required only when billing is enabled.                                                      |
+| `STRIPE_WEBHOOK_SECRET`               | Server secret; paired with Stripe secret.                                                                  |
+| `STRIPE_FOUNDER_CLOUD_PRICE_ID`       | Server-side allowlisted price ID; never browser-selected.                                                  |
+| `STRIPE_PORTAL_LOGIN_URL`             | Stripe-hosted `/p/login/...` URL; never a local arbitrary-customer route.                                  |
+| `CRON_SECRET`                         | 32+ character server secret for authenticated monitoring/retention cron routes; required for live billing. |
+| `OPS_ALERT_WEBHOOK_URL` / `_SECRET`   | Clean HTTPS signed pair; required for production monitoring and live billing, never exposed client-side.   |
+| `MONITORING_CRON_BATCH_SIZE`          | Sequential due-work batch; default 1, schema maximum 10, and constrained by the 300s route formula below.  |
+| `MONITORING_LEASE_SECONDS`            | Durable claim lease; must be at least `MAX_SCAN_DURATION_SECONDS + 30`.                                    |
+| `MONITORING_MAX_ATTEMPTS`             | Stored retry cap, 1–10; only known outcomes may use it.                                                    |
+| `MONITORING_RETRY_BASE_SECONDS`       | Stored exponential-backoff base, 30–86400 seconds.                                                         |
+| `MONITORING_REVIEW_ALERT_AGE_SECONDS` | Review-queue age threshold for daily reconciliation.                                                       |
+| `OPS_HEALTH_MAX_AGE_SECONDS`          | Maximum accepted backup/retention success-heartbeat age.                                                   |
 
 When paid monitoring is enabled, configuration fails closed unless both
 constraints hold:
@@ -141,6 +178,26 @@ the sequential batch requires lowering the per-scan deadline; the schema's
 standalone maximum of 10 is not an independently valid production setting.
 These checks encode the current cron-route budget but do not prove that a
 scheduler is deployed, configured, or completing within that budget.
+
+`apps/web/vercel.json` is the no-cron default discovered by automatic Git
+deployments because the Vercel Root Directory is `apps/web`; it is safe for
+Hobby and private previews. `apps/web/vercel.pro.json` is the explicit Pro-only
+public configuration and schedules the UTC monitoring route every ten minutes.
+`apps/web/vercel.ops.json` is the separate private ops-surface template and
+schedules retention daily at 03:17 UTC. `apps/web/vercel.hobby.json` remains a
+no-cron compatibility config. The runtime also denies Vercel previews even if
+production flags were copied.
+
+Monitoring failures are durable. Only known outcomes receive a capped retry;
+unknown provider/model outcomes are quarantined with no automatic replay.
+Expired leases are reconciled, retry-waiting work remains logically open, and
+exhausted attempts dead-letter. One fenced reconciliation per UTC day queues
+aggregate alerts for old review work, provider degradation, durable API cost
+rejections, failed Stripe webhook projections, and stale backup/retention
+heartbeats. The webhook body contains only the event class, severity, time, and
+allowlisted aggregate `code`, `count`, and `maxAgeSeconds` values; it is signed
+over `timestamp.body` and never includes URLs, evidence, provider payloads,
+email addresses, tokens, or secrets.
 
 ## Optional analytics
 
@@ -160,15 +217,23 @@ Validate the entire environment at process start; fail closed on partial secret
 pairs, production/test or non-production/live Stripe mismatch, insecure managed
 origin, or missing managed secrets. `pnpm db:migrate` and
 `pnpm db:verify-hosted` must receive `DIRECT_DATABASE_URL` in controlled hosted
-release work; the application runtime receives the scoped pooled
-`DATABASE_URL`. Inspect built client assets for server variables, then perform
+release work. After bootstrap and role provisioning, that URL authenticates as
+`trendsfast_migrator`; the managed operator remains only in
+`ROLE_ADMIN_DATABASE_URL` for provisioning and catalog verification. The
+application runtime receives the scoped pooled `DATABASE_URL`. Inspect built
+client assets for server variables, then perform
 provider-specific read-backs without printing values.
 
-Run `pnpm db:purge` from one authenticated, observable, single-owner scheduled
-job before accepting real data. The operation applies the cutoff to eligible
+The authenticated ops-only `/api/cron/retention` route is the code-local daily
+scheduler target; `pnpm db:purge` is its manual/recovery equivalent. Both use
+only `RETENTION_DATABASE_URL`, verified `DATABASE_SSL_CA`, and the opaque
+`MANAGED_POLICY_REVISION`. The retention role has no direct table access: it can
+execute only the revision-fenced purge function, which reads the synchronized
+owner-only cutoff and applies it to eligible
 terminal and nonterminal (`QUEUED`, `RUNNING`, and `REVIEW_REQUIRED`) scans and
 removes expired delivery tokens, linked analytics, and eligible orphan projects.
-The current web app does not schedule it. Separately define privacy-request
+The committed ops Vercel template contains the schedule, but deployment and
+successful executions remain unverified. Separately approve privacy-request
 authentication, exact-target deletion invocation, dry-run/review expectations,
 backup expiry, legal holds, and completion audit; do not infer those workflows
-from the variable or CLI.
+from the cron or CLI.

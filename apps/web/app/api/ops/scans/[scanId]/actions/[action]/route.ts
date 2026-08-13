@@ -4,7 +4,7 @@ import { loadEnv } from "@trendsfast/config";
 import { ReviewVersionConflictError } from "@trendsfast/database";
 
 import { readBoundedJsonBody } from "../../../../../../../lib/bounded-json";
-import { getRepositories } from "../../../../../../../lib/server-database";
+import { getOpsRepositories } from "../../../../../../../lib/server-database";
 import { runPersistedScan } from "../../../../../../../lib/scan-processing";
 import { recomputeStoredReview } from "../../../../../../../lib/stored-review-recompute";
 import { authorizeOpsActionRequest } from "../../../../_security";
@@ -52,7 +52,7 @@ export async function POST(
   const parsed = parseOpsAction(action, boundedBody.value);
   if (!parsed.success) return json({ error: parsed.error }, 400);
 
-  const repositories = getRepositories();
+  const repositories = getOpsRepositories();
   const detail = await repositories.scans.getStatusByPublicId(scanId);
   if (!detail) return json({ error: "The scan was not found." }, 404);
 
@@ -220,6 +220,11 @@ export async function POST(
       }
 
       case "deliver": {
+        const env = loadEnv();
+        const publicOrigin = env.TRENDSFAST_SURFACE === "ops" ? env.PUBLIC_APP_URL : env.APP_URL;
+        if (!publicOrigin) {
+          throw new Error("PUBLIC_DELIVERY_ORIGIN_UNAVAILABLE");
+        }
         const move = detail.move;
         if (
           detail.request.state !== "REVIEW_REQUIRED" ||
@@ -237,10 +242,7 @@ export async function POST(
           expiresAt,
         });
         const deliveryUrl = delivery.rawToken
-          ? new URL(
-              `/scan/${encodeURIComponent(delivery.rawToken)}`,
-              process.env.APP_URL ?? request.url,
-            ).toString()
+          ? new URL(`/scan/${encodeURIComponent(delivery.rawToken)}`, publicOrigin).toString()
           : null;
         return json({
           ok: true,

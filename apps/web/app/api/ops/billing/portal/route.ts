@@ -2,7 +2,7 @@ import { loadEnv } from "@trendsfast/config";
 
 import { configuredStripeBilling } from "../../../../../lib/billing-service";
 import { readBoundedJsonBody } from "../../../../../lib/bounded-json";
-import { getRepositories } from "../../../../../lib/server-database";
+import { getOpsRepositories } from "../../../../../lib/server-database";
 import { authorizeOpsActionRequest } from "../../_security";
 import { ProjectBillingBodySchema } from "../_validation";
 
@@ -43,7 +43,7 @@ export async function POST(request: Request) {
   if (!stripeBilling.availability.checkoutAvailable) {
     return json({ error: "Founder billing management is not enabled for this environment." }, 503);
   }
-  const repositories = getRepositories();
+  const repositories = getOpsRepositories();
   const project = await repositories.scanData.getProject(body.data.projectId);
   if (!project || project.status !== "ACTIVE") {
     return json({ error: "An active project is required." }, 404);

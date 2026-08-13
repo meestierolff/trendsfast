@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { readBoundedJsonBody } from "../../../../lib/bounded-json";
-import { getRepositories } from "../../../../lib/server-database";
+import { getOpsRepositories } from "../../../../lib/server-database";
 import { authorizeOpsActionRequest } from "../_security";
 
 export const runtime = "nodejs";
@@ -47,7 +47,7 @@ export async function POST(request: Request) {
 
   const now = new Date();
   try {
-    const result = await getRepositories().founderGrants.issueDesignPartnerGrant({
+    const result = await getOpsRepositories().founderGrants.issueDesignPartnerGrant({
       projectId: body.data.projectId,
       issuedBy: authorization.reviewerId,
       now,

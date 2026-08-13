@@ -15,6 +15,7 @@ export type WebsiteFetchErrorCode =
   | "NON_PUBLIC_ADDRESS"
   | "REDIRECT_LIMIT"
   | "INVALID_REDIRECT"
+  | "CROSS_ORIGIN_REDIRECT"
   | "HTTP_STATUS"
   | "CONTENT_TYPE"
   | "RESPONSE_TOO_LARGE"
@@ -382,6 +383,8 @@ export type SafeWebsiteFetchOptions = {
   resolve: DnsResolver;
   transport?: WebsiteTransport;
   limits?: Partial<WebsiteFetchLimits>;
+  /** Exact origin that every request and redirect hop must retain. */
+  allowedOrigin?: string;
   /** Optional outer execution capability; aborting it closes the pinned transport. */
   signal?: AbortSignal;
 };
@@ -465,6 +468,14 @@ export async function safeFetchWebsite(
   });
   let redirects = 0;
   let current: string | URL = input;
+  let allowedOrigin: string | undefined;
+  if (options.allowedOrigin) {
+    try {
+      allowedOrigin = new URL(options.allowedOrigin).origin;
+    } catch {
+      throw new WebsiteFetchError("INVALID_URL", "Allowed website origin is invalid");
+    }
+  }
 
   try {
     if (limits.timeoutMs <= 0 || controller.signal.aborted) {
@@ -476,6 +487,12 @@ export async function safeFetchWebsite(
         validatePublicHttpUrl(current, options.resolve),
         deadline,
       ]);
+      if (allowedOrigin && validated.url.origin !== allowedOrigin) {
+        throw new WebsiteFetchError(
+          "CROSS_ORIGIN_REDIRECT",
+          "Website navigation left the approved origin",
+        );
+      }
       let response: Response;
       try {
         response = await Promise.race([
@@ -508,14 +525,22 @@ export async function safeFetchWebsite(
         if (!location) {
           throw new WebsiteFetchError("INVALID_REDIRECT", "Website redirect has no location");
         }
+        let redirected: URL;
         try {
-          current = new URL(location, validated.url);
+          redirected = new URL(location, validated.url);
         } catch {
           throw new WebsiteFetchError(
             "INVALID_REDIRECT",
             "Website returned an invalid redirect URL",
           );
         }
+        if (allowedOrigin && redirected.origin !== allowedOrigin) {
+          throw new WebsiteFetchError(
+            "CROSS_ORIGIN_REDIRECT",
+            "Website redirect left the approved origin",
+          );
+        }
+        current = redirected;
         redirects += 1;
         continue;
       }
@@ -589,35 +614,425 @@ export type ExtractedWebsiteDocument = {
   url: string;
   title: string;
   description?: string;
+  openGraph: string[];
+  structuredData: string[];
+  headings: string[];
+  primaryCtas: string[];
+  faqPrompts: string[];
   text: string;
   untrusted: true;
 };
+
+function isAsciiLetter(code: number): boolean {
+  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+}
+
+function isAsciiDigit(code: number): boolean {
+  return code >= 48 && code <= 57;
+}
+
+function isEcmaScriptWhitespace(code: number): boolean {
+  return (
+    code === 0x0009 ||
+    code === 0x000a ||
+    code === 0x000b ||
+    code === 0x000c ||
+    code === 0x000d ||
+    code === 0x0020 ||
+    code === 0x00a0 ||
+    code === 0x1680 ||
+    (code >= 0x2000 && code <= 0x200a) ||
+    code === 0x2028 ||
+    code === 0x2029 ||
+    code === 0x202f ||
+    code === 0x205f ||
+    code === 0x3000 ||
+    code === 0xfeff
+  );
+}
+
+function isAttributeNameStart(code: number): boolean {
+  return isAsciiLetter(code) || code === 95 || code === 58;
+}
+
+function isAttributeNameCharacter(code: number): boolean {
+  return isAttributeNameStart(code) || isAsciiDigit(code) || code === 45 || code === 46;
+}
+
+function htmlAttributes(tag: string): Record<string, string> {
+  const attributes: Record<string, string> = {};
+  let index = 0;
+  while (index < tag.length) {
+    while (index < tag.length && !isAttributeNameStart(tag.charCodeAt(index))) index += 1;
+    if (index >= tag.length) break;
+
+    const nameStart = index;
+    index += 1;
+    while (index < tag.length && isAttributeNameCharacter(tag.charCodeAt(index))) index += 1;
+    const nameEnd = index;
+    while (index < tag.length && isEcmaScriptWhitespace(tag.charCodeAt(index))) index += 1;
+    if (tag.charCodeAt(index) !== 61) {
+      // A contiguous name cannot contain another viable start with a different
+      // outcome, so resume at its end without retrying overlapping suffixes.
+      index = nameEnd;
+      continue;
+    }
+
+    index += 1;
+    while (index < tag.length && isEcmaScriptWhitespace(tag.charCodeAt(index))) index += 1;
+    if (index >= tag.length) break;
+
+    let value: string;
+    const quote = tag.charCodeAt(index);
+    if (quote === 34 || quote === 39) {
+      const valueStart = index + 1;
+      index = valueStart;
+      while (index < tag.length) {
+        const code = tag.charCodeAt(index);
+        if (code === 34 || code === 39) break;
+        index += 1;
+      }
+      if (index < tag.length) {
+        value = tag.slice(valueStart, index);
+        index += 1;
+      } else {
+        // The original expression's unquoted alternative accepted an opening
+        // quote when no closing quote existed.
+        index = valueStart - 1;
+        while (
+          index < tag.length &&
+          !isEcmaScriptWhitespace(tag.charCodeAt(index)) &&
+          tag.charCodeAt(index) !== 62
+        ) {
+          index += 1;
+        }
+        value = tag.slice(valueStart - 1, index);
+      }
+    } else {
+      const valueStart = index;
+      while (
+        index < tag.length &&
+        !isEcmaScriptWhitespace(tag.charCodeAt(index)) &&
+        tag.charCodeAt(index) !== 62
+      ) {
+        index += 1;
+      }
+      if (index === valueStart) continue;
+      value = tag.slice(valueStart, index);
+    }
+
+    const name = tag.slice(nameStart, nameEnd).toLocaleLowerCase("en");
+    attributes[name] = decodeHtmlEntities(value);
+  }
+  return attributes;
+}
+
+function stripInlineHtmlTags(value: string): string {
+  const output: string[] = [];
+  let copyStart = 0;
+  let searchStart = 0;
+  while (searchStart < value.length) {
+    const open = value.indexOf("<", searchStart);
+    if (open < 0) break;
+    const close = value.indexOf(">", open + 1);
+    if (close < 0) break;
+    if (close === open + 1) {
+      searchStart = open + 1;
+      continue;
+    }
+    output.push(value.slice(copyStart, open), " ");
+    copyStart = close + 1;
+    searchStart = copyStart;
+  }
+  output.push(value.slice(copyStart));
+  return output.join("");
+}
+
+function uniqueClean(values: Iterable<string>, maximum: number, length: number): string[] {
+  const output: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const cleaned = cleanText(decodeHtmlEntities(stripInlineHtmlTags(value)), length);
+    if (!cleaned) continue;
+    const key = cleaned.toLocaleLowerCase("en");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(cleaned);
+    if (output.length >= maximum) break;
+  }
+  return output;
+}
+
+function selectedStructuredData(html: string): string[] {
+  const selected: string[] = [];
+  const allowedKeys = new Set([
+    "@type",
+    "name",
+    "headline",
+    "description",
+    "category",
+    "audience",
+    "price",
+    "pricecurrency",
+  ]);
+  for (const match of html.matchAll(
+    /<script\b[^>]*\btype=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi,
+  )) {
+    if (selected.length >= 12) break;
+    try {
+      const parsed: unknown = JSON.parse((match[1] ?? "").slice(0, 50_000));
+      const queue: unknown[] = [parsed];
+      while (queue.length > 0 && selected.length < 12) {
+        const current = queue.shift();
+        if (Array.isArray(current)) {
+          queue.push(...current.slice(0, 20));
+          continue;
+        }
+        if (!current || typeof current !== "object") continue;
+        for (const [key, value] of Object.entries(current as Record<string, unknown>)) {
+          if (Array.isArray(value) || (value && typeof value === "object")) {
+            queue.push(value);
+          } else if (allowedKeys.has(key.toLocaleLowerCase("en")) && typeof value === "string") {
+            const cleaned = cleanText(value, 300);
+            if (cleaned) selected.push(`${key}: ${cleaned}`);
+          }
+          if (selected.length >= 12) break;
+        }
+      }
+    } catch {
+      // Invalid JSON-LD is ignored; ordinary sanitized page text remains usable.
+    }
+  }
+  return uniqueClean(selected, 12, 350);
+}
+
+function stripHtmlComments(value: string): string {
+  const output: string[] = [];
+  let copyStart = 0;
+  let searchStart = 0;
+  while (searchStart < value.length) {
+    const open = value.indexOf("<!--", searchStart);
+    if (open < 0) break;
+    const close = value.indexOf("-->", open + 4);
+    if (close < 0) break;
+    output.push(value.slice(copyStart, open), " ");
+    copyStart = close + 3;
+    searchStart = copyStart;
+  }
+  output.push(value.slice(copyStart));
+  return output.join("");
+}
+
+const EXECUTABLE_ELEMENT_NAMES = new Set([
+  "script",
+  "style",
+  "noscript",
+  "iframe",
+  "object",
+  "embed",
+  "svg",
+  "canvas",
+  "form",
+]);
+const TEXT_BREAK_ELEMENT_NAMES = new Set([
+  "p",
+  "div",
+  "section",
+  "article",
+  "main",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "li",
+]);
+
+function openingExecutableElement(tag: string): string | undefined {
+  let end = 0;
+  while (end < tag.length && isAsciiLetter(tag.charCodeAt(end))) end += 1;
+  if (end === 0) return undefined;
+  const next = tag.charCodeAt(end);
+  if (isAsciiLetter(next) || isAsciiDigit(next) || next === 95) return undefined;
+  const name = tag.slice(0, end).toLocaleLowerCase("en");
+  return EXECUTABLE_ELEMENT_NAMES.has(name) ? name : undefined;
+}
+
+function asciiCaseInsensitiveIndexOf(
+  value: string,
+  expectedLowercase: string,
+  start: number,
+): number {
+  const lastStart = value.length - expectedLowercase.length;
+  for (let index = start; index <= lastStart; index += 1) {
+    let matches = true;
+    for (let offset = 0; offset < expectedLowercase.length; offset += 1) {
+      const code = value.charCodeAt(index + offset);
+      const lowercaseCode = code >= 65 && code <= 90 ? code + 32 : code;
+      if (lowercaseCode !== expectedLowercase.charCodeAt(offset)) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) return index;
+  }
+  return -1;
+}
+
+function isBreakTag(tag: string): boolean {
+  const lowercase = tag.toLocaleLowerCase("en");
+  if (lowercase.startsWith("/")) return TEXT_BREAK_ELEMENT_NAMES.has(lowercase.slice(1));
+  if (!lowercase.startsWith("br")) return false;
+  let end = lowercase.length;
+  if (lowercase.charCodeAt(end - 1) === 47) end -= 1;
+  for (let index = 2; index < end; index += 1) {
+    if (!isEcmaScriptWhitespace(lowercase.charCodeAt(index))) return false;
+  }
+  return end >= 2;
+}
+
+function htmlMarkupToText(value: string): string {
+  const html = stripHtmlComments(value);
+  const output: string[] = [];
+  const elementsWithoutClosingTag = new Set<string>();
+  let index = 0;
+
+  while (index < html.length) {
+    const open = html.indexOf("<", index);
+    if (open < 0) {
+      output.push(html.slice(index));
+      break;
+    }
+    output.push(html.slice(index, open));
+    const close = html.indexOf(">", open + 1);
+    if (close < 0) {
+      output.push(html.slice(open));
+      break;
+    }
+
+    const tag = html.slice(open + 1, close);
+    if (tag.length === 0) {
+      output.push("<>");
+      index = close + 1;
+      continue;
+    }
+
+    const unsafeElement = openingExecutableElement(tag);
+    if (unsafeElement && !elementsWithoutClosingTag.has(unsafeElement)) {
+      const closingTag = `</${unsafeElement}>`;
+      const closingStart = asciiCaseInsensitiveIndexOf(html, closingTag, close + 1);
+      if (closingStart >= 0) {
+        output.push(" ");
+        index = closingStart + closingTag.length;
+        continue;
+      }
+      // A failed search proves this element has no closing tag anywhere in the
+      // remaining suffix, so later openings can be handled without rescanning.
+      elementsWithoutClosingTag.add(unsafeElement);
+    }
+    output.push(isBreakTag(tag) ? "\n" : " ");
+    index = close + 1;
+  }
+  return output.join("");
+}
 
 export function extractWebsiteDocument(url: string, html: string): ExtractedWebsiteDocument {
   const titleMatch = /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(html);
   const descriptionMatch =
     /<meta\b[^>]*\bname=["']description["'][^>]*\bcontent=["']([^"']*)["'][^>]*>/i.exec(html) ??
     /<meta\b[^>]*\bcontent=["']([^"']*)["'][^>]*\bname=["']description["'][^>]*>/i.exec(html);
-  const withoutExecutableContent = html
-    .replace(/<!--[\s\S]*?-->/g, " ")
-    .replace(
-      /<(script|style|noscript|iframe|object|embed|svg|canvas|form)\b[^>]*>[\s\S]*?<\/\1>/gi,
-      " ",
-    )
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/(p|div|section|article|main|h[1-6]|li)>/gi, "\n")
-    .replace(/<[^>]+>/g, " ");
+  const withoutExecutableContent = htmlMarkupToText(html);
   const text = cleanText(decodeHtmlEntities(withoutExecutableContent), 50_000) ?? "";
   const fallbackTitle = new URL(url).hostname;
   const title = cleanText(decodeHtmlEntities(titleMatch?.[1] ?? ""), 300) ?? fallbackTitle;
   const description = cleanText(decodeHtmlEntities(descriptionMatch?.[1] ?? ""), 500);
+  const openGraph = uniqueClean(
+    [...html.matchAll(/<meta\b[^>]*>/gi)].flatMap((match) => {
+      const attributes = htmlAttributes(match[0]);
+      const property = (attributes.property ?? attributes.name)?.toLocaleLowerCase("en");
+      const content = attributes.content;
+      return property?.startsWith("og:") && content ? [`${property}: ${content}`] : [];
+    }),
+    12,
+    550,
+  );
+  const headings = uniqueClean(
+    [...html.matchAll(/<h[1-3]\b[^>]*>([\s\S]*?)<\/h[1-3]>/gi)].map((match) => match[1] ?? ""),
+    20,
+    300,
+  );
+  const primaryCtas = uniqueClean(
+    [...html.matchAll(/<(?:a|button)\b[^>]*>([\s\S]*?)<\/(?:a|button)>/gi)].map(
+      (match) => match[1] ?? "",
+    ),
+    16,
+    160,
+  );
+  const faqPrompts = uniqueClean(
+    [
+      ...[...html.matchAll(/<summary\b[^>]*>([\s\S]*?)<\/summary>/gi)].map(
+        (match) => match[1] ?? "",
+      ),
+      ...headings.filter((heading) => heading.endsWith("?")),
+    ],
+    12,
+    300,
+  );
   return {
     url,
     title,
     ...(description === undefined ? {} : { description }),
+    openGraph,
+    structuredData: selectedStructuredData(html),
+    headings,
+    primaryCtas,
+    faqPrompts,
     text,
     untrusted: true,
   };
+}
+
+const CONTEXT_PATH_MARKERS = [
+  "features",
+  "product",
+  "pricing",
+  "use-case",
+  "about",
+  "docs",
+  "blog",
+  "changelog",
+] as const;
+
+/** Returns a small deterministic same-origin candidate set; it never fetches. */
+export function extractSameOriginContextLinks(baseUrl: string, html: string): string[] {
+  const base = new URL(baseUrl);
+  const candidates = new Map<string, { url: string; rank: number }>();
+  for (const match of html.matchAll(/<a\b[^>]*\bhref\s*=\s*(?:["']([^"']+)["']|([^\s>]+))/gi)) {
+    const raw = decodeHtmlEntities(match[1] ?? match[2] ?? "").trim();
+    if (!raw || raw.startsWith("#")) continue;
+    try {
+      const candidate = new URL(raw, base);
+      candidate.hash = "";
+      if (candidate.origin !== base.origin || !["http:", "https:"].includes(candidate.protocol)) {
+        continue;
+      }
+      const path = candidate.pathname.toLocaleLowerCase("en").replace(/\/+$/, "") || "/";
+      const markerIndex = CONTEXT_PATH_MARKERS.findIndex((marker) => path.includes(marker));
+      if (markerIndex < 0) continue;
+      candidate.search = "";
+      const href = candidate.href;
+      const rank = markerIndex * 10 + path.split("/").filter(Boolean).length;
+      const prior = candidates.get(href);
+      if (!prior || rank < prior.rank) candidates.set(href, { url: href, rank });
+    } catch {
+      // Malformed links are untrusted page data and are ignored.
+    }
+  }
+  return [...candidates.values()]
+    .sort((left, right) => left.rank - right.rank || left.url.localeCompare(right.url))
+    .slice(0, 20)
+    .map((candidate) => candidate.url);
 }
 
 export function wrapUntrustedContent(content: string): string {

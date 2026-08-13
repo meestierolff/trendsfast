@@ -38,13 +38,26 @@ describe("billing launch gate", () => {
     });
   });
 
-  it("allows founder-ops test checkout only when both gates are on", () => {
+  it("allows sandbox checkout only after the compromised key was rotated", () => {
     expect(
       billingAvailability({
         billingEnabled: true,
         paidMonitoringEnabled: true,
         mode: "test",
         providerCredentialMode: "fixture",
+      }),
+    ).toEqual({
+      enabled: true,
+      checkoutAvailable: false,
+      reason: "SANDBOX_KEY_ROTATION_REQUIRED",
+    });
+    expect(
+      billingAvailability({
+        billingEnabled: true,
+        paidMonitoringEnabled: true,
+        mode: "test",
+        providerCredentialMode: "fixture",
+        sandboxKeyRotated: true,
       }),
     ).toEqual({ enabled: true, checkoutAvailable: true, reason: null });
   });
@@ -56,6 +69,7 @@ describe("billing launch gate", () => {
         paidMonitoringEnabled: true,
         mode: "test",
         providerCredentialMode: "fixture",
+        sandboxKeyRotated: true,
         deploymentEnvironment: "production",
       }),
     ).toEqual({
@@ -69,6 +83,7 @@ describe("billing launch gate", () => {
         paidMonitoringEnabled: true,
         mode: "test",
         providerCredentialMode: "fixture",
+        sandboxKeyRotated: true,
         deploymentEnvironment: "preview",
       }),
     ).toEqual({ enabled: true, checkoutAvailable: true, reason: null });
@@ -122,6 +137,7 @@ describe("billing launch gate", () => {
         paidMonitoringEnabled: true,
         mode: "test",
         providerCredentialMode: "managed",
+        sandboxKeyRotated: true,
         deploymentEnvironment: "preview",
       }),
     ).toEqual({
@@ -258,6 +274,7 @@ describe("project-bound Stripe sessions", () => {
       billingEnabled: true,
       paidMonitoringEnabled: true,
       mode: "test",
+      sandboxKeyRotated: true,
       providerCredentialMode: "fixture",
       secretKey: "sk_test_signature_only",
       webhookSecret,
@@ -271,6 +288,7 @@ describe("project-bound Stripe sessions", () => {
       billingEnabled: true,
       paidMonitoringEnabled: true,
       mode: "test",
+      sandboxKeyRotated: true,
       providerCredentialMode: "fixture",
       secretKey: "sk_test_signature_only",
       webhookSecret: "whsec_wrong_local_secret",
@@ -288,6 +306,7 @@ describe("project-bound Stripe sessions", () => {
       billingEnabled: true,
       paidMonitoringEnabled: true,
       mode: "test",
+      sandboxKeyRotated: true,
       providerCredentialMode: "fixture",
       secretKey: "sk_test_example",
       webhookSecret: "whsec_example",
@@ -346,6 +365,7 @@ describe("project-bound Stripe sessions", () => {
       billingEnabled: true,
       paidMonitoringEnabled: true,
       mode: "test",
+      sandboxKeyRotated: true,
       providerCredentialMode: "fixture",
       secretKey: "rk_test_example",
       webhookSecret: "whsec_example",
@@ -376,6 +396,7 @@ describe("project-bound Stripe sessions", () => {
       billingEnabled: true,
       paidMonitoringEnabled: true,
       mode: "test",
+      sandboxKeyRotated: true,
       providerCredentialMode: "fixture",
       secretKey: "sk_test_example",
       webhookSecret: "whsec_example",
@@ -408,6 +429,7 @@ describe("project-bound Stripe sessions", () => {
       billingEnabled: true,
       paidMonitoringEnabled: true,
       mode: "test",
+      sandboxKeyRotated: true,
       providerCredentialMode: "fixture",
       secretKey: "sk_test_example",
       webhookSecret: "whsec_example",
@@ -452,6 +474,7 @@ describe("project-bound Stripe sessions", () => {
       billingEnabled: true,
       paidMonitoringEnabled: true,
       mode: "test",
+      sandboxKeyRotated: true,
       providerCredentialMode: "fixture",
       secretKey: "sk_test_example",
       webhookSecret: "whsec_example",
@@ -505,6 +528,7 @@ describe("project-bound Stripe sessions", () => {
       billingEnabled: true,
       paidMonitoringEnabled: true,
       mode: "test",
+      sandboxKeyRotated: true,
       providerCredentialMode: "fixture",
       secretKey: "rk_test_example",
       webhookSecret: "whsec_example",

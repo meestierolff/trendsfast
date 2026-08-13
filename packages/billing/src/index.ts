@@ -94,6 +94,7 @@ export function billingAvailability(input: {
   paidMonitoringEnabled: boolean;
   mode: StripeMode;
   providerCredentialMode: "fixture" | "managed" | "byok";
+  sandboxKeyRotated?: boolean;
   liveEnablementApproved?: boolean;
   deploymentEnvironment?: "local" | "preview" | "production";
 }) {
@@ -109,6 +110,13 @@ export function billingAvailability(input: {
       enabled: false as const,
       checkoutAvailable: false as const,
       reason: "MONITORING_DISABLED" as const,
+    };
+  }
+  if (input.mode === "test" && !input.sandboxKeyRotated) {
+    return {
+      enabled: true as const,
+      checkoutAvailable: false as const,
+      reason: "SANDBOX_KEY_ROTATION_REQUIRED" as const,
     };
   }
   if (input.mode === "test" && input.providerCredentialMode !== "fixture") {
@@ -301,6 +309,7 @@ export function createStripeBilling(input: {
   paidMonitoringEnabled: boolean;
   mode: StripeMode;
   providerCredentialMode: "fixture" | "managed" | "byok";
+  sandboxKeyRotated?: boolean;
   secretKey?: string;
   webhookSecret?: string;
   founderCloudPriceId?: string;
@@ -314,6 +323,9 @@ export function createStripeBilling(input: {
     paidMonitoringEnabled: input.paidMonitoringEnabled,
     mode: input.mode,
     providerCredentialMode: input.providerCredentialMode,
+    ...(input.sandboxKeyRotated === undefined
+      ? {}
+      : { sandboxKeyRotated: input.sandboxKeyRotated }),
     ...(input.deploymentEnvironment ? { deploymentEnvironment: input.deploymentEnvironment } : {}),
     ...(input.liveEnablementApproved === undefined
       ? {}

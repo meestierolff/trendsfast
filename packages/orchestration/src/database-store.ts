@@ -5,6 +5,7 @@ import {
   createInMemoryEvidenceStore,
   type StoredEvidenceSignal,
 } from "@trendsfast/evidence";
+import { assertActionDetailsBoundToStoredEvidence } from "./decision-contract";
 import {
   fromStoredQueryPlan,
   PROVIDER_LIMITS,
@@ -13,7 +14,13 @@ import {
   type ProviderRunResult,
   type ProviderSlug,
 } from "@trendsfast/providers";
-import { SignalSchema, type Signal, type SourceRunState } from "@trendsfast/schemas";
+import {
+  SignalSchema,
+  SignalMetricSnapshotSchema,
+  contentCapabilitiesFromNames,
+  type Signal,
+  type SourceRunState,
+} from "@trendsfast/schemas";
 import { z } from "zod";
 
 import {
@@ -85,7 +92,9 @@ function sourceState(result: ProviderRunResult): SourceRunState {
 }
 
 export function storedSignal(
-  row: Awaited<ReturnType<Repositories["scanData"]["listSignalsForRun"]>>[number],
+  row:
+    | Awaited<ReturnType<Repositories["scanData"]["listSignalsForRun"]>>[number]
+    | Awaited<ReturnType<Repositories["scanData"]["listPublicSignalsForRun"]>>[number],
 ): Signal {
   const { signal } = row;
   return SignalSchema.parse({
@@ -230,6 +239,17 @@ export function createDatabaseProcessingStore(repositories: Repositories): Proce
         state: request.state,
         ...(request.market === null ? {} : { market: request.market }),
         ...(request.language === null ? {} : { language: request.language }),
+        ...(request.goal === null ? {} : { objective: request.goal }),
+        ...(request.preferredChannels === null
+          ? {}
+          : { preferredChannels: request.preferredChannels }),
+        ...(request.availableFormats === null
+          ? {}
+          : { availableFormats: request.availableFormats }),
+        ...(request.requestedContentCapabilities === null
+          ? {}
+          : { requestedContentCapabilities: request.requestedContentCapabilities }),
+        generationLevel: request.generationLevel,
       };
     },
 
@@ -257,6 +277,14 @@ export function createDatabaseProcessingStore(repositories: Repositories): Proce
           sourceRuns.map((sourceRun) => [sourceRun.source, sourceRun.state]),
         ),
         spentUsd: committedCostUsd,
+        ...(claimed.request.goal === null ? {} : { objective: claimed.request.goal }),
+        ...(claimed.request.preferredChannels === null
+          ? {}
+          : { preferredChannels: claimed.request.preferredChannels }),
+        ...(claimed.request.availableFormats === null
+          ? {}
+          : { availableFormats: claimed.request.availableFormats }),
+        generationLevel: claimed.request.generationLevel,
         ...(claimed.run.hardDeadlineAt === null
           ? {}
           : { hardDeadlineAt: claimed.run.hardDeadlineAt }),
@@ -264,6 +292,10 @@ export function createDatabaseProcessingStore(repositories: Repositories): Proce
       if (contextRow) {
         result.context = contextRow.contextVersion.context;
         result.contextVersionId = contextRow.contextVersion.id;
+        result.contentCapabilities = claimed.request.requestedContentCapabilities
+          ? contentCapabilitiesFromNames(claimed.request.requestedContentCapabilities)
+          : contextRow.contextVersion.contentCapabilities;
+        result.voiceProfile = contextRow.contextVersion.voiceProfile;
       }
       if (claimed.run.queryPlan) {
         result.queryPlan = fromStoredQueryPlan(claimed.run.queryPlan);
@@ -271,15 +303,16 @@ export function createDatabaseProcessingStore(repositories: Repositories): Proce
       return result;
     },
 
-    async saveContext(ids, context) {
+    async saveContext(ids, context, profile) {
       return fencedMutation(repositories, ids, async (fenced) => {
-        const project = await fenced.scanData.upsertProject({
-          url: context.url,
-          name: context.name,
+        const project = await fenced.scanData.resolveProjectForInferredContext({
+          scanRequestId: ids.requestId,
+          context,
         });
         const version = await fenced.scanData.addProjectContext({
           projectId: project.id,
           context,
+          ...(profile ?? {}),
           promptVersion: "product-context-v1",
           createdBy: "scan-orchestrator",
         });
@@ -473,12 +506,20 @@ export function createDatabaseProcessingStore(repositories: Repositories): Proce
     },
 
     async loadCollectedData(scanRunId) {
-      const [signalRows, sourceRuns] = await Promise.all([
+      const [signalRows, snapshotRows, sourceRuns] = await Promise.all([
         repositories.scanData.listSignalsForRun(scanRunId),
+        repositories.scanData.listHistoricalMetricSnapshotsForRun(scanRunId),
         repositories.scanData.listSourceRuns(scanRunId),
       ]);
       return {
         signals: signalRows.map(storedSignal),
+        snapshots: snapshotRows.map((snapshot) =>
+          SignalMetricSnapshotSchema.parse({
+            signalId: snapshot.signalId,
+            observedAt: snapshot.observedAt.toISOString(),
+            metrics: snapshot.metrics,
+          }),
+        ),
         measurements: sourceRuns.flatMap((run) => measurementFragment(run.providerPayloadFragment)),
         coverage: Object.fromEntries(sourceRuns.map((run) => [run.source, run.state])),
       };
@@ -541,12 +582,21 @@ export function createDatabaseProcessingStore(repositories: Repositories): Proce
           validUntil: new Date(draft.move.validUntil),
           scoreVersion: draft.scoreVersion,
         });
+        if (!draft.versionedMove) {
+          throw new Error("A versioned Next Move contract is required before persistence");
+        }
+        assertActionDetailsBoundToStoredEvidence({
+          details: draft.versionedMove.details,
+          evidenceSignalIds,
+          storedSignals: signals,
+        });
         const move = await repositories.scanData.createDraftNextMove({
           scanRequestId: ids.requestId,
           scanRunId: ids.runId,
           projectContextVersionId: ids.contextVersionId,
           opportunityId: opportunity.id,
           move: draft.move,
+          versionedMove: draft.versionedMove,
           whyNow: draft.whyNow,
           signalClass: draft.signalClass,
           independentSourceCount: draft.independentSourceCount,

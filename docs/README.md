@@ -20,10 +20,19 @@ connectivity, deployment, security approval, billing, or customer outcomes.
 - [Launch checklist](operations/LAUNCH_CHECKLIST.md),
   [runbook](operations/RUNBOOK.md), and
   [deployment procedure](operations/DEPLOYMENT.md), plus the
-  [environment reference](operations/ENVIRONMENT.md)
-- [Integrated local verification record](operations/LOCAL_VERIFICATION_2026-08-12.md)
+  [environment reference](operations/ENVIRONMENT.md) and
+  [Supabase Auth setup](operations/SUPABASE_AUTH.md)
+- [2026-08-13 local product-completion record](operations/LOCAL_VERIFICATION_2026-08-13.md)
+  and the
+  [2026-08-13 protected hosted-preview record](operations/HOSTED_PREVIEW_VERIFICATION_2026-08-13.md),
+  plus the preserved
+  [2026-08-12 immutable historical baseline](operations/LOCAL_VERIFICATION_2026-08-12.md)
 - [Legal drafting templates](legal/README.md)
 - [Distribution assets](distribution/FOUNDER_STORY_REDDIT.md)
+- Optional founder-agent handoffs for
+  [Postiz](workflows/agent-to-postiz.md),
+  [HeyGen](workflows/heygen-presenter.md), and
+  [Higgsfield](workflows/higgsfield-ugc.md); these are examples, not native integrations
 
 ## Truth vocabulary
 

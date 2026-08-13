@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 vi.mock("../../lib/server-database", () => ({
@@ -34,6 +34,26 @@ function oversizedPublicRequest(contentLength?: string): Request {
 }
 
 describe("public scan route request bounds", () => {
+  beforeEach(() => vi.stubEnv("PUBLIC_SCANS_ENABLED", "true"));
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("stops disabled public scans before reaching the database", async () => {
+    vi.stubEnv("PUBLIC_SCANS_ENABLED", "false");
+    const response = await POST(
+      new Request(`${origin}/api/scan-requests`, {
+        method: "POST",
+        headers: { origin, "content-type": "application/json" },
+        body: JSON.stringify({ product_url: "https://example.com" }),
+      }),
+    );
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({
+      error: "Public scans are temporarily unavailable.",
+    });
+  });
+
   it.each([
     { label: "chunked/missing", contentLength: undefined },
     { label: "understated", contentLength: "1" },

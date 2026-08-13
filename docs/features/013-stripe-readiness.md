@@ -8,29 +8,22 @@ claimed by this document.
 ## User problem
 
 A founder who has already received a useful private result can buy one bounded monitoring plan,
-receive one project-scoped API key, and manage billing through Stripe without creating a general
-TrendsFast customer dashboard.
+receive project-scoped API access, and manage the subscription through Stripe-hosted surfaces from
+the simple TrendsFast billing dashboard without a custom payment portal.
 
 ## Product contract
 
-The single launch catalog entry is `TrendsFast Founder` at `$39 USD/month`: one monitored product,
+The single launch catalog entry is `TrendsFast Founder` at `€39 EUR/month`: one monitored product,
 one scheduled run per UTC day, ten accepted on-demand runs per billing period, at most one newly
 delivered Next Move per UTC day, read/write Next Move API access, polling outside research
 allowances, and 30-day history. No coupon, promotion code, trial, alternate plan, or “unlimited
 scans” claim is enabled.
 
-The exact delivered-result CTA is `Monitor this product — $39/month`. It is rendered only when
-both billing and paid monitoring are enabled; live mode additionally requires both explicit live
-acknowledgements.
+The exact delivered-result CTA is `Monitor this product — €39/month`. It is rendered only when
+billing, paid monitoring, and the independent `BILLING_CHECKOUT_ENABLED` switch are enabled; live
+mode additionally requires both explicit live acknowledgements.
 
 ## Authoritative Stripe choices
-
-The implementation follows the installed repository skills:
-
-- `.agents/skills/stripe-best-practices/SKILL.md` and its billing, payments, security, and tax
-  references;
-- `.agents/skills/stripe-docs/SKILL.md`;
-- `.agents/skills/upgrade-stripe/SKILL.md`.
 
 Stripe Node is pinned compatibly to `^22.4.0`, with API version
 `2026-07-29.dahlia`. Subscriptions use Stripe Billing and hosted Checkout Sessions with Prices,
@@ -109,7 +102,7 @@ listener’s signing secret into a new mode-0600 file outside the repository and
 terminal output. It never assumes a secret from a different listener invocation.
 
 Live bootstrap and verification additionally require both
-`I_UNDERSTAND_LIVE_STRIPE=YES` and `STRIPE_LIVE_ENABLEMENT_APPROVED=YES`. Catalog bootstrap stops
+`I_UNDERSTAND_LIVE_STRIPE=YES` and `STRIPE_LIVE_CATALOG_APPROVED=YES`. Catalog bootstrap stops
 without creating a Checkout or charge. Runtime live Checkout remains a separate gated decision.
 
 ## Verification
@@ -127,7 +120,8 @@ never production configuration.
 
 ## Rollout and rollback
 
-Keep `BILLING_ENABLED=false` and `PAID_MONITORING_ENABLED=false` until the sandbox journey,
+Keep `BILLING_ENABLED=false`, `BILLING_CHECKOUT_ENABLED=false`, and
+`PAID_MONITORING_ENABLED=false` until the sandbox journey,
 deployed webhooks, customer Portal, legal/refund terms, and tax-registration review all pass. Roll
-back by disabling new Checkout while retaining subscriptions, webhook receipts, entitlements, and
-audits for reconciliation.
+back by disabling `BILLING_CHECKOUT_ENABLED`; existing signed webhooks, claims, subscriptions,
+entitlements, and audits remain available for reconciliation.

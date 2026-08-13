@@ -6,7 +6,7 @@ import { billingAvailability } from "@trendsfast/billing";
 import { loadEnv } from "@trendsfast/config";
 
 import { OpsBillingManager } from "../../../components/ops-billing-manager";
-import { getRepositories } from "../../../lib/server-database";
+import { getOpsRepositories } from "../../../lib/server-database";
 import { deploymentProvenance } from "../../../lib/deployment-provenance";
 import { getOpsPageAuthorization } from "../_auth";
 
@@ -27,9 +27,10 @@ export default async function OpsBillingPage() {
     paidMonitoringEnabled: env.PAID_MONITORING_ENABLED,
     mode: env.STRIPE_MODE,
     providerCredentialMode: env.PROVIDER_CREDENTIAL_MODE,
+    sandboxKeyRotated: env.STRIPE_SANDBOX_KEY_ROTATED === "YES",
     deploymentEnvironment: deploymentProvenance().deploymentEnvironment,
   });
-  const repositories = getRepositories();
+  const repositories = getOpsRepositories();
   const projects = await repositories.scanData.listProjects({ activeOnly: true, limit: 100 });
   const projectViews = await Promise.all(
     projects.map(async (project) => {

@@ -33,6 +33,17 @@ describe("product context inference", () => {
     expect(context.assumptions.join(" ")).toMatch(/fixture|founder correction/i);
   });
 
+  it("extracts a bounded title prefix from adversarial delimiter whitespace in linear time", async () => {
+    const context = await inferFixtureProjectContext("https://example.dev", [
+      {
+        ...websiteSignal,
+        title: `Example${" ".repeat(100_000)}— Product intelligence`,
+      },
+    ]);
+
+    expect(context.name).toBe("Example");
+  });
+
   it("keeps page injection text inside untrusted model data and repairs once", async () => {
     const output = {
       name: "Example",

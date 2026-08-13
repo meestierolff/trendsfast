@@ -36,6 +36,15 @@ test("landing page leads with the URL-first product promise", async ({ page }) =
   await expect(page.getByText("No auto-posting", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Product demo using example data.", { exact: true })).toBeVisible();
   await expect(page.getByText(/trusted by/i)).toHaveCount(0);
+
+  const structuredData = (
+    await page.locator('script[type="application/ld+json"]').allTextContents()
+  )
+    .map((value) => JSON.parse(value) as { "@type"?: string; offers?: unknown[] })
+    .find((value) => value["@type"] === "SoftwareApplication");
+  expect(structuredData?.offers).toContainEqual(
+    expect.objectContaining({ name: "Founder", price: "39", priceCurrency: "EUR" }),
+  );
 });
 
 test("interactive example includes all four honest outcomes", async ({ page }) => {
@@ -71,6 +80,10 @@ test("Founder pricing collects explicit launch consent without a public checkout
   await page.goto("/pricing");
 
   const founder = page.locator("#founder");
+  await expect(founder).toContainText("€39");
+  await expect(
+    founder.getByText("Planned managed monitoring for one product, with bounded research usage."),
+  ).toBeVisible();
   await expect(founder.getByLabel("Email address")).toBeVisible();
   await expect(
     founder.getByRole("checkbox", {

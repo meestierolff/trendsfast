@@ -10,7 +10,7 @@ const { getRepositories, hardDelete } = vi.hoisted(() => {
   };
 });
 
-vi.mock("../../lib/server-database", () => ({ getRepositories }));
+vi.mock("../../lib/server-database", () => ({ getOpsRepositories: getRepositories }));
 
 import { DELETE } from "../../app/api/ops/founder-launch-interests/[interestId]/route";
 import { createCsrfToken, issueOpsSession } from "../../lib/ops-session";

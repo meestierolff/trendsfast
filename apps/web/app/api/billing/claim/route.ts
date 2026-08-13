@@ -1,10 +1,14 @@
 import { clearCheckoutClaimCookie } from "@trendsfast/billing";
-import { loadEnv, resolveApiProviderCostLimitUsdPerHour } from "@trendsfast/config";
+import {
+  loadEnv,
+  resolveApiProviderCostLimitUsdPerHour,
+  resolveApiRateLimit,
+} from "@trendsfast/config";
 
 import { checkoutClaimIdentity } from "../../../../lib/checkout-claim";
 import { configuredStripeBilling } from "../../../../lib/billing-service";
 import { strictSameOrigin } from "../../../../lib/first-party-analytics";
-import { getRepositories } from "../../../../lib/server-database";
+import { getBillingRepositories } from "../../../../lib/server-database";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,12 +27,16 @@ function json(body: Record<string, unknown>, status = 200, clearClaim = false) {
 }
 
 export async function GET(request: Request) {
-  if (!configuredStripeBilling().availability.checkoutAvailable) {
+  const env = loadEnv();
+  if (
+    !env.BILLING_CHECKOUT_ENABLED ||
+    !configuredStripeBilling(env).availability.checkoutAvailable
+  ) {
     return json({ error: "CHECKOUT_NOT_AVAILABLE" }, 503);
   }
   const identity = checkoutClaimIdentity(request);
   if (!identity) return json({ error: "CHECKOUT_CLAIM_INVALID" }, 404);
-  const claim = await getRepositories().billing.checkoutClaimStatus(identity);
+  const claim = await getBillingRepositories().billing.checkoutClaimStatus(identity);
   if (!claim) return json({ error: "CHECKOUT_CLAIM_INVALID" }, 404);
   if (claim.claimConsumedAt || claim.issuedApiKeyId) {
     return json({ state: "KEY_ALREADY_ISSUED" }, 200, true);
@@ -41,7 +49,10 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const env = loadEnv();
-  if (!configuredStripeBilling(env).availability.checkoutAvailable) {
+  if (
+    !env.BILLING_CHECKOUT_ENABLED ||
+    !configuredStripeBilling(env).availability.checkoutAvailable
+  ) {
     return json({ error: "CHECKOUT_NOT_AVAILABLE" }, 503);
   }
   if (!strictSameOrigin(request, env.APP_URL)) {
@@ -49,11 +60,11 @@ export async function POST(request: Request) {
   }
   const identity = checkoutClaimIdentity(request);
   if (!identity) return json({ error: "CHECKOUT_CLAIM_INVALID" }, 404);
-  const result = await getRepositories().billing.consumeCheckoutClaim({
+  const result = await getBillingRepositories().billing.consumeCheckoutClaim({
     ...identity,
     environment: env.STRIPE_MODE === "live" ? "live" : "test",
     now: new Date(),
-    rateLimitPerHour: env.API_CREATE_RATE_LIMIT_PER_HOUR,
+    rateLimitPerHour: resolveApiRateLimit(env, "API_CREATE_RATE_LIMIT_PER_HOUR"),
     providerCostLimitUsd: resolveApiProviderCostLimitUsdPerHour(env),
   });
   switch (result.status) {

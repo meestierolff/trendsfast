@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   decideMonitoringClaim,
+  decideMonitoringFailure,
   isCurrentMonitoringFence,
+  monitoringRetryDelaySeconds,
   nextMonitoringDueAt,
 } from "../src/repositories/monitoring-model";
 
@@ -71,5 +73,45 @@ describe("monitoring claim policy", () => {
   it("rejects stale completion after a newer lease owner rotates the fence", () => {
     expect(isCurrentMonitoringFence("lease-old", "lease-new")).toBe(false);
     expect(isCurrentMonitoringFence("lease-new", "lease-new")).toBe(true);
+  });
+
+  it("quarantines every unknown effect and never converts it into an automatic retry", () => {
+    expect(
+      decideMonitoringFailure({
+        requestedDisposition: "KNOWN_RETRYABLE",
+        hasUnknownExternalOutcome: true,
+        attempt: 1,
+        maxAttempts: 3,
+      }),
+    ).toEqual({ state: "QUARANTINED", disposition: "OUTCOME_UNKNOWN" });
+    expect(
+      decideMonitoringFailure({
+        requestedDisposition: "OUTCOME_UNKNOWN",
+        hasUnknownExternalOutcome: false,
+        attempt: 1,
+        maxAttempts: 3,
+      }),
+    ).toEqual({ state: "QUARANTINED", disposition: "OUTCOME_UNKNOWN" });
+  });
+
+  it("backs off only known failures and dead-letters at the stored cap", () => {
+    expect(monitoringRetryDelaySeconds(1, 300)).toBe(300);
+    expect(monitoringRetryDelaySeconds(3, 300)).toBe(1_200);
+    expect(
+      decideMonitoringFailure({
+        requestedDisposition: "KNOWN_RETRYABLE",
+        hasUnknownExternalOutcome: false,
+        attempt: 2,
+        maxAttempts: 3,
+      }),
+    ).toEqual({ state: "RETRY_WAIT", disposition: "KNOWN_RETRYABLE" });
+    expect(
+      decideMonitoringFailure({
+        requestedDisposition: "KNOWN_RETRYABLE",
+        hasUnknownExternalOutcome: false,
+        attempt: 3,
+        maxAttempts: 3,
+      }),
+    ).toEqual({ state: "DEAD_LETTER", disposition: "KNOWN_RETRYABLE" });
   });
 });

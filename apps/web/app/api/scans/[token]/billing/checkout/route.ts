@@ -12,7 +12,7 @@ import { BillingCheckoutConflictError } from "@trendsfast/database";
 import { configuredStripeBilling } from "../../../../../../lib/billing-service";
 import { strictSameOrigin } from "../../../../../../lib/first-party-analytics";
 import { resolveReadyScanIdentity } from "../../../../../../lib/scan-view-service";
-import { getRepositories } from "../../../../../../lib/server-database";
+import { getBillingRepositories } from "../../../../../../lib/server-database";
 
 export const runtime = "nodejs";
 
@@ -31,6 +31,9 @@ function json(body: Record<string, unknown>, status = 200, cookie?: string) {
 
 export async function POST(request: Request, context: { params: Promise<{ token: string }> }) {
   const env = loadEnv();
+  if (!env.BILLING_CHECKOUT_ENABLED) {
+    return json({ error: "Founder monitoring checkout is not enabled." }, 503);
+  }
   if (!strictSameOrigin(request, env.APP_URL)) {
     return json({ error: "Checkout requires a same-origin request." }, 403);
   }
@@ -44,7 +47,7 @@ export async function POST(request: Request, context: { params: Promise<{ token:
     return json({ error: "The private delivery capability is invalid or expired." }, 404);
   }
 
-  const repositories = getRepositories();
+  const repositories = getBillingRepositories();
   const existingRawClaim = readCheckoutClaimCookie(request.headers.get("cookie"));
   const existingClaimHash = existingRawClaim ? checkoutClaimHash(existingRawClaim) : null;
   let claim =

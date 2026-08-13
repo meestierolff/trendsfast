@@ -6,6 +6,7 @@ const root = fileURLToPath(new URL(".", import.meta.url));
 export default defineConfig({
   resolve: {
     alias: {
+      "@": `${root}apps/web`,
       "@trendsfast/analytics": `${root}packages/analytics/src/index.ts`,
       "@trendsfast/billing": `${root}packages/billing/src/index.ts`,
       "@trendsfast/config": `${root}packages/config/src/index.ts`,

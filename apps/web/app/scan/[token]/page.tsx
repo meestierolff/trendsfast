@@ -26,10 +26,11 @@ export default async function ScanResultPage({ params }: { params: Promise<{ tok
 
   const env = loadEnv();
   const checkout = billingAvailability({
-    billingEnabled: env.BILLING_ENABLED,
+    billingEnabled: env.BILLING_ENABLED && env.BILLING_CHECKOUT_ENABLED,
     paidMonitoringEnabled: env.PAID_MONITORING_ENABLED,
     mode: env.STRIPE_MODE,
     providerCredentialMode: env.PROVIDER_CREDENTIAL_MODE,
+    sandboxKeyRotated: env.STRIPE_SANDBOX_KEY_ROTATED === "YES",
     deploymentEnvironment: deploymentProvenance().deploymentEnvironment,
     liveEnablementApproved:
       env.I_UNDERSTAND_LIVE_STRIPE === "YES" && env.STRIPE_LIVE_ENABLEMENT_APPROVED === "YES",

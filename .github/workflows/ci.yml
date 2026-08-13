@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -19,9 +23,18 @@ env:
   DATABASE_URL: postgresql://trendsfast:trendsfast_ci@127.0.0.1:5432/trendsfast
   DIRECT_DATABASE_URL: postgresql://trendsfast:trendsfast_ci@127.0.0.1:5432/trendsfast
   PROVIDER_CREDENTIAL_MODE: fixture
+  PUBLIC_SCANS_ENABLED: "true"
+  LIVE_API_CREATION_ENABLED: "true"
+  BILLING_CHECKOUT_ENABLED: "false"
   PUBLIC_SCAN_PROCESSING: inline
-  PUBLIC_SCAN_DAILY_LIMIT: "20"
-  SCAN_RETENTION_DAYS: "90"
+  # Conspicuously arbitrary test-only limits; these must never encode managed policy.
+  PUBLIC_SCAN_DAILY_LIMIT: "29"
+  PUBLIC_SCAN_GLOBAL_DAILY_LIMIT: "37"
+  PUBLIC_SCAN_GLOBAL_DAILY_BUDGET_USD: "913.777"
+  API_CREATE_RATE_LIMIT_PER_HOUR: "43"
+  API_STATUS_RATE_LIMIT_PER_HOUR: "317"
+  API_AUTH_FAILURE_LIMIT_PER_HOUR: "47"
+  SCAN_RETENTION_DAYS: "73"
   OPS_TOKEN: ci-only-ops-token-at-least-32-characters
   SESSION_SECRET: ci-only-session-secret-at-least-32-chars
   API_KEY_PEPPER: ci-only-api-key-pepper-at-least-32-chars
@@ -35,6 +48,9 @@ jobs:
     name: Lint, types, tests, migration, build
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      DATABASE_URL: postgresql://trendsfast_managed_operator:trendsfast_ci@127.0.0.1:5432/trendsfast
+      DIRECT_DATABASE_URL: postgresql://trendsfast_managed_operator:trendsfast_ci@127.0.0.1:5432/trendsfast
     services:
       postgres:
         image: postgres:16-alpine
@@ -52,16 +68,30 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Reject tracked private state or local agent skills
+        run: |
+          if ! git diff --quiet --cached --diff-filter=ACMR -- '.agents' '.agents/**' '.var/private' '.var/private/**' 'supabase/.temp' 'supabase/.temp/**'; then
+            echo "Private operator state or local CLI/agent state is staged." >&2
+            git diff --cached --name-only --diff-filter=ACMR -- '.agents' '.agents/**' '.var/private' '.var/private/**' 'supabase/.temp' 'supabase/.temp/**' >&2
+            exit 1
+          fi
+          git ls-files --error-unmatch -- '.agents' '.agents/**' '.var/private' '.var/private/**' 'supabase/.temp' 'supabase/.temp/**' >/dev/null 2>&1 || exit 0
+          echo "Private operator state or local CLI/agent state is tracked." >&2
+          git ls-files -- '.agents' '.agents/**' '.var/private' '.var/private/**' 'supabase/.temp' 'supabase/.temp/**' >&2
+          exit 1
 
       - name: Enable pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
           version: 9.15.9
           run_install: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: pnpm
@@ -71,6 +101,13 @@ jobs:
 
       - name: Check documentation formatting
         run: pnpm exec prettier --check "*.md" "docs/**/*.md" ".github/**/*.{md,yml,yaml}"
+
+      - name: Create Supabase-like managed database operator
+        run: >-
+          docker exec "${{ job.services.postgres.id }}"
+          psql -v ON_ERROR_STOP=1 -U trendsfast -d trendsfast
+          -c "CREATE ROLE trendsfast_managed_operator LOGIN NOSUPERUSER CREATEDB CREATEROLE INHERIT REPLICATION BYPASSRLS PASSWORD 'trendsfast_ci'"
+          -c "ALTER DATABASE trendsfast OWNER TO trendsfast_managed_operator"
 
       - name: Replay migrations from zero
         run: pnpm db:migrate
@@ -87,6 +124,80 @@ jobs:
       - name: Unit and contract tests
         run: pnpm test
 
+      - name: Exercise managed-host role provisioning and default-ACL repair
+        env:
+          ROLE_ADMIN_DATABASE_URL: postgresql://trendsfast_managed_operator:trendsfast_ci@127.0.0.1:5432/trendsfast
+          DATABASE_URL: postgresql://trendsfast_public_runtime:ci-public-runtime-password-00000000002@127.0.0.1:5432/trendsfast
+          MEMBER_DATABASE_URL: postgresql://trendsfast_member_runtime:ci-member-runtime-password-00000000002@127.0.0.1:5432/trendsfast
+          OPS_DATABASE_URL: postgresql://trendsfast_ops_runtime:ci-ops-runtime-password-00000000000002@127.0.0.1:5432/trendsfast
+          WORKER_DATABASE_URL: postgresql://trendsfast_worker_runtime:ci-worker-runtime-password-00000000002@127.0.0.1:5432/trendsfast
+          BILLING_DATABASE_URL: postgresql://trendsfast_billing_runtime:ci-billing-runtime-password-0000000001@127.0.0.1:5432/trendsfast
+          AUTH_DATABASE_URL: postgresql://trendsfast_auth_runtime:ci-auth-runtime-password-0000000000001@127.0.0.1:5432/trendsfast
+          RETENTION_DATABASE_URL: postgresql://trendsfast_retention_runtime:ci-retention-runtime-password-00000001@127.0.0.1:5432/trendsfast
+          ALLOW_LOCAL_ROLE_VERIFICATION: "YES"
+          TRENDSFAST_MIGRATOR_PASSWORD: ci-migrator-runtime-password-0000000001
+          TRENDSFAST_PUBLIC_RUNTIME_PASSWORD: ci-public-runtime-password-00000000002
+          TRENDSFAST_MEMBER_RUNTIME_PASSWORD: ci-member-runtime-password-00000000002
+          TRENDSFAST_OPS_RUNTIME_PASSWORD: ci-ops-runtime-password-00000000000002
+          TRENDSFAST_WORKER_RUNTIME_PASSWORD: ci-worker-runtime-password-00000000002
+          TRENDSFAST_BILLING_RUNTIME_PASSWORD: ci-billing-runtime-password-0000000001
+          TRENDSFAST_AUTH_RUNTIME_PASSWORD: ci-auth-runtime-password-0000000000001
+          TRENDSFAST_RETENTION_RUNTIME_PASSWORD: ci-retention-runtime-password-00000001
+        run: |
+          pnpm db:provision-roles
+          pnpm db:provision-roles
+          docker exec "${{ job.services.postgres.id }}" \
+            psql -v ON_ERROR_STOP=1 -U trendsfast_migrator -d trendsfast \
+            -c "ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO PUBLIC"
+          trap 'pnpm db:provision-roles' EXIT
+          if pnpm db:verify-roles >/tmp/trendsfast-default-acl-probe.log 2>&1; then
+            cat /tmp/trendsfast-default-acl-probe.log
+            echo "The role verifier accepted an unsafe implicit PUBLIC function default." >&2
+            exit 1
+          fi
+          if ! grep -Fq "The migrator has unsafe PUBLIC or Supabase Data API default privileges" /tmp/trendsfast-default-acl-probe.log; then
+            cat /tmp/trendsfast-default-acl-probe.log
+            echo "The role verifier failed for an unexpected reason." >&2
+            exit 1
+          fi
+          pnpm db:provision-roles
+          trap - EXIT
+
+      - name: Verify post-provision migrator contract
+        env:
+          DIRECT_DATABASE_URL: postgresql://trendsfast_migrator:ci-migrator-runtime-password-0000000001@127.0.0.1:5432/trendsfast
+          STRICT_HOSTED_SCHEMA: "1"
+        run: |
+          pnpm db:migrate
+          pnpm db:verify-hosted
+
+      - name: Verify exact runtime-role contract
+        env:
+          ALLOW_LOCAL_ROLE_VERIFICATION: "YES"
+          ROLE_ADMIN_DATABASE_URL: postgresql://trendsfast_managed_operator:trendsfast_ci@127.0.0.1:5432/trendsfast
+          DATABASE_URL: postgresql://trendsfast_public_runtime:ci-public-runtime-password-00000000002@127.0.0.1:5432/trendsfast
+          MEMBER_DATABASE_URL: postgresql://trendsfast_member_runtime:ci-member-runtime-password-00000000002@127.0.0.1:5432/trendsfast
+          OPS_DATABASE_URL: postgresql://trendsfast_ops_runtime:ci-ops-runtime-password-00000000000002@127.0.0.1:5432/trendsfast
+          WORKER_DATABASE_URL: postgresql://trendsfast_worker_runtime:ci-worker-runtime-password-00000000002@127.0.0.1:5432/trendsfast
+          BILLING_DATABASE_URL: postgresql://trendsfast_billing_runtime:ci-billing-runtime-password-0000000001@127.0.0.1:5432/trendsfast
+          AUTH_DATABASE_URL: postgresql://trendsfast_auth_runtime:ci-auth-runtime-password-0000000000001@127.0.0.1:5432/trendsfast
+          RETENTION_DATABASE_URL: postgresql://trendsfast_retention_runtime:ci-retention-runtime-password-00000001@127.0.0.1:5432/trendsfast
+        run: pnpm db:verify-roles
+
+      - name: Exercise real runtime-role behavior
+        env:
+          ROLE_ADMIN_DATABASE_URL: ""
+          DIRECT_DATABASE_URL: postgresql://trendsfast_migrator:ci-migrator-runtime-password-0000000001@127.0.0.1:5432/trendsfast
+          DATABASE_URL: postgresql://trendsfast_public_runtime:ci-public-runtime-password-00000000002@127.0.0.1:5432/trendsfast
+          MEMBER_DATABASE_URL: postgresql://trendsfast_member_runtime:ci-member-runtime-password-00000000002@127.0.0.1:5432/trendsfast
+          OPS_DATABASE_URL: postgresql://trendsfast_ops_runtime:ci-ops-runtime-password-00000000000002@127.0.0.1:5432/trendsfast
+          WORKER_DATABASE_URL: postgresql://trendsfast_worker_runtime:ci-worker-runtime-password-00000000002@127.0.0.1:5432/trendsfast
+          BILLING_DATABASE_URL: postgresql://trendsfast_billing_runtime:ci-billing-runtime-password-0000000001@127.0.0.1:5432/trendsfast
+          AUTH_DATABASE_URL: postgresql://trendsfast_auth_runtime:ci-auth-runtime-password-0000000000001@127.0.0.1:5432/trendsfast
+          RETENTION_DATABASE_URL: postgresql://trendsfast_retention_runtime:ci-retention-runtime-password-00000001@127.0.0.1:5432/trendsfast
+          RUN_DATABASE_ROLE_INTEGRATION: "1"
+        run: pnpm test -- packages/database/tests/runtime-role-access.integration.test.ts
+
       - name: Production build
         env:
           NODE_ENV: production
@@ -96,6 +207,8 @@ jobs:
     name: Critical browser flows
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      OPS_BASE_URL: http://127.0.0.1:3001
     services:
       postgres:
         image: postgres:16-alpine
@@ -113,16 +226,30 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Reject tracked private state or local agent skills
+        run: |
+          if ! git diff --quiet --cached --diff-filter=ACMR -- '.agents' '.agents/**' '.var/private' '.var/private/**' 'supabase/.temp' 'supabase/.temp/**'; then
+            echo "Private operator state or local CLI/agent state is staged." >&2
+            git diff --cached --name-only --diff-filter=ACMR -- '.agents' '.agents/**' '.var/private' '.var/private/**' 'supabase/.temp' 'supabase/.temp/**' >&2
+            exit 1
+          fi
+          git ls-files --error-unmatch -- '.agents' '.agents/**' '.var/private' '.var/private/**' 'supabase/.temp' 'supabase/.temp/**' >/dev/null 2>&1 || exit 0
+          echo "Private operator state or local CLI/agent state is tracked." >&2
+          git ls-files -- '.agents' '.agents/**' '.var/private' '.var/private/**' 'supabase/.temp' 'supabase/.temp/**' >&2
+          exit 1
 
       - name: Enable pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
           version: 9.15.9
           run_install: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: pnpm
@@ -141,7 +268,7 @@ jobs:
 
       - name: Upload Playwright report on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: playwright-report
           path: |

@@ -114,13 +114,15 @@ labeled `MANUAL_FOUNDER_EVIDENCE`, and bound as supplemental evidence. It cannot
 silently qualify an existing proposal; an explicit stored-evidence recompute is
 required, followed by renewed evidence review.
 
-Source-only/synthesis-only rerun, public consent withdrawal, and customer
-identity are not implemented. Ops login
-uses constant-time token comparison and a signed `HttpOnly`/`SameSite=Strict`
-session. Syntactically valid login attempts enter PostgreSQL-backed admission
-before token comparison, defaulting to 5 per fingerprint and 100 globally per
-five-minute window, in addition to an in-process bound. Same-origin and deployed
-trusted-proxy/network controls remain part of the operating boundary.
+Source-only/synthesis-only rerun and public consent withdrawal are not
+implemented. Customer identity is a separate post-value Supabase Auth and
+single-use project-claim boundary; it does not replace founder operations. Ops
+login uses constant-time token comparison and a signed
+`HttpOnly`/`SameSite=Strict` session. Syntactically valid login attempts enter
+PostgreSQL-backed admission before token comparison, defaulting to 5 per
+fingerprint and 100 globally per five-minute window, in addition to an
+in-process bound. Same-origin and deployed trusted-proxy/network controls remain
+part of the operating boundary.
 
 Both the public scan/status capability and separately issued delivery token use
 256 random bits. The delivery token is hashed at rest and expires; the public

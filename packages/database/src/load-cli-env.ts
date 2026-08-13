@@ -1,6 +1,7 @@
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { config } from "dotenv";
+import { config, parse } from "dotenv";
 
 /**
  * CLI-only loader. The application runtime should receive environment variables
@@ -12,4 +13,13 @@ export function loadCliEnvironment(cwd = process.cwd()): void {
     override: false,
     quiet: true,
   });
+}
+
+export function loadCliEnvironmentFile(path: string): void {
+  config({ path, override: false, quiet: true });
+}
+
+/** Parse a private CLI env file without mutating ambient process state. */
+export function parseCliEnvironmentFile(path: string): Record<string, string> {
+  return parse(readFileSync(path, "utf8"));
 }

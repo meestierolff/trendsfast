@@ -1,12 +1,18 @@
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 
 import {
+  NEXT_MOVE_CONTRACT_VERSION,
   NextMoveSchema,
   ProjectContextSchema,
+  VersionedNextMoveSchema,
+  assertActionDetailsBoundToStoredEvidence,
+  convertVersionedNextMoveToWait,
+  reconcileVersionedNextMove,
   type NextMove,
   type ProjectContext,
   type ReviewAction,
   type SignalClass,
+  type VersionedNextMove,
 } from "@trendsfast/schemas";
 import { redactRecord, redactSecrets } from "@trendsfast/core";
 
@@ -43,6 +49,7 @@ type EditableMoveFields = {
 
 type RecomputedDraft = {
   move: NextMove;
+  versionedMove?: VersionedNextMove;
   whyNow: string;
   signalClass: SignalClass;
   independentSourceCount: number;
@@ -114,7 +121,88 @@ function moveSnapshot(move: typeof nextMoves.$inferSelect): Record<string, unkno
     validUntil: move.validUntil.toISOString(),
     reviewVersion: move.reviewVersion,
     proposalStale: move.proposalStale,
+    decisionContractVersion: move.decisionContractVersion,
+    generationLevel: move.generationLevel,
+    actionDetails: move.actionDetails,
+    trendWindow: move.trendWindow,
+    breakoutPotential: move.breakoutPotential,
+    draftContent: move.draftContent,
   };
+}
+
+function versionedMoveFromRecord(move: typeof nextMoves.$inferSelect): VersionedNextMove | null {
+  if (
+    move.decisionContractVersion === null ||
+    move.actionDetails === null ||
+    move.trendWindow === null ||
+    move.breakoutPotential === null
+  ) {
+    return null;
+  }
+  return VersionedNextMoveSchema.parse({
+    contractVersion: move.decisionContractVersion,
+    generationLevel: move.generationLevel,
+    action: move.action,
+    channel: move.channel,
+    topic: move.topic,
+    angle: move.angle,
+    format: move.format,
+    hook: move.hook,
+    outline: move.outline,
+    cta: move.cta,
+    priority: move.priority,
+    confidence: Number(move.confidence),
+    validUntil: move.validUntil.toISOString(),
+    trendWindow: move.trendWindow,
+    breakoutPotential: move.breakoutPotential,
+    details: move.actionDetails,
+    ...(move.draftContent === null ? {} : { draftContent: move.draftContent }),
+  });
+}
+
+function versionedPersistence(move: VersionedNextMove) {
+  const parsed = VersionedNextMoveSchema.parse(move);
+  return {
+    decisionContractVersion: NEXT_MOVE_CONTRACT_VERSION,
+    generationLevel: parsed.generationLevel,
+    actionDetails: parsed.details,
+    trendWindow: parsed.trendWindow,
+    breakoutPotential: parsed.breakoutPotential,
+    draftContent: parsed.draftContent ?? null,
+    validUntil: new Date(parsed.validUntil),
+  };
+}
+
+function evidenceBindingSignal(signal: typeof signals.$inferSelect) {
+  return {
+    id: signal.id,
+    source: signal.source,
+    url: signal.canonicalUrl,
+    ...(signal.title === null ? {} : { title: signal.title }),
+    ...(signal.textExcerpt === null ? {} : { textExcerpt: signal.textExcerpt }),
+    ...(signal.author === null ? {} : { author: signal.author }),
+    ...(signal.publishedAt === null ? {} : { publishedAt: signal.publishedAt.toISOString() }),
+    observedAt: signal.observedAt.toISOString(),
+  };
+}
+
+function assertVersionedCoreMatchesDraft(versioned: VersionedNextMove, draft: NextMove): void {
+  const versionedCore = {
+    action: versioned.action,
+    channel: versioned.channel,
+    topic: versioned.topic,
+    angle: versioned.angle,
+    format: versioned.format,
+    hook: versioned.hook,
+    outline: versioned.outline,
+    cta: versioned.cta,
+    priority: versioned.priority,
+    confidence: versioned.confidence,
+    validUntil: versioned.validUntil,
+  };
+  if (!sameJson(versionedCore, draft)) {
+    throw new Error("The recomputed versioned contract does not match its core decision fields");
+  }
 }
 
 function sameJson(left: unknown, right: unknown): boolean {
@@ -414,6 +502,23 @@ export class ReviewRepository {
       if (!context.availableFormats.includes(parsedMove.format)) {
         throw new Error("The edited format does not fit the current founder-reviewed context");
       }
+      const currentVersionedMove = versionedMoveFromRecord(move);
+      if (!currentVersionedMove) {
+        throw new Error("The review draft is missing its versioned decision contract");
+      }
+      const reconciledVersionedMove = reconcileVersionedNextMove({
+        move: currentVersionedMove,
+        prose: {
+          channel: parsedMove.channel,
+          topic: parsedMove.topic,
+          angle: parsedMove.angle,
+          format: parsedMove.format,
+          hook: parsedMove.hook,
+          outline: parsedMove.outline,
+          cta: parsedMove.cta,
+        },
+        validUntil: parsedMove.validUntil,
+      });
       const whyNow = boundedText(input.edits.whyNow, 4_000, "Why-now summary");
       const limitations = boundedList(input.edits.limitations, {
         label: "Limitations",
@@ -465,6 +570,38 @@ export class ReviewRepository {
             eq(evidenceReceipts.moveVersion, move.reviewVersion),
           ),
         );
+      if (
+        reconciledVersionedMove.details.action === "REPLY" ||
+        reconciledVersionedMove.details.action === "REMIX"
+      ) {
+        const supportSignalIds = [
+          ...new Set(
+            receipts
+              .filter((receipt) => receipt.bindingRole === "DECISION_SUPPORT")
+              .map((receipt) => receipt.signalId),
+          ),
+        ];
+        const supportSignals = supportSignalIds.length
+          ? await tx
+              .select({ signal: signals })
+              .from(signals)
+              .innerJoin(sourceRuns, eq(sourceRuns.id, signals.sourceRunId))
+              .where(
+                and(
+                  eq(sourceRuns.scanRunId, move.scanRunId),
+                  inArray(signals.id, supportSignalIds),
+                ),
+              )
+          : [];
+        if (supportSignals.length !== supportSignalIds.length) {
+          throw new Error("Every action target must remain bound to its stored scan evidence");
+        }
+        assertActionDetailsBoundToStoredEvidence({
+          details: reconciledVersionedMove.details,
+          evidenceSignalIds: supportSignalIds,
+          storedSignals: supportSignals.map(({ signal }) => evidenceBindingSignal(signal)),
+        });
+      }
       requireRenewedEvidenceReview(move.reviewVersion, receipts);
       const quality = requireDecisionEvidenceQuality({
         action: move.action,
@@ -498,7 +635,7 @@ export class ReviewRepository {
           cta: parsedMove.cta,
           whyNow,
           limitations,
-          validUntil: new Date(parsedMove.validUntil),
+          ...versionedPersistence(reconciledVersionedMove),
           confidenceRationale,
           ...(move.action === "WAIT"
             ? {}
@@ -759,6 +896,39 @@ export class ReviewRepository {
       if (!recomputeContext.availableFormats.includes(draftMove.format)) {
         throw new Error("The recomputed format does not fit the founder-reviewed context");
       }
+      const currentVersionedMove = versionedMoveFromRecord(move);
+      let recomputedVersionedMove = input.draft.versionedMove
+        ? VersionedNextMoveSchema.parse(input.draft.versionedMove)
+        : null;
+      if (recomputedVersionedMove) {
+        assertVersionedCoreMatchesDraft(recomputedVersionedMove, draftMove);
+      } else if (currentVersionedMove) {
+        if (currentVersionedMove.action !== draftMove.action) {
+          throw new Error(
+            "An action-changing recompute requires a complete versioned decision contract",
+          );
+        }
+        recomputedVersionedMove = reconcileVersionedNextMove({
+          move: currentVersionedMove,
+          prose: {
+            channel: draftMove.channel,
+            topic: draftMove.topic,
+            angle: draftMove.angle,
+            format: draftMove.format,
+            hook: draftMove.hook,
+            outline: draftMove.outline,
+            cta: draftMove.cta,
+          },
+          validUntil: draftMove.validUntil,
+        });
+      }
+      if (recomputedVersionedMove) {
+        assertActionDetailsBoundToStoredEvidence({
+          details: recomputedVersionedMove.details,
+          evidenceSignalIds,
+          storedSignals: orderedSignals.map(evidenceBindingSignal),
+        });
+      }
       let nextContextVersion = locked.contextVersion;
       if (input.contextCorrection) {
         const corrected = recomputeContext;
@@ -786,6 +956,10 @@ export class ReviewRepository {
             credibleTopics: corrected.credibleTopics,
             assumptions: corrected.assumptions,
             context: corrected,
+            entityType: refreshedBaseContext.entityType,
+            contextProvenance: refreshedBaseContext.contextProvenance,
+            voiceProfile: refreshedBaseContext.voiceProfile,
+            contentCapabilities: refreshedBaseContext.contentCapabilities,
             sourceContentHash: refreshedBaseContext.sourceContentHash,
             promptVersion: "founder-context-correction-v1",
             model: null,
@@ -898,7 +1072,9 @@ export class ReviewRepository {
           proposalStale: false,
           promptVersion,
           scoreVersion,
-          validUntil: new Date(draftMove.validUntil),
+          ...(recomputedVersionedMove
+            ? versionedPersistence(recomputedVersionedMove)
+            : { validUntil: new Date(draftMove.validUntil) }),
           reviewVersion: nextVersion,
           approvedAt: null,
           updatedAt: now,
@@ -1193,25 +1369,36 @@ export class ReviewRepository {
       if (Number.isNaN(input.validUntil.getTime()) || input.validUntil <= now) {
         throw new Error("A converted WAIT decision requires a future validity window");
       }
+      const currentVersionedMove = versionedMoveFromRecord(move);
+      if (!currentVersionedMove) {
+        throw new Error("The review draft is missing its versioned decision contract");
+      }
+      const convertedVersionedMove = convertVersionedNextMoveToWait({
+        move: currentVersionedMove,
+        reason,
+        validUntil: input.validUntil,
+      });
       const before = moveSnapshot(move);
       const nextVersion = move.reviewVersion + 1;
       const [updated] = await tx
         .update(nextMoves)
         .set({
-          action: "WAIT",
-          channel: "none",
-          topic: "No move passes the quality floor",
-          angle: reason,
-          format: "none",
-          hook: "Wait for stronger evidence.",
-          outline: [reason],
-          cta: "Run another scan when the evidence window changes.",
+          action: convertedVersionedMove.action,
+          channel: convertedVersionedMove.channel,
+          topic: convertedVersionedMove.topic,
+          angle: convertedVersionedMove.angle,
+          format: convertedVersionedMove.format,
+          hook: convertedVersionedMove.hook,
+          outline: convertedVersionedMove.outline,
+          cta: convertedVersionedMove.cta,
+          priority: convertedVersionedMove.priority,
+          confidence: convertedVersionedMove.confidence.toFixed(5),
           whyNow: reason,
           signalClass: "INSUFFICIENT_SIGNAL",
           independentSourceCount: 0,
           saturation: "unknown",
           limitations: [reason],
-          validUntil: input.validUntil,
+          ...versionedPersistence(convertedVersionedMove),
           reviewVersion: nextVersion,
           proposalStale: false,
           state: "APPROVED",

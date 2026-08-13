@@ -11,7 +11,7 @@ import {
   type ProviderSlug,
 } from "@trendsfast/providers";
 
-import { getRepositories } from "./server-database";
+import { getOpsRepositories } from "./server-database";
 import { deploymentProvenance } from "./deployment-provenance";
 
 const queryRoles: Record<Exclude<ProviderSlug, "website" | "manual">, ProviderQueryRole> = {
@@ -33,11 +33,28 @@ export async function runConfiguredProviderVerification(input: {
   language?: string;
 }) {
   const env = loadEnv();
+  if (env.PROVIDER_CREDENTIAL_MODE !== "fixture" && !env.PROVIDER_CALLS_ENABLED) {
+    throw new Error("PROVIDER_CALLS_NOT_ENABLED");
+  }
   const adapter = createProviderRegistry(env.PROVIDER_CREDENTIAL_MODE).get(input.provider);
   if (!adapter) throw new Error("Provider adapter is not registered");
   const startedAt = new Date();
-  const repository = getRepositories().providerVerifications;
-  const deployment = deploymentProvenance();
+  const repository = getOpsRepositories().providerVerifications;
+  const currentDeployment = deploymentProvenance();
+  const deployment =
+    currentDeployment.deploymentEnvironment === "production"
+      ? {
+          ...currentDeployment,
+          deploymentHost: env.PUBLIC_DEPLOYMENT_HOST ?? null,
+          deploymentId: env.PUBLIC_DEPLOYMENT_ID ?? null,
+        }
+      : currentDeployment;
+  if (
+    deployment.deploymentEnvironment === "production" &&
+    (!deployment.releaseSha || !deployment.deploymentHost || !deployment.deploymentId)
+  ) {
+    throw new Error("PROVIDER_VERIFICATION_PUBLIC_TARGET_NOT_CONFIGURED");
+  }
   const request =
     input.provider === "website"
       ? input.productUrl
@@ -89,8 +106,7 @@ export async function runConfiguredProviderVerification(input: {
   const maximumCostUsd = costs.maximumProviderCostUsdPerScan;
   const maximumCollectReservationUsd =
     providerEstimate.estimatedUsd * Math.max(1, adapter.metadata.retryPolicy.maxAttempts);
-  const estimatedCostReservationUsd =
-    healthCheckEstimatedCostUsd + maximumCollectReservationUsd;
+  const estimatedCostReservationUsd = healthCheckEstimatedCostUsd + maximumCollectReservationUsd;
   const requestHash = createHash("sha256")
     .update(
       JSON.stringify({

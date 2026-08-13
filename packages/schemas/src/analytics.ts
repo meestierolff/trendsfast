@@ -14,8 +14,6 @@ const oneOf = <const Values extends readonly string[]>(...values: Values): Prope
   return (value) => (typeof value === "string" && allowed.has(value) ? value : undefined);
 };
 const booleanValue: PropertyValidator = (value) => (typeof value === "boolean" ? value : undefined);
-const nonnegativeFiniteNumber: PropertyValidator = (value) =>
-  typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
 const feedbackKind: PropertyValidator = (value) => {
   const parsed = FeedbackKindSchema.safeParse(value);
   return parsed.success ? parsed.data : undefined;
@@ -119,12 +117,10 @@ const EVENT_PROPERTY_RULES: Record<
   scan_processing_started: {
     state: scanState,
     credentialMode: oneOf("fixture", "managed", "byok"),
-    costUsd: nonnegativeFiniteNumber,
   },
   scan_review_required: {
     state: scanState,
     credentialMode: oneOf("fixture", "managed", "byok"),
-    costUsd: nonnegativeFiniteNumber,
   },
   scan_reviewed: { approved: booleanValue },
   scan_result_viewed: {},

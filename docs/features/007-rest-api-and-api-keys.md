@@ -1,8 +1,8 @@
 # 007 — REST API and API keys
 
-Status: creation, status, runtime OpenAPI, and protected founder key-management
-routes are implemented; deployed availability and release-SHA acceptance remain
-unverified.
+Status: legacy and claimed-project creation, status, runtime OpenAPI, founder
+operations, and owner self-service key management are implemented locally;
+deployed availability and release-SHA acceptance remain unverified.
 
 ## User problem
 
@@ -11,21 +11,26 @@ generic raw-provider API or exposure of cloud credentials.
 
 ## Scope
 
-`POST /v1/next-move`, `GET /v1/next-moves/{id}`, async status, idempotency,
-approved-user API keys, scopes, project/rate/cost controls, founder issuance,
-rotation/revocation, audit, and OpenAPI.
+`POST /v1/next-move`, preferred
+`POST /v1/projects/{project_id}/next-move`, `GET /v1/next-moves/{id}`, async
+status, idempotency, project-scoped API keys, scopes, project/rate/cost
+controls, founder and owner issuance, reissue/revocation, audit, and OpenAPI.
 
 ## Non-goals
 
-MCP, CLI, SDK, raw source resale, bulk endpoints, OAuth, customer self-service
-key management, or organization/team auth.
+MCP, CLI, SDK, raw source resale, bulk endpoints, API OAuth, automated key
+rotation, or organization/team auth.
 
 ## Product contract
 
-Only `product_url` is required. Return `200` for a suitable fresh ready result or
-`202` plus status URL and `poll_after_seconds: 30` for work. States are `QUEUED`, `RUNNING`,
-`REVIEW_REQUIRED`, `READY`, `FAILED`; ready data includes evidence/limitations,
-review status, and `auto_publish=false`.
+For the legacy route, only `product_url` is required. The preferred claimed-
+project route accepts the objective, preferred channels, content capabilities,
+and generation level while loading the saved project URL and current context
+server-side. Return `200` for a suitable fresh ready result or `202` plus status
+URL and `poll_after_seconds: 30` for work. States are `QUEUED`, `RUNNING`,
+`REVIEW_REQUIRED`, `READY`, `FAILED`; ready data uses strict `next-move-v1` and
+includes action details, timing, evidence/limitations, freshness, review state,
+and `auto_publish=false`.
 
 ## API contract
 
@@ -35,6 +40,26 @@ conflicting body is rejected. Errors are stable and reveal no secret/tenant data
 Creation requires `next_move:write`; status reads require `next_move:read`.
 Clients should wait at least 30 seconds, then use exponential backoff. Every
 `429` includes `Retry-After`.
+
+Preferred request example:
+
+```http
+POST /v1/projects/1bbbcaf1-cec3-46c7-a45a-dabb896fb65d/next-move HTTP/1.1
+Authorization: Bearer tf_test_example.secret-shown-once
+Idempotency-Key: 4a2d1201-9666-4ef0-90a9-e5aa47786c8e
+Content-Type: application/json
+
+{
+  "objective": "Grow among technical founders",
+  "preferred_channels": ["x", "linkedin", "reddit"],
+  "content_capabilities": ["founder_text", "screen_recording"],
+  "generation_level": "brief"
+}
+```
+
+The key must be restricted to the path project. Requesting a capability outside
+the saved profile is rejected rather than silently expanding what the founder
+can produce.
 
 ## Data model
 
@@ -57,23 +82,27 @@ URLs/browser storage.
 
 ## Tests written first
 
-- Key format/generation, show once, hash/pepper, revoke, scope/environment.
+- Key format/generation, show once, hash/pepper, owner issue/reissue/revoke,
+  scope/environment, and project isolation.
 - Missing/invalid/expired/cross-project auth and audit.
 - Same/conflicting idempotency replay and concurrency.
 - Per-key/request/provider-cost limits, exact micro-USD boundaries, parallel
   first-request races, idempotent reuse, and retained crash reservations.
 - `200`/`202`/status schemas and evidence binding.
-- OpenAPI generation matches runtime validation.
+- Runtime OpenAPI projection matches mounted validation and examples.
 
 ## Implementation
 
-Define Zod schemas once and generate OpenAPI. Founder operations owns the
-server-side administrative boundary; the public free scan uses no reusable key.
+Define each request/response once with Zod and project the same schemas into the
+runtime OpenAPI document. Founder operations retains an administrative path;
+verified, entitled owners also manage their own project keys through the member
+repository. The public free scan uses no reusable key.
 
 ### Current implementation truth
 
-- `POST /v1/next-move`, `GET /v1/next-moves/{id}`, and
-  `GET /v1/openapi.json` are mounted through the Next.js/Hono application.
+- `POST /v1/next-move`, `POST /v1/projects/{project_id}/next-move`,
+  `GET /v1/next-moves/{id}`, and `GET /v1/openapi.json` are mounted through the
+  Next.js/Hono application.
 - Bearer authentication records an audit event and enforces scope, environment,
   optional project ownership, separate rolling-hour creation/status usage, and a projected
   provider-cost ceiling.
@@ -81,22 +110,24 @@ server-side administrative boundary; the public free scan uses no reusable key.
   expensive secret verification. Defaults are 12 per fingerprint and 120
   globally per one-minute window, in addition to the process-local in-flight
   bound. The deployment must verify the trusted-proxy/fingerprint boundary.
-- Successful `POST /v1/next-move` authentication is counted against the create
-  limit (default 20/hour); successful `GET /v1/next-moves/{id}` authentication
-  is counted against the status limit (default 300/hour). Durable invalid,
-  revoked, and expired outcomes feed a separate 20/hour fingerprint failure
-  budget. Status polling never records an on-demand research acceptance.
+- Successful `POST /v1/next-move` and `GET /v1/next-moves/{id}` authentication
+  use distinct operator-supplied private limits. Durable invalid, revoked, and
+  expired outcomes feed a separate private fingerprint failure budget. Status
+  polling never records an on-demand research acceptance.
 - Protected `/ops/keys` and CSRF-bound ops routes list, issue, rotate, reissue,
-  and revoke project-scoped keys with a management audit. A raw secret appears
-  once; customers still have no self-service issuance route.
+  and revoke project-scoped keys with a management audit. Verified entitled
+  owners can separately name, issue, reissue, and revoke keys in
+  `/dashboard/agents`. A raw secret appears once in either flow.
 - Founder ops can issue one audited, revocable `FOUNDER_GRANT` /
   `DESIGN_PARTNER` entitlement for one active project for at most 30 days. It is
   not a Stripe subscription. Live key issuance and on-demand requests accept
   either an active paid entitlement or this grant, while per-key request/cost
   limits and the ten-run entitlement-window allowance still apply.
 - Keys support optional expiry plus active/revoked state, and expired
-  authentication attempts are rejected and audited. There is no automated
-  rotation or self-service lifecycle.
+  authentication attempts are rejected and audited. Reissue atomically revokes
+  the replaced key; there is no automated rotation.
+- Multiple keys do not multiply an entitlement: the ten on-demand allowances
+  and monitoring state remain project-level.
 - Status reads are filtered to the authenticated API key and its optional
   project restriction. Ready results require a persisted founder-reviewed,
   non-auto-published move.
@@ -123,33 +154,28 @@ must be checked against the exact release SHA.
 
 ## Verification
 
-Run unit/integration/concurrency tests, inspect generated spec diff, and exercise
-only implemented routes in a production-like environment.
+Run unit/integration/concurrency tests, inspect the runtime OpenAPI document,
+and exercise only implemented routes in a production-like environment.
 
-The database-enabled run for implementation candidate
-`73297a6cfdc99b025990b001b39cef399f4d235e` passed 98 files/512 tests across the
-API's unit, repository, race, entitlement, admission, and orchestration
-boundaries. The final non-database run passed 78 files/455 tests with 20 files/57
-tests skipped. Branch CI passed at `4ec9510f610001285c54947326c65cb79a075f37`;
-an authenticated deployed spec/runtime read-back remains open. See the
-[integrated record](../operations/LOCAL_VERIFICATION_2026-08-12.md); its counts
-are immutable code-local evidence, not a hosted API claim.
+The latest local PostgreSQL run completed 710 active tests with 5 skipped and no
+failures; separate runtime-role access passed 5/5 tests. The non-database suite
+passed 640 tests with 73 skipped. These mutable-tree results have no release SHA
+or remote CI attached. See the
+[2026-08-13 local record](../operations/LOCAL_VERIFICATION_2026-08-13.md).
+Authenticated hosted spec/runtime and owner-journey read-backs remain open.
 
 ## Limitations
 
-Temporary founder ops is not general customer identity. Contract changes require
-an explicit changelog/versioning decision. Durable admission is an abuse
-bound, not proof of deployed proxy correctness or customer-grade identity. A
-crash can conservatively consume the key allowance for the rest of the hour;
-that false rejection is intentional fail-safe behavior. One lower-priority
-internal type still permits `apiKeyId` on a non-API-origin request, although no
-current or external call path constructs that combination; tighten it before
-adding new repository callers.
+Supabase Auth proves identity, while membership remains application-managed.
+Contract changes require an explicit changelog/versioning decision. Durable
+admission is an abuse bound, not proof of deployed proxy correctness. A crash
+can conservatively consume the key allowance for the rest of the hour; that
+false rejection is intentional fail-safe behavior.
 
 ## Rollout
 
-Issue revocable test/design-partner keys manually with low limits before any
-public key onboarding.
+Exercise owner issuance with revocable test/design-partner keys and low limits
+in preview before enabling the claimed-project API for a founder cohort.
 
 ## Rollback
 

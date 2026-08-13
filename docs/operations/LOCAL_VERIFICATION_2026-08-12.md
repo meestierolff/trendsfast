@@ -6,6 +6,14 @@ record describes immutable implementation commit
 a hosted deployment, provider/model read-back, a Stripe customer
 journey, legal approval, or a customer outcome.
 
+This is a historical baseline. The later working tree contains 23 migration
+files through `0024` (with intentional `0009`/`0010` gaps), 44-table
+expectations, scoped runtime roles, Supabase Auth/project claims, and retention
+scheduling; none of the `0019`/37-table/full-suite results below are evidence
+for those changes. A separate
+[2026-08-13 mutable-tree record](LOCAL_VERIFICATION_2026-08-13.md) captures newer
+local checks without changing or upgrading this immutable historical evidence.
+
 The repository started this work from
 `21b13b8dff528f70a175a785da309ad38c67fd73`. Separate remote evidence is now
 attached: branch commit `4ec9510f610001285c54947326c65cb79a075f37`
@@ -45,12 +53,11 @@ external, operational, billing, provider, dogfood, and legal gate remains open.
   costs, evidence, scoring, proposal, and audit data while automated tests
   exclude credentials, delivery/API capabilities, customer e-mail, database
   URLs, raw IP addresses, and raw provider/model payloads.
-- Public free-scan admission enforces one request per anonymous requester by
-  default plus database-atomic UTC-day global defaults of 20 scans and a $5
-  reserved/actual budget. Capacity exhaustion returns
+- Public free-scan admission enforces the operator's private requester,
+  database-atomic global, and spend policy. Capacity exhaustion returns
   `TODAYS_FOUNDER_REVIEW_CAPACITY_REACHED` and presents the launch-interest form.
-- API creation and polling use separate defaults of 20 and 300 requests per
-  rolling hour; authentication failures default to 20 per fingerprint/hour.
+- API creation, polling, and authentication failures use separately configured
+  private limits.
   Polling does not consume an on-demand research allowance, `202` responses
   include `poll_after_seconds: 30`, and `429` responses include `Retry-After`.
 - Founder operations can issue an audited, revocable, one-project
@@ -75,23 +82,25 @@ external, operational, billing, provider, dogfood, and legal gate remains open.
   `FOUNDER_ACTION_REQUIRED: rotate the compromised Stripe sandbox key and run stripe login`.
   Checkout, webhook, Portal, entitlement, cancellation, and live-mode journeys
   are unverified.
-- **Supabase:** no TrendsFast Supabase project exists. No hosted migration,
-  strict schema/ACL read-back, pooled runtime connection, concurrency check,
-  backup policy, or restore rehearsal is verified. Founder action: create the
-  project and securely provide separate preview/production `DATABASE_URL` and
-  `DIRECT_DATABASE_URL` values.
-- **Vercel:** no TrendsFast project or deployment exists, and the authenticated
-  team `clarios-projects-05f6a57e` was observed on a Hobby plan. Founder action:
-  upgrade that team to Pro. The exact preview/production deployment must then be
-  verified before launch.
-- **Domain:** `trendsfast.com` was observed as `NXDOMAIN`. No Vercel-assigned DNS
-  record, TLS, apex/www redirect, canonical metadata, or hosted Stripe URL is
-  verified.
+- **Supabase:** isolated Free preview project `auxienkuufejeakaczlq` exists in
+  `eu-central-1` on PostgreSQL 17.6. SSL enforcement and CA-verified TLS 1.3 to
+  its transaction pooler were read back. No hosted migration, seed, strict
+  schema/runtime-role read-back, backup, or restore rehearsal is verified. Its
+  direct endpoint is IPv6-only and unreachable from this runner; a direct-capable
+  runner is required. Production still requires a founder-approved Pro project.
+- **Vercel:** protected-dogfood project
+  `prj_nYn6zjWW4BcKd03QaVO6LTOF3CSC` exists on authenticated Hobby team
+  `Finnie` (`team_UVAUfp4G8CmlSNPI9w5FasKj`), with effects disabled. No deployment, alias,
+  custom domain, or active cron exists. Founder action: upgrade the team to Pro
+  before commercial production and then verify the exact reviewed deployment.
+- **Domain:** founder ownership of registered `trendsfast.com` at Spaceship is
+  recorded. No Vercel-assigned DNS record, public-resolution read-back, TLS,
+  apex/www redirect, canonical deployment, or hosted Stripe URL is verified.
 - **Sources and model:** no production website, Hacker News, Google Trends,
   Tavily, xAI, GitHub, YouTube, or model read-back is recorded. Public labels
   must remain unverified/coming soon, and Reddit automation remains absent and
   permission-gated.
-- **Dogfood/API:** no production-equivalent TrendsFast, Halio, or ShipToUsers
+- **Dogfood/API:** no production-equivalent Halio or ShipToUsers
   dogfood scan, review bundle, measured real cost, or external dogfood approval
   exists. No hosted live API call is verified.
 - **Monitoring/legal/operations:** no deployed scheduler, paid monitoring run,

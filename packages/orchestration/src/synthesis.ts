@@ -1,4 +1,10 @@
 import { z } from "zod";
+import type { VoiceProfile } from "@trendsfast/schemas";
+
+type SynthesisVoiceProfile = Pick<
+  VoiceProfile,
+  "traits" | "preferred_phrases" | "avoid_phrases" | "sample_texts"
+>;
 
 export const SYNTHESIS_PROMPT_VERSION = "next-move-synthesis-v1";
 
@@ -25,7 +31,13 @@ export const SynthesisProposalSchema = z
 export type SynthesisProposal = z.infer<typeof SynthesisProposalSchema>;
 
 export type SynthesisInput = {
-  project: { name: string; audience: string; credibleTopics: string[] };
+  project: {
+    name: string;
+    audience: string;
+    credibleTopics: string[];
+    objective?: string;
+    voiceProfile?: SynthesisVoiceProfile;
+  };
   compactClusters: Array<{
     id: string;
     topic: string;

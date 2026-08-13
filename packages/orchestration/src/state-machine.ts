@@ -1,4 +1,16 @@
-import type { NextMove, ProjectContext, ScanState, Signal, SignalClass } from "@trendsfast/schemas";
+import type {
+  ContentCapabilities,
+  ContentCapabilityName,
+  GenerationLevel,
+  NextMove,
+  ProjectContext,
+  ScanState,
+  Signal,
+  SignalMetricSnapshot,
+  SignalClass,
+  VersionedNextMove,
+  VoiceProfile,
+} from "@trendsfast/schemas";
 import type {
   ProviderAttemptReservation,
   ProviderAttemptSettlement,
@@ -15,6 +27,8 @@ import {
   type ReserveModelCost,
   type SettleModelCost,
 } from "./synthesis";
+import { deriveProjectContextProfile, type ProjectContextProfile } from "./context";
+import { formatHasEnabledCapability } from "./content-capability";
 
 export type ProcessingSnapshot = {
   requestId: string;
@@ -23,6 +37,11 @@ export type ProcessingSnapshot = {
   state: ScanState;
   market?: string;
   language?: string;
+  objective?: string;
+  preferredChannels?: string[];
+  availableFormats?: string[];
+  requestedContentCapabilities?: ContentCapabilityName[];
+  generationLevel?: GenerationLevel;
 };
 
 export type ProcessingClaimIdentity = {
@@ -39,10 +58,17 @@ export type ClaimedProcessing = ProcessingClaimIdentity & {
   sourceStates: Partial<Record<ProviderSlug, string>>;
   spentUsd?: number;
   hardDeadlineAt?: Date;
+  generationLevel?: GenerationLevel;
+  objective?: string;
+  preferredChannels?: string[];
+  availableFormats?: string[];
+  contentCapabilities?: ContentCapabilities;
+  voiceProfile?: VoiceProfile;
 };
 
 export type DecisionDraft = {
   move: NextMove;
+  versionedMove?: VersionedNextMove;
   whyNow: string;
   signalClass: SignalClass;
   independentSourceCount: number;
@@ -60,6 +86,7 @@ export type ProcessingStore = {
   saveContext(
     claim: ProcessingClaimIdentity,
     context: ProjectContext,
+    profile?: ProjectContextProfile,
   ): Promise<{ contextVersionId: string }>;
   saveQueryPlan(claim: ProcessingClaimIdentity, plan: QueryPlan): Promise<void>;
   beginProvider(
@@ -97,6 +124,7 @@ export type ProcessingStore = {
   ): Promise<{ committedCostUsd: number }>;
   loadCollectedData(runId: string): Promise<{
     signals: Signal[];
+    snapshots: SignalMetricSnapshot[];
     measurements: ProviderRunResult["measurements"];
     coverage: Record<string, string>;
   }>;
@@ -165,9 +193,14 @@ export async function processScan(
     providers: ProviderRunner;
     decide(input: {
       context: ProjectContext;
+      objective?: string;
+      contentCapabilities?: ContentCapabilities;
+      voiceProfile?: VoiceProfile;
       signals: Signal[];
+      snapshots: SignalMetricSnapshot[];
       measurements: ProviderRunResult["measurements"];
       coverage: Record<string, string>;
+      generationLevel?: GenerationLevel;
       now: Date;
       deadline: Date;
       reserveModelCost: ReserveModelCost;
@@ -331,7 +364,14 @@ export async function processScan(
       );
       if (now() >= deadline)
         throw new ScanDeadlineError("The scan exceeded its hard duration ceiling.");
-      ({ contextVersionId } = await dependencies.store.saveContext(ids, context));
+      ({ contextVersionId } = await dependencies.store.saveContext(
+        ids,
+        context,
+        deriveProjectContextProfile(
+          context,
+          websiteData.signals.filter((signal) => signal.source === "website"),
+        ),
+      ));
     }
     if (now() >= deadline)
       throw new ScanDeadlineError("The scan exceeded its hard duration ceiling.");
@@ -401,9 +441,23 @@ export async function processScan(
     const collected = await dependencies.store.loadCollectedData(claim.runId);
     if (now() >= deadline)
       throw new ScanDeadlineError("The scan exceeded its hard duration ceiling.");
+    const contentCapabilities = claim.contentCapabilities;
+    const requestedFormats = claim.availableFormats ?? context.availableFormats;
+    const compatibleFormats = contentCapabilities
+      ? requestedFormats.filter((format) => formatHasEnabledCapability(format, contentCapabilities))
+      : requestedFormats;
+    const effectiveContext: ProjectContext = {
+      ...context,
+      ...(claim.preferredChannels?.length ? { suitableChannels: claim.preferredChannels } : {}),
+      availableFormats: compatibleFormats,
+    };
     const draft = await dependencies.decide({
-      context,
+      context: effectiveContext,
       ...collected,
+      ...(claim.objective ? { objective: claim.objective } : {}),
+      ...(claim.contentCapabilities ? { contentCapabilities: claim.contentCapabilities } : {}),
+      ...(claim.voiceProfile ? { voiceProfile: claim.voiceProfile } : {}),
+      ...(claim.generationLevel ? { generationLevel: claim.generationLevel } : {}),
       now: now(),
       deadline,
       reserveModelCost,

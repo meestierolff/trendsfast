@@ -1,7 +1,19 @@
 import "server-only";
 
 import { deliveryTokens, evidenceReceipts, nextMoves, projects } from "@trendsfast/database";
-import { ProjectContextSchema, type ProjectContext } from "@trendsfast/schemas";
+import {
+  ActionDetailsSchema,
+  BreakoutPotentialSchema,
+  GenerationLevelSchema,
+  NEXT_MOVE_CONTRACT_VERSION,
+  ProjectContextSchema,
+  TrendWindowSchema,
+  VersionedNextMoveSchema,
+  evaluateNextMoveFreshness,
+  type ProjectContext,
+  type Signal,
+} from "@trendsfast/schemas";
+import { assertActionDetailsBoundToStoredEvidence, storedSignal } from "@trendsfast/orchestration";
 
 import type { ReadyScanResultView } from "../components/scan-result-view";
 import type { ScanStatusView } from "../components/scan-status-poller";
@@ -14,6 +26,7 @@ type ReadyRecord = {
   context: ProjectContext;
   project: typeof projects.$inferSelect;
   evidence: Array<typeof evidenceReceipts.$inferSelect>;
+  signals: Signal[];
 };
 
 export type ScanStatusLookup = ScanStatusView | { found: false };
@@ -55,13 +68,60 @@ function readyView(record: ReadyRecord): ReadyScanResultView | null {
     record.move.state !== "READY" ||
     !record.move.founderReviewed ||
     record.move.autoPublish ||
+    record.move.proposalStale ||
     !deliveryAvailable(record.token)
   ) {
     return null;
   }
+  if (
+    record.move.decisionContractVersion !== NEXT_MOVE_CONTRACT_VERSION ||
+    record.move.actionDetails === null ||
+    record.move.trendWindow === null ||
+    record.move.breakoutPotential === null
+  ) {
+    return null;
+  }
+  const contract = VersionedNextMoveSchema.safeParse({
+    contractVersion: record.move.decisionContractVersion,
+    generationLevel: GenerationLevelSchema.safeParse(record.move.generationLevel).data,
+    action: record.move.action,
+    channel: record.move.channel,
+    topic: record.move.topic,
+    angle: record.move.angle,
+    format: record.move.format,
+    hook: record.move.hook,
+    outline: record.move.outline,
+    cta: record.move.cta,
+    priority: record.move.priority,
+    confidence: Number(record.move.confidence),
+    validUntil: record.move.validUntil.toISOString(),
+    trendWindow: TrendWindowSchema.safeParse(record.move.trendWindow).data,
+    breakoutPotential: BreakoutPotentialSchema.safeParse(record.move.breakoutPotential).data,
+    details: ActionDetailsSchema.safeParse(record.move.actionDetails).data,
+    ...(record.move.draftContent === null ? {} : { draftContent: record.move.draftContent }),
+  });
+  if (!contract.success) return null;
+  try {
+    assertActionDetailsBoundToStoredEvidence({
+      details: contract.data.details,
+      evidenceSignalIds: record.evidence
+        .filter((receipt) => receipt.bindingRole === "DECISION_SUPPORT")
+        .map((receipt) => receipt.signalId),
+      storedSignals: record.signals,
+    });
+  } catch {
+    return null;
+  }
+  const freshness = evaluateNextMoveFreshness({
+    validUntil: contract.data.validUntil,
+    proposalStale: record.move.proposalStale,
+  });
+  if (freshness.state !== "CURRENT") return null;
   return {
     tokenId: record.token.id,
     nextMoveId: record.move.publicId,
+    contractVersion: contract.data.contractVersion,
+    generationLevel: contract.data.generationLevel,
     product: {
       name: record.context.name,
       url: record.project.url,
@@ -71,18 +131,25 @@ function readyView(record: ReadyRecord): ReadyScanResultView | null {
       assumptions: record.context.assumptions,
     },
     move: {
-      action: record.move.action,
-      channel: record.move.channel,
-      topic: record.move.topic,
-      angle: record.move.angle,
-      format: record.move.format,
-      hook: record.move.hook,
-      outline: record.move.outline,
-      cta: record.move.cta,
-      priority: record.move.priority,
-      confidence: Number(record.move.confidence),
-      validUntil: record.move.validUntil,
+      action: contract.data.action,
+      channel: contract.data.channel,
+      topic: contract.data.topic,
+      angle: contract.data.angle,
+      format: contract.data.format,
+      hook: contract.data.hook,
+      outline: contract.data.outline,
+      cta: contract.data.cta,
+      priority: contract.data.priority,
+      confidence: contract.data.confidence,
+      validUntil: contract.data.validUntil,
     },
+    actionDetails: contract.data.details,
+    trendWindow: contract.data.trendWindow,
+    breakoutPotential: contract.data.breakoutPotential,
+    ...(contract.data.draftContent === undefined
+      ? {}
+      : { draftContent: contract.data.draftContent }),
+    freshness,
     whyNow: {
       summary: record.move.whyNow,
       signalClass: record.move.signalClass,
@@ -117,7 +184,7 @@ async function readyRecordByToken(
 } | null> {
   if (!plausibleBearer(token)) return null;
   const repositories = getRepositories();
-  const publicScan = await repositories.scans.getStatusByPublicId(token);
+  const publicScan = await repositories.scans.getPublicStatusByPublicId(token);
   if (
     publicScan?.move &&
     publicScan.context &&
@@ -127,6 +194,9 @@ async function readyRecordByToken(
   ) {
     const context = ProjectContextSchema.safeParse(publicScan.context);
     if (!context.success) return null;
+    const signalRows = await repositories.scanData.listPublicSignalsForRun(
+      publicScan.move.scanRunId,
+    );
     return {
       scanRequestId: publicScan.request.id,
       record: {
@@ -135,6 +205,7 @@ async function readyRecordByToken(
         context: context.data,
         project: publicScan.project,
         evidence: publicScan.evidence,
+        signals: signalRows.map(storedSignal),
       },
     };
   }
@@ -143,6 +214,7 @@ async function readyRecordByToken(
   if (!delivered) return null;
   const context = ProjectContextSchema.safeParse(delivered.context);
   if (!context.success) return null;
+  const signalRows = await repositories.scanData.listPublicSignalsForRun(delivered.move.scanRunId);
   return {
     scanRequestId: delivered.move.scanRequestId,
     record: {
@@ -151,6 +223,7 @@ async function readyRecordByToken(
       context: context.data,
       project: delivered.project,
       evidence: delivered.evidence,
+      signals: signalRows.map(storedSignal),
     },
   };
 }
@@ -161,10 +234,12 @@ export async function getScanStatusByToken(
 ): Promise<ScanStatusLookup> {
   if (!plausibleBearer(token)) return { found: false };
   const repositories = getRepositories();
-  const status = await repositories.scans.getStatusByPublicId(token);
+  const status = await repositories.scans.getPublicStatusByPublicId(token);
   if (!status) return { found: false };
 
-  const sourceRuns = status.run ? await repositories.scanData.listSourceRuns(status.run.id) : [];
+  const sourceRuns = status.run
+    ? await repositories.scanData.listPublicSourceStatesForRun(status.run.id)
+    : [];
   const persistedStates = new Map(
     sourceRuns.map((sourceRun) => [sourceRun.source, sourceRun.state]),
   );
@@ -176,12 +251,53 @@ export async function getScanStatusByToken(
     status: persistedStates.get(name) ?? "PENDING",
   }));
   const context = ProjectContextSchema.safeParse(status.context);
-  const canOpenResult =
+  const strictContract = status.move
+    ? VersionedNextMoveSchema.safeParse({
+        contractVersion: status.move.decisionContractVersion,
+        generationLevel: status.move.generationLevel,
+        action: status.move.action,
+        channel: status.move.channel,
+        topic: status.move.topic,
+        angle: status.move.angle,
+        format: status.move.format,
+        hook: status.move.hook,
+        outline: status.move.outline,
+        cta: status.move.cta,
+        priority: status.move.priority,
+        confidence: Number(status.move.confidence),
+        validUntil: status.move.validUntil.toISOString(),
+        trendWindow: status.move.trendWindow,
+        breakoutPotential: status.move.breakoutPotential,
+        details: status.move.actionDetails,
+        ...(status.move.draftContent === null ? {} : { draftContent: status.move.draftContent }),
+      })
+    : null;
+  let contractIsEvidenceBound = false;
+  if (status.move && strictContract?.success) {
+    const signalRows = await repositories.scanData.listPublicSignalsForRun(status.move.scanRunId);
+    try {
+      assertActionDetailsBoundToStoredEvidence({
+        details: strictContract.data.details,
+        evidenceSignalIds: status.evidence
+          .filter((receipt) => receipt.bindingRole === "DECISION_SUPPORT")
+          .map((receipt) => receipt.signalId),
+        storedSignals: signalRows.map(storedSignal),
+      });
+      contractIsEvidenceBound = true;
+    } catch {
+      contractIsEvidenceBound = false;
+    }
+  }
+  const contractIsCurrent =
     status.request.state === "READY" &&
     status.move?.state === "READY" &&
     status.move.founderReviewed &&
     status.move.autoPublish === false &&
-    deliveryAvailable(status.delivery);
+    !status.move.proposalStale &&
+    strictContract?.success === true &&
+    contractIsEvidenceBound &&
+    evaluateNextMoveFreshness({ validUntil: strictContract.data.validUntil }).state === "CURRENT";
+  const canOpenResult = contractIsCurrent && deliveryAvailable(status.delivery);
 
   if (analyticsContext) {
     const occurredAt = analyticsContext.now ?? new Date();
@@ -213,6 +329,7 @@ export async function getScanStatusByToken(
     submittedAt: status.request.submittedAt,
     sourcePlan,
     founderReview: true,
+    ...(status.request.state === "READY" && !canOpenResult ? { requiresNewScan: true } : {}),
     ...(canOpenResult ? { resultToken: token } : {}),
     ...(status.request.state === "FAILED"
       ? { failure: publicFailure(status.request.failureCode) }

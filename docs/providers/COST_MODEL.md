@@ -13,13 +13,13 @@ LLM_OUTPUT_PRICE_USD_PER_MILLION_TOKENS=
 MAX_PROVIDER_COST_USD_PER_SCAN=
 ```
 
-Managed mode fails closed when an applicable value or ceiling is absent and
-requires positive prices for configured paid providers/model work. Fixture mode
-uses `$0`. BYOK self-hosters provide their own values or explicitly acknowledge
-the documented conservative sample-estimate policy; no sample represents
-TrendsFast production economics. Pricing and quota schedules are external,
-mutable facts, and the account owner must privately record the dated schedule
-used for each release. See [the commercial boundary](../COMMERCIAL_BOUNDARY.md).
+Managed and BYOK modes fail closed when provider work is enabled and an
+applicable value or ceiling is absent. Fixture mode records zero provider
+spend. Self-hosters must supply and maintain their own current pricing
+assumptions; the repository ships no dollar samples. Pricing and quota
+schedules are external, mutable facts, and the account owner must privately
+record the dated schedule used for each release. See [the commercial
+boundary](../COMMERCIAL_BOUNDARY.md).
 
 ## Ledger contract
 
@@ -111,12 +111,12 @@ freshness; it is not permission to violate provider retention terms.
 
 ## Reporting
 
-Internal dashboards should distinguish provider estimate, actual/unknown,
-conservative model reservation, unsettled model usage, retries, and unverified
-price metadata. Weekly public metrics may show median provider cost only when
-denominator, currency, included providers, time window, fixture exclusion, and
-unknown-cost handling are disclosed. Conservative model reservations must not be
-published as invoice-equivalent actual cost.
+Private operator dashboards should distinguish provider estimate,
+actual/unknown, conservative model reservation, unsettled model usage, retries,
+and unverified price metadata. Monetary provider data is not part of public
+analytics, result pages, API responses, source status, or open metrics.
+Conservative model reservations must not be published as invoice-equivalent
+actual cost.
 
 No actual dogfood or production provider cost has been measured or claimed in
 this repository snapshot.

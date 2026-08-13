@@ -17,6 +17,16 @@ describe("secret redaction", () => {
     expect(output).toMatchObject({ nested: { safe: "visible" } });
   });
 
+  it("redacts adversarial repeated database prefixes without regex backtracking", () => {
+    const repeated = "postgres://".repeat(100_000);
+    const output = redact(`${repeated}user:password@host/db`);
+    const noCredential = redact(repeated);
+
+    expect(String(output)).not.toContain("user:password");
+    expect(String(output)).toContain("[REDACTED]@host/db");
+    expect(noCredential).toBe(repeated);
+  });
+
   it("keeps useful Error fields while redacting credentials from logs", () => {
     const lines: string[] = [];
     const logger = createLogger({

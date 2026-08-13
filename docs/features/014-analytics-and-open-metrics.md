@@ -23,8 +23,9 @@ dashboard zoo, or treating GitHub stars/signups as product success.
 ## Product contract
 
 Measure submitted/delivered/useful/used/repeat outcomes, evidence validity,
-provider cost, review time, `WAIT`, and estimated research time. Show “Not enough
-verified data yet” before a disclosed minimum denominator.
+review time, `WAIT`, and estimated research time. Managed provider economics
+remain in private operator reporting, not public analytics or `/open`. Show “Not
+enough verified data yet” before a disclosed minimum denominator.
 
 ## API contract
 
@@ -84,10 +85,12 @@ external analytics, and real denominator-backed metrics remain unverified.
 Exact-project deletion removes linked request, key, authentication, analytics,
 and related cascaded records. `pnpm db:purge` removes eligible retained terminal
 and nonterminal (`QUEUED`, `RUNNING`, and `REVIEW_REQUIRED`) scans, expired
-delivery tokens, linked analytics, and eligible orphan projects. No
-authenticated privacy-request route, export flow, retention scheduler/alerts,
-backup-expiry proof, or legal-hold policy is implemented, so configuration and
-the CLI must not be described as automatic retention enforcement.
+delivery tokens, linked analytics, and eligible orphan projects. A code-local
+authenticated ops-only retention route, daily ops deployment template,
+aggregate health/alerts, operator privacy runbook, and founder-private review
+export now exist. They are not deployment or DSAR-acceptance proof: no public
+privacy-request route, production scheduler execution, general rights export,
+backup-expiry proof, or approved legal-hold policy is verified.
 
 ## Verification
 

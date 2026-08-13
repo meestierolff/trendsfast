@@ -39,7 +39,7 @@ databaseDescribe("project API-key management lifecycle", () => {
       environment: "test",
       scopes: ["next_move:read", "next_move:write"],
       rateLimitPerHour: 17,
-      providerCostLimitUsd: 0.5,
+      providerCostLimitUsd: 0.731,
       expiresAt: new Date(Date.now() + 24 * 60 * 60_000),
       actorId,
     });
@@ -55,7 +55,7 @@ databaseDescribe("project API-key management lifecycle", () => {
       projectId: project.id,
       scopes: ["next_move:read", "next_move:write"],
       rateLimitPerHour: 17,
-      providerCostLimitUsd: "0.5000",
+      providerCostLimitUsd: "0.7310",
     });
     await expect(
       repositories.apiKeys.authenticate({ rawKey: issued.rawKey }),

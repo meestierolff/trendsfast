@@ -6,7 +6,11 @@ import {
   measurementFragment,
   storedSignal,
 } from "@trendsfast/orchestration";
-import { ProjectContextSchema, type ProjectContext } from "@trendsfast/schemas";
+import {
+  ProjectContextSchema,
+  contentCapabilitiesFromNames,
+  type ProjectContext,
+} from "@trendsfast/schemas";
 
 type Repositories = ReturnType<typeof createRepositories>;
 
@@ -68,11 +72,17 @@ export async function recomputeStoredReview(
   const context = input.contextCorrection
     ? correctedContext(detail.context, input.contextCorrection)
     : ProjectContextSchema.parse(detail.context);
-  const [signalRows, sourceRuns, evidenceHistory] = await Promise.all([
-    repositories.scanData.listSignalsForRun(detail.run.id),
-    repositories.scanData.listSourceRuns(detail.run.id),
-    repositories.reviews.listEvidenceHistory(detail.move.id),
-  ]);
+  const [signalRows, snapshotRows, sourceRuns, evidenceHistory, projectProfile] = await Promise.all(
+    [
+      repositories.scanData.listSignalsForRun(detail.run.id),
+      repositories.scanData.listHistoricalMetricSnapshotsForRun(detail.run.id),
+      repositories.scanData.listSourceRuns(detail.run.id),
+      repositories.reviews.listEvidenceHistory(detail.move.id),
+      detail.project
+        ? repositories.scanData.getCurrentProjectProfile(detail.project.id)
+        : Promise.resolve(null),
+    ],
+  );
   const latestEvidenceBySignal = new Map<string, (typeof evidenceHistory)[number]>();
   for (const receipt of evidenceHistory) {
     const latest = latestEvidenceBySignal.get(receipt.signalId);
@@ -89,8 +99,27 @@ export async function recomputeStoredReview(
   const draft = await decideDeterministically({
     context,
     signals: eligibleSignalRows.map(storedSignal),
+    snapshots: snapshotRows
+      .filter((snapshot) => !rejectedSignalIds.has(snapshot.signalId))
+      .map((snapshot) => ({
+        signalId: snapshot.signalId,
+        observedAt: snapshot.observedAt.toISOString(),
+        metrics: snapshot.metrics,
+      })),
     measurements: sourceRuns.flatMap((run) => measurementFragment(run.providerPayloadFragment)),
     coverage: Object.fromEntries(sourceRuns.map((run) => [run.source, run.state])),
+    ...(detail.request.goal === null ? {} : { objective: detail.request.goal }),
+    generationLevel: detail.request.generationLevel,
+    ...(detail.request.requestedContentCapabilities !== null
+      ? {
+          contentCapabilities: contentCapabilitiesFromNames(
+            detail.request.requestedContentCapabilities,
+          ),
+        }
+      : projectProfile
+        ? { contentCapabilities: projectProfile.contextVersion.contentCapabilities }
+        : {}),
+    ...(projectProfile ? { voiceProfile: projectProfile.contextVersion.voiceProfile } : {}),
     now: input.now ?? new Date(),
   });
   return repositories.reviews.recomputeFromStoredEvidence({

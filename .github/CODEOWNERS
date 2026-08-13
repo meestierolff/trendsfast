@@ -1,0 +1,46 @@
+# Default ownership keeps unclassified changes inside founder review.
+* @meestierolff
+
+# Repository policy and automation.
+/.github/ @meestierolff
+/.github/workflows/ @meestierolff
+/.github/dependabot.yml @meestierolff
+/.gitleaksignore @meestierolff
+/SECURITY.md @meestierolff
+/docs/security/ @meestierolff
+
+# Billing and Stripe authority.
+/packages/billing/ @meestierolff
+/scripts/stripe/ @meestierolff
+/docs/billing/ @meestierolff
+/apps/web/app/billing/ @meestierolff
+/apps/web/app/api/billing/ @meestierolff
+/apps/web/app/api/ops/billing/ @meestierolff
+
+# Provider calls, rights, verification, and cost admission.
+/packages/providers/ @meestierolff
+/docs/providers/ @meestierolff
+/apps/web/app/api/ops/providers/ @meestierolff
+
+# Runtime and deployment configuration.
+/.env.example @meestierolff
+/package.json @meestierolff
+/pnpm-lock.yaml @meestierolff
+/pnpm-workspace.yaml @meestierolff
+/packages/config/ @meestierolff
+/apps/web/next.config.* @meestierolff
+/apps/web/vercel*.json @meestierolff
+/apps/web/proxy.ts @meestierolff
+/apps/web/lib/server-database.ts @meestierolff
+
+# Public, private-capability, founder, and machine API boundaries.
+/apps/web/app/api/ @meestierolff
+/apps/web/lib/api-auth-guard.ts @meestierolff
+/openapi/ @meestierolff
+/packages/schemas/ @meestierolff
+
+# Database authority and immutable migration history.
+/packages/database/ @meestierolff
+/packages/database/migrations/ @meestierolff
+/scripts/db/ @meestierolff
+/docker-compose.yml @meestierolff

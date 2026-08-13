@@ -6,7 +6,7 @@ import { loadEnv } from "@trendsfast/config";
 
 import { OpsApiKeyManager } from "../../../components/ops-api-key-manager";
 import { OpsDesignPartnerGrantManager } from "../../../components/ops-design-partner-grant-manager";
-import { getRepositories } from "../../../lib/server-database";
+import { getOpsRepositories } from "../../../lib/server-database";
 import { getOpsPageAuthorization } from "../_auth";
 
 import "../ops.css";
@@ -20,7 +20,7 @@ export const dynamic = "force-dynamic";
 export default async function OpsKeysPage() {
   const authorization = await getOpsPageAuthorization();
   if (!authorization) redirect("/ops");
-  const repositories = getRepositories();
+  const repositories = getOpsRepositories();
   const [projects, keys, events, grants] = await Promise.all([
     repositories.scanData.listProjects({ activeOnly: true, limit: 200 }),
     repositories.apiKeys.list({ limit: 200 }),

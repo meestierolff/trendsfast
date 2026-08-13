@@ -10,6 +10,108 @@ import {
 } from "./common";
 import { SourceSlugSchema } from "./enums";
 
+export const ProjectEntityTypeSchema = z.enum(["PRODUCT", "BRAND", "CREATOR_LED_BRAND"]);
+export type ProjectEntityType = z.infer<typeof ProjectEntityTypeSchema>;
+
+export const ContextProvenanceSchema = z
+  .object({
+    observed_facts: z
+      .array(
+        z
+          .object({
+            field: z.string().trim().min(1).max(100),
+            value: LongTextSchema,
+            source_url: PublicHttpUrlSchema,
+          })
+          .strict(),
+      )
+      .max(100),
+    inferred_context: z
+      .array(
+        z
+          .object({
+            field: z.string().trim().min(1).max(100),
+            value: LongTextSchema,
+            rationale: LongTextSchema,
+          })
+          .strict(),
+      )
+      .max(100),
+    assumptions: StringListSchema,
+  })
+  .strict();
+export type ContextProvenance = z.infer<typeof ContextProvenanceSchema>;
+
+export const VoiceProfileSchema = z
+  .object({
+    traits: StringListSchema,
+    preferred_phrases: StringListSchema,
+    avoid_phrases: StringListSchema,
+    sample_texts: z.array(LongTextSchema).max(12),
+    sample_urls: z.array(PublicHttpUrlSchema).max(12),
+  })
+  .strict();
+export type VoiceProfile = z.infer<typeof VoiceProfileSchema>;
+
+export const ContentCapabilityNameSchema = z.enum([
+  "founder_text",
+  "founder_on_camera",
+  "screen_recording",
+  "ai_avatar",
+  "carousel",
+  "product_demo",
+  "long_form",
+]);
+export type ContentCapabilityName = z.infer<typeof ContentCapabilityNameSchema>;
+
+export const ContentCapabilitiesSchema = z
+  .object({
+    founder_text: z.boolean(),
+    founder_on_camera: z.boolean(),
+    screen_recording: z.boolean(),
+    ai_avatar: z.boolean(),
+    carousel: z.boolean(),
+    product_demo: z.boolean(),
+    long_form: z.boolean(),
+  })
+  .strict();
+export type ContentCapabilities = z.infer<typeof ContentCapabilitiesSchema>;
+
+export const EMPTY_CONTEXT_PROVENANCE: ContextProvenance = {
+  observed_facts: [],
+  inferred_context: [],
+  assumptions: [],
+};
+
+export const EMPTY_VOICE_PROFILE: VoiceProfile = {
+  traits: [],
+  preferred_phrases: [],
+  avoid_phrases: [],
+  sample_texts: [],
+  sample_urls: [],
+};
+
+export const CONSERVATIVE_CONTENT_CAPABILITIES: ContentCapabilities = {
+  founder_text: true,
+  founder_on_camera: false,
+  screen_recording: false,
+  ai_avatar: false,
+  carousel: false,
+  product_demo: false,
+  long_form: false,
+};
+
+export function contentCapabilitiesFromNames(
+  names: readonly ContentCapabilityName[],
+): ContentCapabilities {
+  const selected = new Set(names);
+  return ContentCapabilitiesSchema.parse(
+    Object.fromEntries(
+      ContentCapabilityNameSchema.options.map((name) => [name, selected.has(name)]),
+    ),
+  );
+}
+
 export const ProjectContextSchema = z
   .object({
     name: z.string().trim().min(1).max(200),

@@ -24,8 +24,14 @@ const { appendOnce, getRepositories, getStatusByPublicId } = vi.hoisted(() => {
     getStatusByPublicId,
     getRepositories: vi.fn(() => ({
       analytics: { appendOnce },
-      scans: { getStatusByPublicId },
-      scanData: { listSourceRuns: vi.fn().mockResolvedValue([]) },
+      scans: {
+        getStatusByPublicId,
+        getPublicStatusByPublicId: getStatusByPublicId,
+      },
+      scanData: {
+        listSourceRuns: vi.fn().mockResolvedValue([]),
+        listPublicSourceStatesForRun: vi.fn().mockResolvedValue([]),
+      },
     })),
   };
 });

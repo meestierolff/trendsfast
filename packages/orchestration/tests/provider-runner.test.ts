@@ -28,7 +28,7 @@ describe("provider runner bridge", () => {
       "hacker_news",
       { scanId: "scan_1", productUrl: "https://example.com", queries },
       {
-        remainingUsd: 0.25,
+        remainingUsd: 0.317,
         deadline: new Date("2026-08-11T12:01:00.000Z"),
         reserveAttempt,
         settleAttempt,

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { NextMoveReadyResponseSchema } from "@trendsfast/schemas";
 import { InProcessInvalidApiKeyLimiter } from "../../lib/api-auth-guard";
 import { createV1Api, type V1ApiDependencies } from "../../lib/v1-api";
 
@@ -8,6 +9,7 @@ const LIVE_KEY = "tf_live_prefix12.abcdefghijklmnopqrstuvwxyz123456";
 function dependencies(overrides: Partial<V1ApiDependencies> = {}): V1ApiDependencies {
   return {
     providerCredentialMode: "fixture",
+    liveApiCreationEnabled: true,
     authenticate: vi.fn(async (raw) =>
       raw === TEST_KEY
         ? {
@@ -27,6 +29,12 @@ function dependencies(overrides: Partial<V1ApiDependencies> = {}): V1ApiDependen
       id: "move_test",
       status: "QUEUED" as const,
       status_url: "/v1/next-moves/move_test",
+      poll_after_seconds: 30 as const,
+    })),
+    createOrReuseForProject: vi.fn(async () => ({
+      id: "move_project",
+      status: "QUEUED" as const,
+      status_url: "/v1/next-moves/move_project",
       poll_after_seconds: 30 as const,
     })),
     getStatus: vi.fn(async () => ({
@@ -59,6 +67,24 @@ describe("v1 Next Move API", () => {
               "422": {},
               "429": {},
               "500": {},
+              "503": {},
+            },
+          },
+        },
+        "/v1/projects/{project_id}/next-move": {
+          post: {
+            responses: {
+              "200": {},
+              "202": {},
+              "400": {},
+              "401": {},
+              "403": {},
+              "409": {},
+              "413": {},
+              "422": {},
+              "429": {},
+              "500": {},
+              "503": {},
             },
           },
         },
@@ -78,6 +104,44 @@ describe("v1 Next Move API", () => {
     });
   });
 
+  it("keeps the documented ready example aligned with the runtime v1 schema", async () => {
+    const response = await createV1Api(dependencies()).request("/v1/openapi.json");
+    const document = (await response.json()) as {
+      paths?: {
+        "/v1/next-move"?: {
+          post?: {
+            responses?: {
+              "200"?: { content?: { "application/json"?: { example?: unknown } } };
+            };
+          };
+        };
+      };
+      components?: {
+        schemas?: Record<string, { required?: string[] }>;
+      };
+    };
+    const example =
+      document.paths?.["/v1/next-move"]?.post?.responses?.["200"]?.content?.["application/json"]
+        ?.example;
+
+    expect(NextMoveReadyResponseSchema.parse(example)).toMatchObject({
+      contract_version: "next-move-v1",
+      generation_level: "brief",
+      action_details: { action: "WAIT" },
+      freshness: { state: "CURRENT", requires_new_scan: false },
+      auto_publish: false,
+    });
+    expect(document.components?.schemas).toHaveProperty("ProjectNextMoveRequest");
+    expect(document.components?.schemas?.NextMoveRequest?.required).toEqual(["product_url"]);
+    expect(document.components?.schemas?.ProjectNextMoveRequest?.required).toBeUndefined();
+    const documentedExample = example as {
+      why_now?: { independent_source_count?: number };
+      evidence?: unknown[];
+    };
+    expect(documentedExample.why_now?.independent_source_count).toBe(1);
+    expect(documentedExample.evidence?.length).toBe(1);
+  });
+
   it("requires a bearer key", async () => {
     const response = await createV1Api(dependencies()).request("/v1/next-move", {
       method: "POST",
@@ -85,6 +149,40 @@ describe("v1 Next Move API", () => {
       body: JSON.stringify({ product_url: "https://example.com" }),
     });
     expect(response.status).toBe(401);
+  });
+
+  it("rejects disabled creation before authentication or service work", async () => {
+    const authenticate = vi.fn(async () => null);
+    const admitAuthenticationAttempt = vi.fn(async () => true);
+    const createOrReuse = vi.fn();
+    const response = await createV1Api(
+      dependencies({
+        liveApiCreationEnabled: false,
+        authenticate,
+        admitAuthenticationAttempt,
+        createOrReuse,
+      }),
+    ).request("/v1/next-move", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${TEST_KEY}`,
+        "content-type": "application/json",
+        "idempotency-key": crypto.randomUUID(),
+      },
+      body: JSON.stringify({ product_url: "https://example.com" }),
+    });
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({
+      error: {
+        code: "UNAVAILABLE",
+        message: "New API research is temporarily unavailable.",
+      },
+    });
+    expect(admitAuthenticationAttempt).not.toHaveBeenCalled();
+    expect(authenticate).not.toHaveBeenCalled();
+    expect(createOrReuse).not.toHaveBeenCalled();
   });
 
   it("rejects malformed and oversized keys before expensive authentication", async () => {
@@ -315,6 +413,69 @@ describe("v1 Next Move API", () => {
     expect(response.status).toBe(202);
     expect(response.headers.get("location")).toBe("/v1/next-moves/move_test");
     expect(await response.json()).toMatchObject({ poll_after_seconds: 30 });
+  });
+
+  it("admits the preferred claimed-project route only for its project-restricted key", async () => {
+    const projectId = "21437295-6781-41a0-a42b-e6db11c553b2";
+    const createOrReuseForProject = vi.fn(async () => ({
+      id: "move_project",
+      status: "QUEUED" as const,
+      status_url: "/v1/next-moves/move_project",
+      poll_after_seconds: 30 as const,
+    }));
+    const app = createV1Api(
+      dependencies({
+        authenticate: vi.fn(async () => ({
+          apiKeyId: "key_project",
+          projectId,
+          environment: "test" as const,
+          scopes: ["next_move:write"],
+        })),
+        createOrReuseForProject,
+      }),
+    );
+    const idempotencyKey = "57254b33-891c-48d8-9cc8-6453ca41df1a";
+    const response = await app.request(`/v1/projects/${projectId}/next-move`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${TEST_KEY}`,
+        "idempotency-key": idempotencyKey,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        objective: "Grow among technical founders",
+        content_capabilities: ["founder_text"],
+        generation_level: "draft",
+      }),
+    });
+
+    expect(response.status).toBe(202);
+    expect(response.headers.get("location")).toBe("/v1/next-moves/move_project");
+    expect(createOrReuseForProject).toHaveBeenCalledWith({
+      principal: expect.objectContaining({ projectId }),
+      projectId,
+      idempotencyKey,
+      request: {
+        objective: "Grow among technical founders",
+        content_capabilities: ["founder_text"],
+        generation_level: "draft",
+      },
+    });
+
+    const wrongProject = await app.request(
+      "/v1/projects/3dfa8d10-f3ed-427a-993c-280243a329e6/next-move",
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${TEST_KEY}`,
+          "idempotency-key": crypto.randomUUID(),
+          "content-type": "application/json",
+        },
+        body: "{}",
+      },
+    );
+    expect(wrongProject.status).toBe(403);
+    expect(createOrReuseForProject).toHaveBeenCalledTimes(1);
   });
 
   it("adds Retry-After to service-level 429 responses", async () => {

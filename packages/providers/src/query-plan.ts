@@ -8,7 +8,7 @@ import type {
 import { cleanText, queryString, stableId } from "./util";
 
 export const PROVIDER_LIMITS = {
-  website: { maxQueries: 1, maxCalls: 1, maxResultsPerCall: 1, maxResults: 1 },
+  website: { maxQueries: 1, maxCalls: 5, maxResultsPerCall: 5, maxResults: 5 },
   google_trends: { maxQueries: 5, maxCalls: 1, maxResultsPerCall: 5, maxResults: 10 },
   hacker_news: { maxQueries: 5, maxCalls: 5, maxResultsPerCall: 10, maxResults: 30 },
   github: { maxQueries: 3, maxCalls: 3, maxResultsPerCall: 10, maxResults: 20 },

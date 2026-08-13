@@ -83,7 +83,7 @@ describe("provider execution guardrails", () => {
 
     await executeProvider(testAdapter(collect), request, {
       context: createProviderContext({ credentialMode: "fixture", sleep: async () => undefined }),
-      budget: new ProviderBudget(0.25),
+      budget: new ProviderBudget(0.317),
       circuitBreaker: new ProviderCircuitBreaker(),
       beforeAttempt,
       afterAttempt,
@@ -107,7 +107,7 @@ describe("provider execution guardrails", () => {
     await expect(
       executeProvider(testAdapter(collect), request, {
         context: createProviderContext({ credentialMode: "fixture" }),
-        budget: new ProviderBudget(0.25),
+        budget: new ProviderBudget(0.317),
         circuitBreaker: new ProviderCircuitBreaker(),
         beforeAttempt: async () => {
           throw new Error("durable reservation unavailable");
@@ -144,7 +144,7 @@ describe("provider execution guardrails", () => {
         now: () => new Date("2026-08-11T08:00:00.000Z"),
         sleep,
       }),
-      budget: new ProviderBudget(0.25),
+      budget: new ProviderBudget(0.317),
       circuitBreaker: new ProviderCircuitBreaker(),
     });
 
@@ -195,7 +195,7 @@ describe("provider execution guardrails", () => {
         credentialMode: "fixture",
         sleep: async () => undefined,
       }),
-      budget: new ProviderBudget(0.25),
+      budget: new ProviderBudget(0.317),
       circuitBreaker: new ProviderCircuitBreaker(),
     });
 
@@ -286,7 +286,7 @@ describe("provider execution guardrails", () => {
       measurements: [],
       calls: 1,
       quota: { used: 1 },
-      cost: { estimatedUsd: 0.02, actualUsd: 0.3 },
+      cost: { estimatedUsd: 0.02, actualUsd: 0.419 },
       startedAt: "2026-08-11T08:00:00.000Z",
       finishedAt: "2026-08-11T08:00:01.000Z",
       limitations: [],
@@ -294,7 +294,7 @@ describe("provider execution guardrails", () => {
     });
     const result = await executeProvider(testAdapter(collect), request, {
       context: createProviderContext({ credentialMode: "fixture" }),
-      budget: new ProviderBudget(0.25),
+      budget: new ProviderBudget(0.317),
       circuitBreaker: new ProviderCircuitBreaker(),
     });
 

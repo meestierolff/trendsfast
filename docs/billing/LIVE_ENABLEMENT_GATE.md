@@ -18,10 +18,10 @@ approval.
 
 ## Product and customer promise
 
-- [ ] Founder approves product name, `$39/month` price, currency, interval,
+- [ ] Founder approves product name, `€39/month` price, currency, interval,
       included monitored product, checks, history, API access, support, and what
       “daily” means operationally.
-- [ ] The Stripe catalog contains exactly one recurring `$39 USD/month` Founder
+- [ ] The Stripe catalog contains exactly one recurring `€39 EUR/month` Founder
       Price and no active coupon, promotion code, trial, or alternate plan.
 - [ ] Product can actually provide every paid promise; `WAIT`, provider outages,
       review delays, limits, and source availability are disclosed.

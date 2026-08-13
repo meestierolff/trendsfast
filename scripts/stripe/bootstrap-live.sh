@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "${I_UNDERSTAND_LIVE_STRIPE:-}" != "YES" || "${STRIPE_LIVE_ENABLEMENT_APPROVED:-}" != "YES" ]]; then
-  echo "Live catalog bootstrap requires both I_UNDERSTAND_LIVE_STRIPE=YES and STRIPE_LIVE_ENABLEMENT_APPROVED=YES." >&2
+if [[ "${I_UNDERSTAND_LIVE_STRIPE:-}" != "YES" || "${STRIPE_LIVE_CATALOG_APPROVED:-}" != "YES" ]]; then
+  echo "Live catalog bootstrap requires both I_UNDERSTAND_LIVE_STRIPE=YES and STRIPE_LIVE_CATALOG_APPROVED=YES." >&2
   exit 1
 fi
 
@@ -45,12 +45,13 @@ price_id="$(printf '%s' "$price_list" | json_field 'json => json.data?.[0]?.id')
 if [[ -z "$price_id" ]]; then
   price_json="$(stripe_catalog live prices create \
     --product="$product_id" \
-    --currency=usd \
+    --currency=eur \
     --unit-amount=3900 \
+    --tax-behavior=exclusive \
     --recurring.interval=month \
     --lookup-key="$lookup_key" \
     -d "metadata[plan]=founder" \
-    --idempotency="trendsfast-live-founder-price-v1" --confirm)"
+    --idempotency="trendsfast-live-founder-price-eur-v1" --confirm)"
   price_id="$(printf '%s' "$price_json" | json_field 'json => json.id')"
 fi
 if [[ -z "$price_id" ]]; then

@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 
 import { redactSecrets } from "@trendsfast/core";
 import type { SourceSlug } from "@trendsfast/schemas";
@@ -23,6 +23,20 @@ export class ProviderVerificationAttemptConflictError extends Error {
 }
 
 type ProviderVerificationRecord = typeof providerVerificationRecords.$inferSelect;
+
+type PublicProviderVerificationRow = {
+  source: SourceSlug;
+  provider: string;
+  state: ProviderVerificationState;
+  credential_mode: string;
+  deployment_environment: "production";
+  health_status: ProviderVerificationHealthStatus | null;
+  readback_verified: boolean;
+  canonical_url_count: number;
+  latency_ms: number | null;
+  checked_at: Date | null;
+  completed_at: Date | null;
+};
 
 function requestHashMarker(value: string): string {
   const normalized = value.trim().toLowerCase();
@@ -389,6 +403,48 @@ export class ProviderVerificationRepository {
       )
       .orderBy(providerVerificationRecords.source, desc(providerVerificationRecords.completedAt));
     return records.map(publicRecord);
+  }
+
+  /**
+   * Calls the migration-owned, exact-deployment projection. The runtime role
+   * has EXECUTE only and cannot read provider_verification_records itself.
+   */
+  async latestPublicProductionBySource(input: {
+    releaseSha: string;
+    deploymentHost: string;
+    deploymentId: string;
+  }) {
+    const result = await this.db.execute<PublicProviderVerificationRow>(sql`
+      select source,
+             provider,
+             state,
+             credential_mode,
+             deployment_environment,
+             health_status,
+             readback_verified,
+             canonical_url_count,
+             latency_ms,
+             checked_at,
+             completed_at
+        from public.trendsfast_public_provider_verifications(
+          ${input.releaseSha},
+          ${input.deploymentHost},
+          ${input.deploymentId}
+        )
+    `);
+    return result.rows.map((record) => ({
+      source: record.source,
+      provider: record.provider,
+      state: record.state,
+      credentialMode: record.credential_mode,
+      deploymentEnvironment: record.deployment_environment,
+      healthStatus: record.health_status,
+      readbackVerified: record.readback_verified,
+      canonicalUrlCount: record.canonical_url_count,
+      latencyMs: record.latency_ms,
+      checkedAt: record.checked_at,
+      completedAt: record.completed_at,
+    }));
   }
 
   async list(input: { source?: SourceSlug; limit?: number } = {}) {

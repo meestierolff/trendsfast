@@ -36,6 +36,7 @@ async function main() {
   loadCliEnvironment();
   const client = createDatabaseClient({
     connectionString: migrationConnectionString(process.env),
+    ...(process.env.DATABASE_SSL_CA?.trim() ? { sslCa: process.env.DATABASE_SSL_CA.trim() } : {}),
     applicationName: "trendsfast_migrate",
   });
   try {

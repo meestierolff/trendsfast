@@ -239,6 +239,65 @@
   background: rgba(255, 118, 94, 0.04);
 }
 
+.scan-claim {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.65fr);
+  gap: clamp(28px, 6vw, 80px);
+  align-items: center;
+  margin-top: clamp(58px, 8vw, 100px);
+  padding: clamp(28px, 5vw, 58px);
+  color: var(--text-1);
+  border: 1px solid rgba(200, 255, 77, 0.45);
+  background:
+    radial-gradient(circle at 90% 0%, rgba(67, 231, 255, 0.1), transparent 18rem),
+    var(--surface-1);
+}
+
+.scan-claim h2 {
+  margin: 14px 0 16px;
+  font-size: clamp(35px, 5vw, 66px);
+  line-height: 0.98;
+  letter-spacing: -0.06em;
+}
+
+.scan-claim p:not(.scan-mono-label),
+.scan-claim small {
+  color: var(--text-2);
+}
+
+.scan-claim form {
+  display: grid;
+  gap: 10px;
+}
+
+.scan-claim button {
+  min-height: 50px;
+  padding: 12px 16px;
+  color: var(--bg-0);
+  border: 1px solid var(--lime);
+  background: var(--lime);
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.scan-claim button:nth-of-type(n + 2) {
+  color: var(--text-1);
+  border-color: var(--line-strong);
+  background: var(--surface-2);
+}
+
+.scan-claim small {
+  grid-column: 1 / -1;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.72rem;
+}
+
+@media (max-width: 760px) {
+  .scan-claim {
+    grid-template-columns: 1fr;
+  }
+}
+
 .scan-failure .scan-mono-label {
   color: var(--danger);
 }

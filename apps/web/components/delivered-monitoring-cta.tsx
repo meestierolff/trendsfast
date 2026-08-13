@@ -35,11 +35,14 @@ export function DeliveredMonitoringCta({ token }: { token: string }) {
       <div>
         <p className="scan-mono-label">Optional monitoring</p>
         <h2 id="monitor-product-title">Keep watching this product.</h2>
-        <p>One monitored product, one scheduled run per UTC day, and bounded usage.</p>
+        <p>
+          €39/month for one monitored product, one scheduled run per UTC day, and bounded usage.
+          Stripe Checkout confirms the recurring price before payment.
+        </p>
         {error ? <small role="alert">{error}</small> : null}
       </div>
       <button type="button" onClick={() => void startCheckout()} disabled={pending}>
-        {pending ? "Opening secure Checkout…" : "Monitor this product — $39/month"}
+        {pending ? "Opening secure Checkout…" : "Monitor this product — €39/month"}
       </button>
     </section>
   );

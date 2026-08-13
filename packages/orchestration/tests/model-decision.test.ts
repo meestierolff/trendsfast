@@ -82,7 +82,7 @@ describe("model-assisted decision", () => {
     expect(result.move.priority).toBe(0);
     expect(result.evidenceSignalIds).toEqual(["sig_hn"]);
     expect(result.independentSourceCount).toBe(1);
-    expect(result.promptVersion).toBe("deterministic-ranking-v2");
+    expect(result.promptVersion).toBe("deterministic-ranking-v3");
     expect(result.limitations).toContain(
       "Model synthesis was unavailable or failed validation; deterministic output was retained.",
     );
@@ -105,7 +105,7 @@ describe("model-assisted decision", () => {
     expect(result.move.action).toBe("WAIT");
     expect(result.evidenceSignalIds).toEqual(["sig_hn"]);
     expect(result.independentSourceCount).toBe(1);
-    expect(result.promptVersion).toBe("deterministic-ranking-v2");
+    expect(result.promptVersion).toBe("deterministic-ranking-v3");
   });
 
   it("rejects an actionable synthesis that drops deterministic evidence", async () => {
@@ -133,7 +133,7 @@ describe("model-assisted decision", () => {
     expect(result.move.action).toBe("PUBLISH");
     expect(result.evidenceSignalIds).toEqual(["sig_gh", "sig_hn"]);
     expect(result.independentSourceCount).toBe(2);
-    expect(result.promptVersion).toBe("deterministic-ranking-v2");
+    expect(result.promptVersion).toBe("deterministic-ranking-v3");
   });
 
   it("accepts prose refinements but keeps deterministic categorical fields", async () => {
@@ -155,6 +155,7 @@ describe("model-assisted decision", () => {
         hacker_news: "SUCCEEDED",
         github: "SUCCEEDED",
       },
+      generationLevel: "draft",
       now: new Date("2026-08-11T12:00:00.000Z"),
     });
 
@@ -168,5 +169,23 @@ describe("model-assisted decision", () => {
     expect(result.evidenceSignalIds).toEqual(["sig_gh", "sig_hn"]);
     expect(result.independentSourceCount).toBe(2);
     expect(result.promptVersion).toBe("next-move-synthesis-v1");
+    expect(result.versionedMove).toMatchObject({
+      topic: "Refined topic prose",
+      angle: "Refined angle prose.",
+      hook: "Refined hook prose.",
+      details: {
+        action: "PUBLISH",
+        blueprint: {
+          content_premise: "Refined topic prose: Refined angle prose.",
+          structure: ["Refined outline prose."],
+          cta: "Refined CTA prose.",
+        },
+      },
+    });
+    expect(result.versionedMove?.draftContent).toContain("Refined hook prose.");
+    expect(result.versionedMove?.draftContent).toContain("Refined outline prose.");
+    expect(result.versionedMove?.draftContent).not.toContain(
+      "The distribution research tool lesson most founders miss",
+    );
   });
 });

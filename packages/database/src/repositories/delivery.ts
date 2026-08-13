@@ -17,7 +17,8 @@ import {
   scanRuns,
 } from "../schema";
 import { durableAnalyticsDedupeKey } from "./analytics";
-import { admitFounderUsage } from "./founder-usage";
+import { admitFounderUsage, lockProjectEntitlementScope } from "./founder-usage";
+import { lockProjectClaimDeliveryScope } from "./project-claim-lock";
 import { requireDecisionEvidenceQuality } from "./review-evidence";
 
 export class FounderDeliveryAdmissionError extends Error {
@@ -55,25 +56,50 @@ export class DeliveryRepository {
   }): Promise<DeliveryIssueResult> {
     return this.db.transaction(async (tx) => {
       const [identity] = await tx
-        .select()
+        .select({ move: nextMoves, projectId: scanRequests.projectId })
         .from(nextMoves)
+        .innerJoin(scanRequests, eq(scanRequests.id, nextMoves.scanRequestId))
         .where(eq(nextMoves.id, input.nextMoveId))
         .limit(1);
       if (!identity) throw new Error("Next Move was not found");
+      if (identity.projectId) {
+        await lockProjectEntitlementScope(tx as unknown as TrendsFastDatabase, identity.projectId);
+        await tx.execute(sql`SELECT id FROM projects WHERE id = ${identity.projectId} FOR UPDATE`);
+      }
       await tx.execute(
-        sql`SELECT id FROM scan_requests WHERE id = ${identity.scanRequestId} FOR UPDATE`,
+        sql`SELECT id FROM scan_requests WHERE id = ${identity.move.scanRequestId} FOR UPDATE`,
       );
-      await tx.execute(sql`SELECT id FROM scan_runs WHERE id = ${identity.scanRunId} FOR UPDATE`);
-      await tx.execute(sql`SELECT id FROM next_moves WHERE id = ${identity.id} FOR UPDATE`);
+      await tx.execute(
+        sql`SELECT id FROM scan_runs WHERE id = ${identity.move.scanRunId} FOR UPDATE`,
+      );
+      await tx.execute(sql`SELECT id FROM next_moves WHERE id = ${identity.move.id} FOR UPDATE`);
       const [locked] = await tx
         .select({ move: nextMoves, requestState: scanRequests.state, runState: scanRuns.state })
         .from(nextMoves)
         .innerJoin(scanRequests, eq(scanRequests.id, nextMoves.scanRequestId))
         .innerJoin(scanRuns, eq(scanRuns.id, nextMoves.scanRunId))
-        .where(eq(nextMoves.id, identity.id))
+        .where(eq(nextMoves.id, identity.move.id))
         .limit(1);
       if (!locked) throw new Error("Next Move was not found");
       const move = locked.move;
+      const [currentContext] = await tx
+        .select({ id: projectContextVersions.id, projectId: projectContextVersions.projectId })
+        .from(projectContextVersions)
+        .where(
+          and(
+            eq(projectContextVersions.id, move.projectContextVersionId),
+            eq(projectContextVersions.isCurrent, true),
+          ),
+        )
+        .limit(1)
+        .for("update");
+      if (
+        move.proposalStale ||
+        !currentContext ||
+        (identity.projectId !== null && currentContext.projectId !== identity.projectId)
+      ) {
+        throw new Error("The reviewed move is stale and must be recomputed before delivery");
+      }
 
       const receipts = await tx
         .select({
@@ -163,6 +189,9 @@ export class DeliveryRepository {
         )
         .limit(1);
       if (paidAcceptance) {
+        if (paidAcceptance.projectId !== identity.projectId) {
+          throw new Error("Paid usage acceptance does not match the delivery project");
+        }
         const admission = await admitFounderUsage(tx as unknown as TrendsFastDatabase, {
           projectId: paidAcceptance.projectId,
           scanRequestId: move.scanRequestId,
@@ -190,7 +219,13 @@ export class DeliveryRepository {
       const [readyMove] = await tx
         .update(nextMoves)
         .set({ state: "READY", deliveredAt: now, updatedAt: now })
-        .where(and(eq(nextMoves.id, move.id), eq(nextMoves.state, "APPROVED")))
+        .where(
+          and(
+            eq(nextMoves.id, move.id),
+            eq(nextMoves.state, "APPROVED"),
+            eq(nextMoves.proposalStale, false),
+          ),
+        )
         .returning({ id: nextMoves.id });
       const [readyRequest] = await tx
         .update(scanRequests)
@@ -313,11 +348,14 @@ export class DeliveryRepository {
   }
 
   async revoke(tokenId: string) {
-    const [updated] = await this.db
-      .update(deliveryTokens)
-      .set({ status: "REVOKED", revokedAt: new Date() })
-      .where(eq(deliveryTokens.id, tokenId))
-      .returning();
-    return updated ?? null;
+    return this.db.transaction(async (tx) => {
+      await lockProjectClaimDeliveryScope(tx as unknown as TrendsFastDatabase, tokenId);
+      const [updated] = await tx
+        .update(deliveryTokens)
+        .set({ status: "REVOKED", revokedAt: new Date() })
+        .where(eq(deliveryTokens.id, tokenId))
+        .returning();
+      return updated ?? null;
+    });
   }
 }

@@ -1,18 +1,31 @@
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lt, sql } from "drizzle-orm";
 
 import { createPrefixedId, redactRecord, redactSecrets } from "@trendsfast/core";
 import {
+  CONSERVATIVE_CONTENT_CAPABILITIES,
+  EMPTY_CONTEXT_PROVENANCE,
+  EMPTY_VOICE_PROFILE,
+  ContentCapabilitiesSchema,
+  ContextProvenanceSchema,
   NextMoveSchema,
   ProjectContextSchema,
+  ProjectEntityTypeSchema,
   QueryPlanSchema,
   SignalMetricSnapshotSchema,
   SignalSchema,
+  VoiceProfileSchema,
+  VersionedNextMoveSchema,
+  type ContentCapabilities,
+  type ContextProvenance,
   type NextMove,
   type ProjectContext,
+  type ProjectEntityType,
   type QueryPlan,
   type Signal,
   type SignalClass,
   type SourceRunState,
+  type VoiceProfile,
+  type VersionedNextMove,
 } from "@trendsfast/schemas";
 
 import type { TrendsFastDatabase } from "../client";
@@ -57,6 +70,22 @@ export class ScanDataRepository {
     return project ?? null;
   }
 
+  async getCurrentProjectProfile(projectId: string) {
+    const [profile] = await this.db
+      .select({ project: projects, contextVersion: projectContextVersions })
+      .from(projects)
+      .innerJoin(
+        projectContextVersions,
+        and(
+          eq(projectContextVersions.projectId, projects.id),
+          eq(projectContextVersions.isCurrent, true),
+        ),
+      )
+      .where(and(eq(projects.id, projectId), eq(projects.status, "ACTIVE")))
+      .limit(1);
+    return profile ?? null;
+  }
+
   async listProjects(input: { activeOnly?: boolean; limit?: number } = {}) {
     const limit = Math.min(Math.max(input.limit ?? 100, 1), 500);
     return this.db
@@ -86,15 +115,99 @@ export class ScanDataRepository {
     return project;
   }
 
+  /**
+   * Resolves the project identity for context inferred during one fenced scan.
+   * A project-scoped request may never be rebound by URL: the exact locked
+   * project must still own the normalized URL captured at admission. Only a
+   * previously unassigned public request may resolve/create by URL. Legacy
+   * unbound API work is rejected instead of inheriting URL-based authority.
+   */
+  async resolveProjectForInferredContext(input: {
+    scanRequestId: string;
+    context: ProjectContext;
+  }) {
+    const context = ProjectContextSchema.parse(input.context);
+    const normalizedUrl = normalizeProductUrl(context.url);
+    const [request] = await this.db
+      .select({
+        id: scanRequests.id,
+        origin: scanRequests.origin,
+        projectId: scanRequests.projectId,
+        normalizedUrl: scanRequests.normalizedUrl,
+      })
+      .from(scanRequests)
+      .where(eq(scanRequests.id, input.scanRequestId))
+      .limit(1);
+    if (!request || request.normalizedUrl !== normalizedUrl) {
+      throw new Error("The inferred context no longer matches the admitted scan URL");
+    }
+    if (!request.projectId) {
+      if (request.origin === "API") {
+        throw new Error("A project-scoped API scan is missing its project binding");
+      }
+      if (request.origin === "PUBLIC_FORM") {
+        const lockKey = `trendsfast:public-project:${normalizedUrl}`;
+        await this.db.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+        const [existingProject] = await this.db
+          .select({ id: projects.id })
+          .from(projects)
+          .where(eq(projects.normalizedUrl, normalizedUrl))
+          .limit(1);
+        if (existingProject) {
+          throw new Error("A public scan cannot replace an existing project context");
+        }
+        const [created] = await this.db
+          .insert(projects)
+          .values({
+            publicId: createPrefixedId("project"),
+            name: context.name,
+            url: context.url,
+            normalizedUrl,
+          })
+          .returning();
+        if (!created) throw new Error("Could not create the public scan project");
+        return created;
+      }
+      return this.upsertProject({ url: context.url, name: context.name });
+    }
+
+    await this.db.execute(sql`SELECT id FROM projects WHERE id = ${request.projectId} FOR UPDATE`);
+    const [project] = await this.db
+      .select()
+      .from(projects)
+      .where(eq(projects.id, request.projectId))
+      .limit(1);
+    if (
+      !project ||
+      project.status !== "ACTIVE" ||
+      project.normalizedUrl !== request.normalizedUrl
+    ) {
+      throw new Error("The claimed project URL changed before context could be persisted");
+    }
+    return project;
+  }
+
   async addProjectContext(input: {
     projectId: string;
     context: ProjectContext;
+    entityType?: ProjectEntityType;
+    contextProvenance?: ContextProvenance;
+    voiceProfile?: VoiceProfile;
+    contentCapabilities?: ContentCapabilities;
     sourceContentHash?: string;
     promptVersion?: string;
     model?: string;
     createdBy?: string;
   }) {
     const context = ProjectContextSchema.parse(input.context);
+    const entityType = ProjectEntityTypeSchema.parse(input.entityType ?? "PRODUCT");
+    const contextProvenance = ContextProvenanceSchema.parse(
+      input.contextProvenance ?? EMPTY_CONTEXT_PROVENANCE,
+    );
+    const voiceProfile = VoiceProfileSchema.parse(input.voiceProfile ?? EMPTY_VOICE_PROFILE);
+    const contentCapabilities = ContentCapabilitiesSchema.parse(
+      input.contentCapabilities ?? CONSERVATIVE_CONTENT_CAPABILITIES,
+    );
     return this.db.transaction(async (tx) => {
       const existing = await tx
         .select({ version: projectContextVersions.version })
@@ -119,6 +232,10 @@ export class ScanDataRepository {
           credibleTopics: context.credibleTopics,
           assumptions: context.assumptions,
           context,
+          entityType,
+          contextProvenance,
+          voiceProfile,
+          contentCapabilities,
           sourceContentHash: input.sourceContentHash ?? null,
           promptVersion: input.promptVersion ?? null,
           model: input.model ?? null,
@@ -301,9 +418,47 @@ export class ScanDataRepository {
       .orderBy(asc(sourceRuns.createdAt));
   }
 
+  async listPublicSourceStatesForRun(scanRunId: string) {
+    return this.db
+      .select({ source: sourceRuns.source, state: sourceRuns.state })
+      .from(sourceRuns)
+      .where(eq(sourceRuns.scanRunId, scanRunId))
+      .orderBy(asc(sourceRuns.createdAt));
+  }
+
   async listSignalsForRun(scanRunId: string) {
     return this.db
       .select({ signal: signals, sourceRun: sourceRuns })
+      .from(signals)
+      .innerJoin(sourceRuns, eq(signals.sourceRunId, sourceRuns.id))
+      .where(eq(sourceRuns.scanRunId, scanRunId))
+      .orderBy(asc(signals.observedAt));
+  }
+
+  /** Exact evidence-binding projection; excludes provider request IDs and raw hashes. */
+  async listPublicSignalsForRun(scanRunId: string) {
+    return this.db
+      .select({
+        signal: {
+          id: signals.id,
+          source: signals.source,
+          sourceId: signals.sourceId,
+          canonicalUrl: signals.canonicalUrl,
+          title: signals.title,
+          textExcerpt: signals.textExcerpt,
+          author: signals.author,
+          publishedAt: signals.publishedAt,
+          observedAt: signals.observedAt,
+          language: signals.language,
+          metrics: signals.metrics,
+          queryId: signals.queryId,
+          provider: signals.provider,
+          providerRequestId: sql<null>`null::text`,
+          retrievedAt: signals.retrievedAt,
+          cached: signals.cached,
+          rawPayloadHash: sql<null>`null::text`,
+        },
+      })
       .from(signals)
       .innerJoin(sourceRuns, eq(signals.sourceRunId, sourceRuns.id))
       .where(eq(sourceRuns.scanRunId, scanRunId))
@@ -318,6 +473,67 @@ export class ScanDataRepository {
       .innerJoin(sourceRuns, eq(sourceRuns.id, signals.sourceRunId))
       .where(eq(sourceRuns.scanRunId, scanRunId))
       .orderBy(asc(signalMetricSnapshots.observedAt));
+  }
+
+  /**
+   * Loads a bounded history for the exact source-native identities in one run.
+   * Historical signal IDs are deliberately remapped to the current stored IDs
+   * so the scoring layer can compare like-for-like metric observations only.
+   */
+  async listHistoricalMetricSnapshotsForRun(scanRunId: string, limitPerSignal = 12) {
+    const boundedLimit = Math.min(Math.max(limitPerSignal, 2), 24);
+    const currentSignals = await this.listSignalsForRun(scanRunId);
+    if (currentSignals.length === 0) return [];
+    const metricSignals = currentSignals
+      .filter(({ signal }) =>
+        Object.values(signal.metrics).some(
+          (value) => typeof value === "number" && Number.isFinite(value),
+        ),
+      )
+      .sort((left, right) => right.signal.observedAt.getTime() - left.signal.observedAt.getTime())
+      .slice(0, 40);
+    if (metricSignals.length === 0) return [];
+    const [currentRun] = await this.db
+      .select({ projectId: scanRequests.projectId, createdAt: scanRuns.createdAt })
+      .from(scanRuns)
+      .innerJoin(scanRequests, eq(scanRequests.id, scanRuns.scanRequestId))
+      .where(eq(scanRuns.id, scanRunId))
+      .limit(1);
+    if (!currentRun) return [];
+
+    const result: Array<{ signalId: string; observedAt: Date; metrics: Signal["metrics"] }> = [];
+    for (const { signal: current } of metricSignals) {
+      const history = await this.db
+        .select({
+          observedAt: signalMetricSnapshots.observedAt,
+          metrics: signalMetricSnapshots.metrics,
+        })
+        .from(signalMetricSnapshots)
+        .innerJoin(signals, eq(signals.id, signalMetricSnapshots.signalId))
+        .innerJoin(sourceRuns, eq(sourceRuns.id, signals.sourceRunId))
+        .innerJoin(scanRuns, eq(scanRuns.id, sourceRuns.scanRunId))
+        .innerJoin(scanRequests, eq(scanRequests.id, scanRuns.scanRequestId))
+        .where(
+          and(
+            eq(signals.source, current.source),
+            eq(signals.sourceId, current.sourceId),
+            currentRun.projectId === null
+              ? eq(scanRuns.id, scanRunId)
+              : eq(scanRequests.projectId, currentRun.projectId),
+            lt(signalMetricSnapshots.observedAt, currentRun.createdAt),
+          ),
+        )
+        .orderBy(desc(signalMetricSnapshots.observedAt))
+        .limit(boundedLimit - 1);
+      result.push(...history.map((snapshot) => ({ ...snapshot, signalId: current.id })), {
+        signalId: current.id,
+        observedAt: current.observedAt,
+        metrics: current.metrics,
+      });
+    }
+    return result
+      .sort((left, right) => left.observedAt.getTime() - right.observedAt.getTime())
+      .slice(0, Math.min(metricSignals.length * boundedLimit, 500));
   }
 
   async upsertSignal(sourceRunId: string, input: Signal) {
@@ -561,6 +777,7 @@ export class ScanDataRepository {
     projectContextVersionId: string;
     opportunityId?: string;
     move: NextMove;
+    versionedMove: VersionedNextMove;
     whyNow: string;
     signalClass: SignalClass;
     independentSourceCount: number;
@@ -572,6 +789,45 @@ export class ScanDataRepository {
     publicId?: string;
   }) {
     const move = NextMoveSchema.parse(input.move);
+    const versionedMove = VersionedNextMoveSchema.parse(input.versionedMove);
+    if (versionedMove.action !== move.action) {
+      throw new Error("Versioned action details must match the persisted primary action");
+    }
+    if (versionedMove.validUntil !== move.validUntil) {
+      throw new Error("Versioned trend-window validity must match the primary move validity");
+    }
+    const [requestIdentity] = await this.db
+      .select({ projectId: scanRequests.projectId, normalizedUrl: scanRequests.normalizedUrl })
+      .from(scanRequests)
+      .where(eq(scanRequests.id, input.scanRequestId))
+      .limit(1);
+    if (!requestIdentity?.projectId) {
+      throw new Error("A draft requires an exact project and context identity");
+    }
+    await this.db.execute(
+      sql`SELECT id FROM projects WHERE id = ${requestIdentity.projectId} FOR UPDATE`,
+    );
+    const [projectIdentity] = await this.db
+      .select({ status: projects.status, normalizedUrl: projects.normalizedUrl })
+      .from(projects)
+      .where(eq(projects.id, requestIdentity.projectId))
+      .limit(1);
+    const [contextIdentity] = await this.db
+      .select({
+        projectId: projectContextVersions.projectId,
+        isCurrent: projectContextVersions.isCurrent,
+      })
+      .from(projectContextVersions)
+      .where(eq(projectContextVersions.id, input.projectContextVersionId))
+      .limit(1);
+    if (
+      projectIdentity?.status !== "ACTIVE" ||
+      projectIdentity.normalizedUrl !== requestIdentity.normalizedUrl ||
+      contextIdentity?.projectId !== requestIdentity.projectId ||
+      contextIdentity.isCurrent !== true
+    ) {
+      throw new Error("The project context changed before the draft could be persisted");
+    }
     const [created] = await this.db
       .insert(nextMoves)
       .values({
@@ -599,6 +855,13 @@ export class ScanDataRepository {
         limitations: input.limitations,
         promptVersion: input.promptVersion,
         scoreVersion: input.scoreVersion,
+        decisionContractVersion: versionedMove.contractVersion,
+        actionDetails: versionedMove.details,
+        trendWindow: versionedMove.trendWindow,
+        breakoutPotential: versionedMove.breakoutPotential,
+        generationLevel: versionedMove.generationLevel,
+        draftContent: versionedMove.draftContent ?? null,
+        proposalStale: false,
         validUntil: new Date(move.validUntil),
       })
       .onConflictDoNothing()

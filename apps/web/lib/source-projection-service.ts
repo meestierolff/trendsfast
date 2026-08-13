@@ -13,20 +13,21 @@ import { deploymentProvenance } from "./deployment-provenance";
  */
 export async function listPublicSourceStatuses(): Promise<PublicSourceStatusView[]> {
   const deployment = deploymentProvenance();
+  if (
+    deployment.deploymentEnvironment !== "production" ||
+    !deployment.releaseSha ||
+    !deployment.deploymentHost ||
+    !deployment.deploymentId
+  ) {
+    return projectPublicSourceStatuses([], deployment);
+  }
   try {
-    const records = await getRepositories().providerVerifications.latestProductionBySource();
-    return projectPublicSourceStatuses(
-      records.map((record) => ({
-        ...record,
-        deploymentEnvironment:
-          record.deploymentEnvironment === "production"
-            ? ("production" as const)
-            : record.deploymentEnvironment === "preview"
-              ? ("preview" as const)
-              : ("local" as const),
-      })),
-      deployment,
-    );
+    const records = await getRepositories().providerVerifications.latestPublicProductionBySource({
+      releaseSha: deployment.releaseSha,
+      deploymentHost: deployment.deploymentHost,
+      deploymentId: deployment.deploymentId,
+    });
+    return projectPublicSourceStatuses(records, deployment);
   } catch {
     return projectPublicSourceStatuses([], deployment);
   }

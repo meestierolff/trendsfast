@@ -72,6 +72,8 @@ describe("scan lifecycle", () => {
       language: "en",
       preferredChannels: ["x", "linkedin"],
       availableFormats: ["founder_text"],
+      generationLevel: "brief" as const,
+      requestedContentCapabilities: null,
     };
     expect(
       isSameIdempotentRequest(stored, {
@@ -104,6 +106,9 @@ describe("scan lifecycle", () => {
         api_key: "tf_live_prefix.secret",
         evidence_text: "private evidence",
         product_url: "https://example.com/private?secret=yes",
+        provider_cost_usd: 0.317,
+        margin_eur: "must-not-persist",
+        revenue: 123.456,
       }),
     ).toEqual({ source: "github_readme", campaign: "alpha" });
     expect(
@@ -125,6 +130,29 @@ describe("scan lifecycle", () => {
         email: "private@example.com",
       }),
     ).toEqual({ placement: "homepage_hero" });
+    expect(
+      sanitizeAnalyticsEventProperties("scan_review_required", {
+        state: "REVIEW_REQUIRED",
+        credentialMode: "managed",
+        costUsd: 0.317,
+        providerCostUsd: 0.113,
+        marginUsd: "must-not-persist",
+        revenueEur: 123.456,
+      }),
+    ).toEqual({ state: "REVIEW_REQUIRED", credentialMode: "managed" });
+  });
+
+  it("scans adversarial credential-shaped attribution values without overlapping retries", () => {
+    const longCredentialPrefix = `tf_test_${"a".repeat(100_000)}`;
+    expect(
+      sanitizeAnalyticsAttribution({
+        source: longCredentialPrefix,
+        utm_source: `${longCredentialPrefix}.secret`,
+      }),
+    ).toEqual({});
+    expect(sanitizeAnalyticsAttribution({ source: "community" })).toEqual({
+      source: "community",
+    });
   });
 
   it("redacts and bounds persisted provider fragments", () => {

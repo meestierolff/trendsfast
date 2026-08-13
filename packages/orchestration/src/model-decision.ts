@@ -1,4 +1,12 @@
-import type { ProjectContext, Signal } from "@trendsfast/schemas";
+import {
+  reconcileVersionedNextMove,
+  type ContentCapabilities,
+  type GenerationLevel,
+  type ProjectContext,
+  type Signal,
+  type SignalMetricSnapshot,
+  type VoiceProfile,
+} from "@trendsfast/schemas";
 import type { ProviderMeasurement } from "@trendsfast/providers";
 
 import { decideDeterministically } from "./decision";
@@ -22,8 +30,13 @@ export function createModelAssistedDecision(client: ModelClient) {
   return async (input: {
     context: ProjectContext;
     signals: Signal[];
+    snapshots?: SignalMetricSnapshot[];
     measurements: ProviderMeasurement[];
     coverage: Record<string, string>;
+    objective?: string;
+    generationLevel?: GenerationLevel;
+    contentCapabilities?: ContentCapabilities;
+    voiceProfile?: VoiceProfile;
     now: Date;
     deadline?: Date;
     reserveModelCost?: ReserveModelCost;
@@ -36,6 +49,17 @@ export function createModelAssistedDecision(client: ModelClient) {
           name: input.context.name,
           audience: input.context.audience,
           credibleTopics: input.context.credibleTopics,
+          ...(input.objective ? { objective: input.objective } : {}),
+          ...(input.voiceProfile
+            ? {
+                voiceProfile: {
+                  traits: input.voiceProfile.traits,
+                  preferred_phrases: input.voiceProfile.preferred_phrases,
+                  avoid_phrases: input.voiceProfile.avoid_phrases,
+                  sample_texts: input.voiceProfile.sample_texts,
+                },
+              }
+            : {}),
         },
         compactClusters: [
           {
@@ -59,21 +83,32 @@ export function createModelAssistedDecision(client: ModelClient) {
       if (proposal.action !== ranked.move.action) {
         throw new Error("Model synthesis changed the action selected by the quality floor");
       }
+      const refinedMove = {
+        ...ranked.move,
+        topic: proposal.topic,
+        angle: proposal.angle,
+        hook: proposal.hook,
+        outline: proposal.outline,
+        cta: proposal.cta,
+      };
+      const refinedVersionedMove = ranked.versionedMove
+        ? reconcileVersionedNextMove({
+            move: ranked.versionedMove,
+            prose: {
+              channel: ranked.versionedMove.channel,
+              topic: proposal.topic,
+              angle: proposal.angle,
+              format: ranked.versionedMove.format,
+              hook: proposal.hook,
+              outline: proposal.outline,
+              cta: proposal.cta,
+            },
+          })
+        : undefined;
       return {
         ...ranked,
-        move: {
-          action: ranked.move.action,
-          channel: ranked.move.channel,
-          topic: proposal.topic,
-          angle: proposal.angle,
-          format: ranked.move.format,
-          hook: proposal.hook,
-          outline: proposal.outline,
-          cta: proposal.cta,
-          priority: ranked.move.priority,
-          confidence: ranked.move.confidence,
-          validUntil: ranked.move.validUntil,
-        },
+        move: refinedMove,
+        ...(refinedVersionedMove ? { versionedMove: refinedVersionedMove } : {}),
         whyNow: proposal.whyNowSummary,
         limitations: [...new Set([...ranked.limitations, ...proposal.limitations])],
         evidenceSignalIds: [...ranked.evidenceSignalIds],

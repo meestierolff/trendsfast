@@ -43,12 +43,13 @@ price_id="$(printf '%s' "$price_list" | json_field 'json => json.data?.[0]?.id')
 if [[ -z "$price_id" ]]; then
   price_json="$(stripe_catalog "$mode" prices create \
     --product="$product_id" \
-    --currency=usd \
+    --currency=eur \
     --unit-amount=3900 \
+    --tax-behavior=exclusive \
     --recurring.interval=month \
     --lookup-key="$lookup_key" \
     -d "metadata[plan]=founder" \
-    --idempotency="trendsfast-sandbox-founder-price-v1" --confirm)"
+    --idempotency="trendsfast-sandbox-founder-price-eur-v1" --confirm)"
   price_id="$(printf '%s' "$price_json" | json_field 'json => json.id')"
 fi
 if [[ -z "$price_id" ]]; then

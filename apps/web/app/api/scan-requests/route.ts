@@ -1,5 +1,9 @@
 import { after, NextResponse } from "next/server";
-import { loadEnv, resolveProviderCosts } from "@trendsfast/config";
+import {
+  loadEnv,
+  resolveProviderCosts,
+  resolvePublicScanAdmissionPolicy,
+} from "@trendsfast/config";
 import { readBoundedJsonBody } from "../../../lib/bounded-json";
 import {
   analyticsSessionCookie,
@@ -21,6 +25,12 @@ export const maxDuration = 300;
 
 export async function POST(request: Request) {
   const env = loadEnv();
+  if (!env.PUBLIC_SCANS_ENABLED) {
+    return NextResponse.json(
+      { error: "Public scans are temporarily unavailable." },
+      { status: 503, headers: { "cache-control": "no-store" } },
+    );
+  }
   if (!isSameOrigin(request, env.APP_URL)) {
     return NextResponse.json(
       { error: "Cross-site scan requests are not accepted." },
@@ -33,6 +43,7 @@ export async function POST(request: Request) {
       env.APP_URL,
       process.env.VERCEL_ENV ?? process.env.TRENDSFAST_DEPLOYMENT_ENV,
       process.env.VERCEL === "1",
+      env.PROVIDER_CALLS_ENABLED,
     )
   ) {
     return NextResponse.json(
@@ -60,6 +71,17 @@ export async function POST(request: Request) {
       { status: 503 },
     );
   }
+  let admissionPolicy;
+  let costReservationUsd: number;
+  try {
+    admissionPolicy = resolvePublicScanAdmissionPolicy(env);
+    costReservationUsd = resolveProviderCosts(env).maximumProviderCostUsdPerScan;
+  } catch {
+    return NextResponse.json(
+      { error: "Public scans are temporarily unavailable." },
+      { status: 503, headers: { "cache-control": "no-store" } },
+    );
+  }
   const repositories = getRepositories();
   const address = clientAddress(request.headers);
   const analyticsSession =
@@ -79,10 +101,8 @@ export async function POST(request: Request) {
       {
         repository: repositories.scans,
         fingerprintPepper,
-        dailyLimit: env.PUBLIC_SCAN_DAILY_LIMIT,
-        globalDailyLimit: env.PUBLIC_SCAN_GLOBAL_DAILY_LIMIT,
-        globalDailyBudgetUsd: env.PUBLIC_SCAN_GLOBAL_DAILY_BUDGET_USD,
-        costReservationUsd: resolveProviderCosts(env).maximumProviderCostUsdPerScan,
+        ...admissionPolicy,
+        costReservationUsd,
         ...(analyticsSession
           ? { anonymousSessionHash: analyticsSession.anonymousSessionHash }
           : {}),

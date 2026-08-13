@@ -17,11 +17,16 @@ import {
 } from "drizzle-orm/pg-core";
 
 import type {
+  ContentCapabilities,
+  ContentCapabilityName,
+  ContextProvenance,
   ProjectContext,
+  ProjectEntityType,
   QueryPlan,
   SignalAuthor,
   SignalMetrics,
   SignalProvenance,
+  VoiceProfile,
 } from "@trendsfast/schemas";
 
 const timestamps = {
@@ -71,6 +76,18 @@ export const signalClassEnum = pgEnum("signal_class", [
   "INSUFFICIENT_SIGNAL",
 ]);
 export const nextMoveActionEnum = pgEnum("next_move_action", ["PUBLISH", "REPLY", "REMIX", "WAIT"]);
+export const generationLevelEnum = pgEnum("generation_level", ["brief", "draft"]);
+export const projectEntityTypeEnum = pgEnum("project_entity_type", [
+  "PRODUCT",
+  "BRAND",
+  "CREATOR_LED_BRAND",
+]);
+export const appMembershipRoleEnum = pgEnum("app_membership_role", ["OWNER", "MEMBER"]);
+export const projectClaimOutcomeEnum = pgEnum("project_claim_outcome", [
+  "CLAIMED",
+  "ALREADY_OWNER",
+  "OWNERSHIP_CONFLICT",
+]);
 export const nextMoveStateEnum = pgEnum("next_move_state", [
   "DRAFT",
   "APPROVED",
@@ -185,9 +202,12 @@ export const monitoringSubscriptionStateEnum = pgEnum("monitoring_subscription_s
 ]);
 export const monitoringRunStateEnum = pgEnum("monitoring_run_state", [
   "PROCESSING",
+  "RETRY_WAIT",
+  "QUARANTINED",
   "REVIEW_REQUIRED",
   "COMPLETED",
   "FAILED",
+  "DEAD_LETTER",
 ]);
 export const providerVerificationStateEnum = pgEnum("provider_verification_state", [
   "RUNNING",
@@ -221,6 +241,54 @@ export const projects = pgTable(
   ],
 );
 
+/** Supabase Auth identity mirrored into the server-side application boundary. */
+export const userProfiles = pgTable(
+  "user_profiles",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    authUserId: uuid("auth_user_id").notNull(),
+    email: varchar("email", { length: 254 }).notNull(),
+    displayName: varchar("display_name", { length: 200 }),
+    avatarUrl: text("avatar_url"),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("user_profiles_auth_user_uidx").on(table.authUserId),
+    index("user_profiles_email_idx").on(table.email),
+    check(
+      "user_profiles_email_normalized_check",
+      sql`${table.email} = lower(btrim(${table.email})) AND position('@' in ${table.email}) > 1`,
+    ),
+    check(
+      "user_profiles_avatar_url_check",
+      sql`${table.avatarUrl} IS NULL OR (length(${table.avatarUrl}) <= 2048 AND ${table.avatarUrl} ~ '^https?://')`,
+    ),
+  ],
+);
+
+/** Project ownership remains relational and is checked by every member repository query. */
+export const projectMemberships = pgTable(
+  "project_memberships",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    userProfileId: uuid("user_profile_id")
+      .notNull()
+      .references(() => userProfiles.id, { onDelete: "cascade" }),
+    role: appMembershipRoleEnum("role").default("OWNER").notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("project_memberships_project_user_uidx").on(table.projectId, table.userProfileId),
+    uniqueIndex("project_memberships_one_owner_uidx")
+      .on(table.projectId)
+      .where(sql`${table.role} = 'OWNER'`),
+    index("project_memberships_user_created_idx").on(table.userProfileId, table.createdAt),
+  ],
+);
+
 export const projectContextVersions = pgTable(
   "project_context_versions",
   {
@@ -238,6 +306,36 @@ export const projectContextVersions = pgTable(
     credibleTopics: jsonb("credible_topics").$type<string[]>().notNull(),
     assumptions: jsonb("assumptions").$type<string[]>().notNull(),
     context: jsonb("context").$type<ProjectContext>().notNull(),
+    entityType: projectEntityTypeEnum("entity_type")
+      .$type<ProjectEntityType>()
+      .default("PRODUCT")
+      .notNull(),
+    contextProvenance: jsonb("context_provenance")
+      .$type<ContextProvenance>()
+      .default({ observed_facts: [], inferred_context: [], assumptions: [] })
+      .notNull(),
+    voiceProfile: jsonb("voice_profile")
+      .$type<VoiceProfile>()
+      .default({
+        traits: [],
+        preferred_phrases: [],
+        avoid_phrases: [],
+        sample_texts: [],
+        sample_urls: [],
+      })
+      .notNull(),
+    contentCapabilities: jsonb("content_capabilities")
+      .$type<ContentCapabilities>()
+      .default({
+        founder_text: true,
+        founder_on_camera: false,
+        screen_recording: false,
+        ai_avatar: false,
+        carousel: false,
+        product_demo: false,
+        long_form: false,
+      })
+      .notNull(),
     sourceContentHash: varchar("source_content_hash", { length: 200 }),
     promptVersion: varchar("prompt_version", { length: 100 }),
     model: varchar("model", { length: 200 }),
@@ -267,7 +365,7 @@ export const apiKeys = pgTable(
     scopes: jsonb("scopes").$type<string[]>().default([]).notNull(),
     environment: apiKeyEnvironmentEnum("environment").notNull(),
     status: apiKeyStatusEnum("status").default("ACTIVE").notNull(),
-    rateLimitPerHour: integer("rate_limit_per_hour").default(20).notNull(),
+    rateLimitPerHour: integer("rate_limit_per_hour").notNull(),
     providerCostLimitUsd: numeric("provider_cost_limit_usd", {
       precision: 10,
       scale: 4,
@@ -344,6 +442,10 @@ export const scanRequests = pgTable(
     language: varchar("language", { length: 35 }),
     preferredChannels: jsonb("preferred_channels").$type<string[]>(),
     availableFormats: jsonb("available_formats").$type<string[]>(),
+    generationLevel: generationLevelEnum("generation_level").default("brief").notNull(),
+    requestedContentCapabilities: jsonb("requested_content_capabilities").$type<
+      ContentCapabilityName[]
+    >(),
     idempotencyKeyHash: varchar("idempotency_key_hash", { length: 200 }),
     requestPayloadHash: varchar("request_payload_hash", { length: 200 }),
     requesterFingerprintHash: varchar("requester_fingerprint_hash", { length: 200 }),
@@ -373,6 +475,11 @@ export const scanRequests = pgTable(
       .where(sql`${table.idempotencyKeyHash} IS NOT NULL`),
     index("scan_requests_queue_idx").on(table.state, table.submittedAt),
     index("scan_requests_project_created_idx").on(table.projectId, table.createdAt),
+    index("scan_requests_project_generation_created_idx").on(
+      table.projectId,
+      table.generationLevel,
+      table.createdAt,
+    ),
     index("scan_requests_api_cost_window_idx").on(table.apiKeyId, table.submittedAt),
     index("scan_requests_fingerprint_created_idx").on(
       table.requesterFingerprintHash,
@@ -684,6 +791,12 @@ export const nextMoves = pgTable(
     autoPublish: boolean("auto_publish").default(false).notNull(),
     promptVersion: varchar("prompt_version", { length: 100 }).notNull(),
     scoreVersion: varchar("score_version", { length: 100 }).notNull(),
+    decisionContractVersion: varchar("decision_contract_version", { length: 40 }),
+    actionDetails: jsonb("action_details").$type<Record<string, unknown>>(),
+    trendWindow: jsonb("trend_window").$type<Record<string, unknown>>(),
+    breakoutPotential: jsonb("breakout_potential").$type<Record<string, unknown>>(),
+    generationLevel: generationLevelEnum("generation_level").default("brief").notNull(),
+    draftContent: text("draft_content"),
     validUntil: timestamp("valid_until", { withTimezone: true }).notNull(),
     ...timestamps,
     approvedAt: timestamp("approved_at", { withTimezone: true }),
@@ -693,6 +806,7 @@ export const nextMoves = pgTable(
     uniqueIndex("next_moves_public_id_uidx").on(table.publicId),
     uniqueIndex("next_moves_scan_run_uidx").on(table.scanRunId),
     index("next_moves_scan_request_state_idx").on(table.scanRequestId, table.state),
+    index("next_moves_valid_until_state_idx").on(table.validUntil, table.state),
     check(
       "next_moves_priority_confidence_check",
       sql`${table.priority} BETWEEN 0 AND 100 AND ${table.confidence} BETWEEN 0 AND 1`,
@@ -700,6 +814,29 @@ export const nextMoves = pgTable(
     check("next_moves_sources_nonnegative_check", sql`${table.independentSourceCount} >= 0`),
     check("next_moves_review_version_positive_check", sql`${table.reviewVersion} > 0`),
     check("next_moves_never_autopublish_check", sql`${table.autoPublish} = false`),
+    check(
+      "next_moves_decision_contract_shape_check",
+      sql`(
+        ${table.decisionContractVersion} IS NULL
+        AND ${table.actionDetails} IS NULL
+        AND ${table.trendWindow} IS NULL
+        AND ${table.breakoutPotential} IS NULL
+        AND ${table.draftContent} IS NULL
+        AND ${table.proposalStale} = true
+      ) OR (
+        ${table.decisionContractVersion} = 'next-move-v1'
+        AND ${table.actionDetails} IS NOT NULL
+        AND ${table.actionDetails}->>'action' = ${table.action}::text
+        AND ${table.trendWindow} IS NOT NULL
+        AND ${table.trendWindow}->>'valid_until' IS NOT NULL
+        AND (${table.trendWindow}->>'valid_until')::timestamptz = ${table.validUntil}
+        AND ${table.breakoutPotential} IS NOT NULL
+      )`,
+    ),
+    check(
+      "next_moves_draft_content_check",
+      sql`(${table.draftContent} IS NOT NULL) = (${table.generationLevel} = 'draft' AND ${table.action} IN ('PUBLISH','REMIX'))`,
+    ),
     check(
       "next_moves_review_consistency_check",
       sql`${table.state} NOT IN ('APPROVED', 'READY') OR (${table.founderReviewed} = true AND ${table.approvedAt} IS NOT NULL)`,
@@ -854,6 +991,66 @@ export const deliveryTokens = pgTable(
     index("delivery_tokens_move_status_idx").on(table.nextMoveId, table.status),
     index("delivery_tokens_expiry_idx").on(table.status, table.expiresAt),
     check("delivery_tokens_expiry_check", sql`${table.expiresAt} > ${table.createdAt}`),
+  ],
+);
+
+/** Short-lived, single-use bridge from a delivered result to verified Supabase identity. */
+export const projectClaims = pgTable(
+  "project_claims",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    deliveryTokenId: uuid("delivery_token_id")
+      .notNull()
+      .references(() => deliveryTokens.id, { onDelete: "cascade" }),
+    claimSecretHash: varchar("claim_secret_hash", { length: 71 }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    consumedByUserProfileId: uuid("consumed_by_user_profile_id").references(() => userProfiles.id, {
+      onDelete: "restrict",
+    }),
+    consumptionOutcome: projectClaimOutcomeEnum("consumption_outcome"),
+    invalidatedAt: timestamp("invalidated_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("project_claims_secret_hash_uidx").on(table.claimSecretHash),
+    uniqueIndex("project_claims_delivery_open_uidx")
+      .on(table.deliveryTokenId)
+      .where(sql`${table.consumedAt} IS NULL AND ${table.invalidatedAt} IS NULL`),
+    index("project_claims_project_created_idx").on(table.projectId, table.createdAt),
+    index("project_claims_delivery_created_idx").on(table.deliveryTokenId, table.createdAt),
+    index("project_claims_expiry_idx").on(table.expiresAt),
+    check(
+      "project_claims_secret_hash_check",
+      sql`${table.claimSecretHash} ~ '^sha256:[0-9a-f]{64}$'`,
+    ),
+    check("project_claims_expiry_check", sql`${table.expiresAt} > ${table.createdAt}`),
+    check(
+      "project_claims_consumption_shape_check",
+      sql`(
+        ${table.consumedAt} IS NULL
+        AND ${table.consumedByUserProfileId} IS NULL
+        AND ${table.consumptionOutcome} IS NULL
+      ) OR (
+        ${table.consumedAt} IS NOT NULL
+        AND ${table.consumedByUserProfileId} IS NOT NULL
+        AND ${table.consumptionOutcome} IS NOT NULL
+        AND ${table.consumedAt} >= ${table.createdAt}
+      )`,
+    ),
+    check(
+      "project_claims_invalidation_check",
+      sql`(
+        ${table.invalidatedAt} IS NULL
+        OR (
+          ${table.consumedAt} IS NULL
+          AND ${table.invalidatedAt} >= ${table.createdAt}
+        )
+      )`,
+    ),
   ],
 );
 
@@ -1562,11 +1759,19 @@ export const monitoringRuns = pgTable(
     idempotencyKey: varchar("idempotency_key", { length: 255 }).notNull(),
     state: monitoringRunStateEnum("state").default("PROCESSING").notNull(),
     attempt: integer("attempt").default(1).notNull(),
+    maxAttempts: integer("max_attempts").default(3).notNull(),
+    retryBaseSeconds: integer("retry_base_seconds").default(300).notNull(),
     leaseOwner: varchar("lease_owner", { length: 100 }),
     leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
     claimedAt: timestamp("claimed_at", { withTimezone: true }).notNull(),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     failureCode: varchar("failure_code", { length: 100 }),
+    failureDisposition: varchar("failure_disposition", { length: 24 }).$type<
+      "KNOWN_RETRYABLE" | "KNOWN_TERMINAL" | "OUTCOME_UNKNOWN"
+    >(),
+    nextRetryAt: timestamp("next_retry_at", { withTimezone: true }),
+    quarantinedAt: timestamp("quarantined_at", { withTimezone: true }),
+    deadLetteredAt: timestamp("dead_lettered_at", { withTimezone: true }),
     ...timestamps,
   },
   (table) => [
@@ -1574,23 +1779,324 @@ export const monitoringRuns = pgTable(
     uniqueIndex("monitoring_runs_slot_uidx").on(table.monitoringSubscriptionId, table.scheduledFor),
     uniqueIndex("monitoring_runs_one_open_uidx")
       .on(table.monitoringSubscriptionId)
-      .where(sql`${table.state} = 'PROCESSING'`),
+      .where(sql`${table.state} IN ('PROCESSING','RETRY_WAIT')`),
     index("monitoring_runs_project_state_idx").on(table.projectId, table.state),
     index("monitoring_runs_lease_idx").on(table.state, table.leaseExpiresAt),
+    index("monitoring_runs_retry_idx").on(table.state, table.nextRetryAt),
     check("monitoring_runs_attempt_check", sql`${table.attempt} > 0`),
+    check(
+      "monitoring_runs_retry_policy_check",
+      sql`${table.maxAttempts} BETWEEN 1 AND 10 AND ${table.retryBaseSeconds} BETWEEN 30 AND 86400 AND ${table.attempt} <= ${table.maxAttempts}`,
+    ),
     check(
       "monitoring_runs_lease_check",
       sql`(${table.state} = 'PROCESSING') = (${table.leaseOwner} IS NOT NULL AND ${table.leaseExpiresAt} IS NOT NULL AND ${table.completedAt} IS NULL)`,
     ),
     check(
       "monitoring_runs_completion_check",
-      sql`${table.state} = 'PROCESSING' OR ${table.completedAt} IS NOT NULL`,
+      sql`(${table.state} IN ('PROCESSING','RETRY_WAIT')) = (${table.completedAt} IS NULL)`,
     ),
+    check(
+      "monitoring_runs_failure_shape_check",
+      sql`(
+        ${table.state} IN ('PROCESSING','REVIEW_REQUIRED','COMPLETED')
+        AND ${table.failureCode} IS NULL
+        AND ${table.failureDisposition} IS NULL
+        AND ${table.nextRetryAt} IS NULL
+        AND ${table.quarantinedAt} IS NULL
+        AND ${table.deadLetteredAt} IS NULL
+      ) OR (
+        ${table.state} = 'RETRY_WAIT'
+        AND ${table.failureCode} IS NOT NULL
+        AND ${table.failureDisposition} = 'KNOWN_RETRYABLE'
+        AND ${table.nextRetryAt} IS NOT NULL
+        AND ${table.quarantinedAt} IS NULL
+        AND ${table.deadLetteredAt} IS NULL
+      ) OR (
+        ${table.state} = 'QUARANTINED'
+        AND ${table.failureCode} IS NOT NULL
+        AND ${table.failureDisposition} = 'OUTCOME_UNKNOWN'
+        AND ${table.nextRetryAt} IS NULL
+        AND ${table.quarantinedAt} IS NOT NULL
+        AND ${table.deadLetteredAt} IS NULL
+      ) OR (
+        ${table.state} = 'FAILED'
+        AND ${table.failureCode} IS NOT NULL
+        AND ${table.failureDisposition} = 'KNOWN_TERMINAL'
+        AND ${table.nextRetryAt} IS NULL
+        AND ${table.quarantinedAt} IS NULL
+        AND ${table.deadLetteredAt} IS NULL
+      ) OR (
+        ${table.state} = 'DEAD_LETTER'
+        AND ${table.failureCode} IS NOT NULL
+        AND ${table.failureDisposition} = 'KNOWN_RETRYABLE'
+        AND ${table.nextRetryAt} IS NULL
+        AND ${table.quarantinedAt} IS NULL
+        AND ${table.deadLetteredAt} IS NOT NULL
+      )`,
+    ),
+  ],
+);
+
+export type OperationsAlertEvent =
+  | "MONITORING_FAILURE"
+  | "REVIEW_QUEUE_AGE"
+  | "PROVIDER_DEGRADATION"
+  | "COST_REJECTION"
+  | "STRIPE_WEBHOOK_FAILURE"
+  | "BACKUP_RETENTION_FAILURE";
+
+export const operationsAlertCodes = [
+  "MONITORING_RETRY_SCHEDULED",
+  "PROVIDER_OUTCOME_UNKNOWN",
+  "MONITORING_ATTEMPTS_EXHAUSTED",
+  "MONITORING_TERMINAL_FAILURE",
+  "DAILY_RECONCILIATION_FAILED",
+  "PROVIDER_DEGRADED",
+  "COST_REJECTED",
+  "STRIPE_WEBHOOK_PROJECTION_FAILED",
+  "BACKUP_RETENTION_HEARTBEAT_STALE",
+  "BACKUP_FAILED",
+  "RETENTION_FAILED",
+] as const;
+export type OperationsAlertCode = (typeof operationsAlertCodes)[number];
+
+export type OperationsAlertPayload = {
+  code?: OperationsAlertCode;
+  count?: number;
+  maxAgeSeconds?: number;
+};
+
+/**
+ * Durable, redacted operations notifications. Dedupe inputs are hashed before
+ * storage; the allowlisted payload deliberately cannot hold customer data.
+ */
+export const operationsAlertQueue = pgTable(
+  "operations_alert_queue",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    eventType: varchar("event_type", { length: 40 }).$type<OperationsAlertEvent>().notNull(),
+    severity: varchar("severity", { length: 12 }).$type<"warning" | "critical">().notNull(),
+    dedupeHash: varchar("dedupe_hash", { length: 71 }).notNull(),
+    payload: jsonb("payload").$type<OperationsAlertPayload>().default({}).notNull(),
+    state: varchar("state", { length: 16 })
+      .$type<"PENDING" | "SENDING" | "DELIVERED" | "DEAD_LETTER">()
+      .default("PENDING")
+      .notNull(),
+    attempt: integer("attempt").default(0).notNull(),
+    maxAttempts: integer("max_attempts").default(3).notNull(),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).defaultNow().notNull(),
+    leaseOwner: varchar("lease_owner", { length: 100 }),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    lastFailureCode: varchar("last_failure_code", { length: 100 }),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).defaultNow().notNull(),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("operations_alert_queue_dedupe_uidx").on(table.dedupeHash),
+    index("operations_alert_queue_due_idx").on(table.state, table.nextAttemptAt),
+    index("operations_alert_queue_event_occurred_idx").on(table.eventType, table.occurredAt),
+    check(
+      "operations_alert_queue_event_check",
+      sql`${table.eventType} IN ('MONITORING_FAILURE','REVIEW_QUEUE_AGE','PROVIDER_DEGRADATION','COST_REJECTION','STRIPE_WEBHOOK_FAILURE','BACKUP_RETENTION_FAILURE')`,
+    ),
+    check(
+      "operations_alert_queue_severity_check",
+      sql`${table.severity} IN ('warning','critical')`,
+    ),
+    check(
+      "operations_alert_queue_state_check",
+      sql`${table.state} IN ('PENDING','SENDING','DELIVERED','DEAD_LETTER')`,
+    ),
+    check(
+      "operations_alert_queue_attempt_check",
+      sql`${table.attempt} >= 0 AND ${table.maxAttempts} BETWEEN 1 AND 10 AND ${table.attempt} <= ${table.maxAttempts}`,
+    ),
+    check(
+      "operations_alert_queue_dedupe_check",
+      sql`length(${table.dedupeHash}) = 71 AND ${table.dedupeHash} LIKE 'sha256:%'`,
+    ),
+    check(
+      "operations_alert_queue_payload_check",
+      sql`jsonb_typeof(${table.payload}) = 'object'
+        AND (${table.payload} - ARRAY['code','count','maxAgeSeconds']::text[]) = '{}'::jsonb
+        AND (${table.payload}->'code' IS NULL OR (
+          jsonb_typeof(${table.payload}->'code') = 'string'
+          AND ${table.payload}->>'code' IN (
+            'MONITORING_RETRY_SCHEDULED',
+            'PROVIDER_OUTCOME_UNKNOWN',
+            'MONITORING_ATTEMPTS_EXHAUSTED',
+            'MONITORING_TERMINAL_FAILURE',
+            'DAILY_RECONCILIATION_FAILED',
+            'PROVIDER_DEGRADED',
+            'COST_REJECTED',
+            'STRIPE_WEBHOOK_PROJECTION_FAILED',
+            'BACKUP_RETENTION_HEARTBEAT_STALE',
+            'BACKUP_FAILED',
+            'RETENTION_FAILED'
+          )
+        ))
+        AND (${table.payload}->'count' IS NULL OR (
+          jsonb_typeof(${table.payload}->'count') = 'number'
+          AND (${table.payload}->>'count')::numeric BETWEEN 0 AND 1000000
+          AND trunc((${table.payload}->>'count')::numeric) = (${table.payload}->>'count')::numeric
+        ))
+        AND (${table.payload}->'maxAgeSeconds' IS NULL OR (
+          jsonb_typeof(${table.payload}->'maxAgeSeconds') = 'number'
+          AND (${table.payload}->>'maxAgeSeconds')::numeric BETWEEN 0 AND 31536000
+          AND trunc((${table.payload}->>'maxAgeSeconds')::numeric) = (${table.payload}->>'maxAgeSeconds')::numeric
+        ))`,
+    ),
+    check(
+      "operations_alert_queue_delivery_check",
+      sql`(
+        ${table.state} = 'SENDING'
+        AND ${table.leaseOwner} IS NOT NULL
+        AND ${table.leaseExpiresAt} IS NOT NULL
+        AND ${table.deliveredAt} IS NULL
+      ) OR (
+        ${table.state} = 'DELIVERED'
+        AND ${table.leaseOwner} IS NULL
+        AND ${table.leaseExpiresAt} IS NULL
+        AND ${table.deliveredAt} IS NOT NULL
+      ) OR (
+        ${table.state} IN ('PENDING','DEAD_LETTER')
+        AND ${table.leaseOwner} IS NULL
+        AND ${table.leaseExpiresAt} IS NULL
+        AND ${table.deliveredAt} IS NULL
+      )`,
+    ),
+  ],
+);
+
+/** One fenced reconciliation record per UTC day. */
+export const operationsReconciliationRuns = pgTable(
+  "operations_reconciliation_runs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
+    state: varchar("state", { length: 12 })
+      .$type<"RUNNING" | "COMPLETED" | "FAILED">()
+      .default("RUNNING")
+      .notNull(),
+    leaseOwner: varchar("lease_owner", { length: 100 }),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    summary: jsonb("summary").$type<Record<string, number>>().default({}).notNull(),
+    failureCode: varchar("failure_code", { length: 100 }),
+    startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("operations_reconciliation_period_uidx").on(table.periodStart),
+    index("operations_reconciliation_state_lease_idx").on(table.state, table.leaseExpiresAt),
+    check(
+      "operations_reconciliation_state_check",
+      sql`${table.state} IN ('RUNNING','COMPLETED','FAILED')`,
+    ),
+    check(
+      "operations_reconciliation_shape_check",
+      sql`(
+        ${table.state} = 'RUNNING'
+        AND ${table.leaseOwner} IS NOT NULL
+        AND ${table.leaseExpiresAt} IS NOT NULL
+        AND ${table.completedAt} IS NULL
+        AND ${table.failureCode} IS NULL
+      ) OR (
+        ${table.state} = 'COMPLETED'
+        AND ${table.leaseOwner} IS NULL
+        AND ${table.leaseExpiresAt} IS NULL
+        AND ${table.completedAt} IS NOT NULL
+        AND ${table.failureCode} IS NULL
+      ) OR (
+        ${table.state} = 'FAILED'
+        AND ${table.leaseOwner} IS NULL
+        AND ${table.leaseExpiresAt} IS NULL
+        AND ${table.completedAt} IS NOT NULL
+        AND ${table.failureCode} IS NOT NULL
+      )`,
+    ),
+  ],
+);
+
+/** Backup and retention jobs report only success/failure freshness. */
+export const operationsHealthChecks = pgTable(
+  "operations_health_checks",
+  {
+    checkType: varchar("check_type", { length: 16 }).$type<"BACKUP" | "RETENTION">().primaryKey(),
+    lastSucceededAt: timestamp("last_succeeded_at", { withTimezone: true }),
+    lastFailedAt: timestamp("last_failed_at", { withTimezone: true }),
+    failureCode: varchar("failure_code", { length: 100 }),
+    ...timestamps,
+  },
+  (table) => [
+    check("operations_health_checks_type_check", sql`${table.checkType} IN ('BACKUP','RETENTION')`),
+    check(
+      "operations_health_checks_failure_check",
+      sql`(${table.lastFailedAt} IS NULL AND ${table.failureCode} IS NULL) OR (${table.lastFailedAt} IS NOT NULL AND ${table.failureCode} IS NOT NULL)`,
+    ),
+  ],
+);
+
+/**
+ * Owner-only authority for managed customer-effect admission and retention.
+ * Runtime roles never receive table access; fixed-contract functions compare
+ * the opaque deployment revision and read these values internally.
+ */
+export const managedRuntimePolicy = pgTable(
+  "managed_runtime_policy",
+  {
+    id: boolean("id").default(true).primaryKey(),
+    revision: varchar("revision", { length: 200 }).notNull(),
+    publicScanDailyLimit: integer("public_scan_daily_limit").notNull(),
+    publicScanGlobalDailyLimit: integer("public_scan_global_daily_limit").notNull(),
+    publicScanGlobalDailyBudgetUsd: numeric("public_scan_global_daily_budget_usd", {
+      precision: 12,
+      scale: 6,
+    }).notNull(),
+    apiCreateRateLimitPerHour: integer("api_create_rate_limit_per_hour").notNull(),
+    apiStatusRateLimitPerHour: integer("api_status_rate_limit_per_hour").notNull(),
+    apiAuthFailureLimitPerHour: integer("api_auth_failure_limit_per_hour").notNull(),
+    maxProviderCostUsdPerScan: numeric("max_provider_cost_usd_per_scan", {
+      precision: 12,
+      scale: 6,
+    }).notNull(),
+    apiProviderCostLimitUsdPerHour: numeric("api_provider_cost_limit_usd_per_hour", {
+      precision: 12,
+      scale: 6,
+    }).notNull(),
+    scanRetentionDays: integer("scan_retention_days").notNull(),
+    policyVersion: integer("policy_version").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    check("managed_runtime_policy_singleton_check", sql`${table.id} = true`),
+    check(
+      "managed_runtime_policy_revision_check",
+      sql`length(${table.revision}) BETWEEN 32 AND 200 AND ${table.revision} ~ '^[A-Za-z0-9_-]+$'`,
+    ),
+    check(
+      "managed_runtime_policy_public_scan_check",
+      sql`${table.publicScanDailyLimit} > 0 AND ${table.publicScanGlobalDailyLimit} > 0 AND ${table.publicScanGlobalDailyBudgetUsd} > 0`,
+    ),
+    check(
+      "managed_runtime_policy_api_check",
+      sql`${table.apiCreateRateLimitPerHour} > 0 AND ${table.apiStatusRateLimitPerHour} > 0 AND ${table.apiAuthFailureLimitPerHour} > 0 AND ${table.maxProviderCostUsdPerScan} > 0 AND ${table.apiProviderCostLimitUsdPerHour} > 0`,
+    ),
+    check(
+      "managed_runtime_policy_retention_check",
+      sql`${table.scanRetentionDays} BETWEEN 1 AND 365`,
+    ),
+    check("managed_runtime_policy_version_check", sql`${table.policyVersion} > 0`),
   ],
 );
 
 export const databaseSchema = {
   projects,
+  userProfiles,
+  projectMemberships,
+  projectClaims,
   projectContextVersions,
   apiKeys,
   apiKeyManagementEvents,
@@ -1627,4 +2133,8 @@ export const databaseSchema = {
   founderUsageEvents,
   monitoringSubscriptions,
   monitoringRuns,
+  operationsAlertQueue,
+  operationsReconciliationRuns,
+  operationsHealthChecks,
+  managedRuntimePolicy,
 };

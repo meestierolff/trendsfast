@@ -3,7 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { OpsProviderVerificationControl } from "../../../components/ops-provider-verification-control";
-import { getRepositories } from "../../../lib/server-database";
+import { getOpsRepositories } from "../../../lib/server-database";
 import { getOpsPageAuthorization } from "../_auth";
 
 import "../ops.css";
@@ -17,7 +17,7 @@ export const dynamic = "force-dynamic";
 export default async function OpsSourcesPage() {
   const authorization = await getOpsPageAuthorization();
   if (!authorization) redirect("/ops");
-  const records = await getRepositories().providerVerifications.list({ limit: 200 });
+  const records = await getOpsRepositories().providerVerifications.list({ limit: 200 });
 
   return (
     <section className="ops-shell ops-detail-shell section-pad">

@@ -15,7 +15,6 @@ Build/source-status snapshot: `[SHA + LINK]`
 | Useful-move rate          |  `[x/y, % or insufficient]` | `I would use` + `used` / feedback responses; show response rate         |
 | Used rate                 |  `[x/y, % or insufficient]` | explicitly marked used / delivered scans eligible for outcome follow-up |
 | Evidence validity         |  `[x/y, % or insufficient]` | receipts resolving/supporting at delivery / receipts checked            |
-| Median provider cost      |       `[$ or insufficient]` | completed non-fixture scan ledger; state unknown-cost handling          |
 | Median founder review     | `[minutes or insufficient]` | completed review events with start/end definition                       |
 | `WAIT` rate               |  `[x/y, % or insufficient]` | reviewed WAIT results / delivered reviewed results                      |
 | Repeat scan requests      |  `[x/y, % or insufficient]` | explicit repeat requests / delivered scans eligible for another scan    |

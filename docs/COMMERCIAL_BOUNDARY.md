@@ -14,10 +14,8 @@ with fixture data or credentials they control.
   payment can never unlock managed or BYOK provider effects.
 - Managed and BYOK configuration contracts. No live mode silently invents an
   upstream price or a total provider-cost ceiling.
-- Conservative BYOK sample estimates in source. They apply only after the
-  self-hoster sets `BYOK_ACCEPT_CONSERVATIVE_COST_ESTIMATES=YES`; they are
-  examples to replace after checking current invoices, not TrendsFast Cloud
-  economics.
+- BYOK configuration requires the self-hoster's own current prices and ceilings.
+  The repository deliberately ships no dollar samples.
 
 ## What cloud operations add
 
@@ -28,11 +26,9 @@ positive provider/model prices, a per-scan ceiling, and a rolling-hour API-key
 provider-cost limit. Provider-reported actual cost replaces estimates when
 known; unknown actual cost stays conservatively reserved.
 
-Free hosted scans are bounded twice: one accepted submission per anonymous
-requester per rolling 24 hours by default, plus database-atomic UTC-day limits
-of 20 newly admitted scans and $5 reserved/actual provider spend. Exact
-requester+URL replays consume the requester allowance but reuse existing work
-and do not reserve global cost twice. When either global boundary is full the
+Free hosted scans are bounded by private requester, global-admission, and spend
+policy. Exact requester+URL replays consume the requester allowance but reuse
+existing work and do not reserve global cost twice. When a boundary is full the
 service returns `TODAYS_FOUNDER_REVIEW_CAPACITY_REACHED` and displays the
 launch-interest form.
 
@@ -41,7 +37,8 @@ launch-interest form.
 Managed production credentials, provider invoices and negotiated prices,
 production margins and internal budgets, production cost-ledger records,
 shared historical signals, customer/outcome data, and internal alerts or
-incident records do not belong in this repository or `.env.example`.
+incident records do not belong in this repository or `.env.example`. Local
+operators keep them under ignored, permission-restricted `.var/private/` state.
 
 The AGPL license is the repository's current license. License compliance,
 provider terms, privacy duties, and any hosted commercial use require qualified

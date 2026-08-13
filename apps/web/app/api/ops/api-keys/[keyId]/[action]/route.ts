@@ -1,5 +1,5 @@
 import { readBoundedJsonBody } from "../../../../../../lib/bounded-json";
-import { getRepositories } from "../../../../../../lib/server-database";
+import { getOpsRepositories } from "../../../../../../lib/server-database";
 import { authorizeOpsActionRequest } from "../../../_security";
 import {
   ApiKeyIdSchema,
@@ -39,7 +39,7 @@ export async function POST(
   }
   if (!bounded.ok) return json({ error: "The request body is not valid JSON." }, 400);
 
-  const repositories = getRepositories();
+  const repositories = getOpsRepositories();
   try {
     if (route.action === "revoke") {
       if (
