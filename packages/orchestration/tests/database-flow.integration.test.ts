@@ -18,6 +18,7 @@ import {
   storedSignal,
 } from "../src/database-store";
 import { decideDeterministically } from "../src/decision";
+import { deriveVersionedNextMove } from "../src/decision-contract";
 import { inferFixtureProjectContext } from "../src/context";
 import { createProviderRunner } from "../src/provider-runner";
 import { processScan } from "../src/state-machine";
@@ -51,14 +52,47 @@ databaseDescribe("persisted fixture scan", () => {
             if (!hackerNews || !github) {
               throw new Error("The actionable fixture requires two independent stored sources");
             }
+            const versionedMove = deriveVersionedNextMove({
+              action: "PUBLISH",
+              context: input.context,
+              topic: base.move.topic,
+              channel: base.move.channel,
+              format: base.move.format,
+              angle: base.move.angle,
+              hook: base.move.hook,
+              outline: base.move.outline,
+              cta: base.move.cta,
+              priority: 80,
+              confidence: 0.8,
+              signalClass: "CORROBORATED_SIGNAL",
+              saturation: base.saturation,
+              storedSignals: input.signals,
+              evidenceSignalIds: [hackerNews.id, github.id],
+              qualityReasons: [],
+              coverage: input.coverage,
+              ...(input.generationLevel ? { generationLevel: input.generationLevel } : {}),
+              ...(input.contentCapabilities
+                ? { contentCapabilities: input.contentCapabilities }
+                : {}),
+              ...(input.voiceProfile ? { voiceProfile: input.voiceProfile } : {}),
+              now: input.now,
+            });
             return {
               ...base,
               move: {
-                ...base.move,
-                action: "PUBLISH" as const,
-                priority: 80,
-                confidence: 0.8,
+                action: versionedMove.action,
+                channel: versionedMove.channel,
+                topic: versionedMove.topic,
+                angle: versionedMove.angle,
+                format: versionedMove.format,
+                hook: versionedMove.hook,
+                outline: versionedMove.outline,
+                cta: versionedMove.cta,
+                priority: versionedMove.priority,
+                confidence: versionedMove.confidence,
+                validUntil: versionedMove.validUntil,
               },
+              versionedMove,
               whyNow: "Two independent fixture sources support the bounded repository review test.",
               signalClass: "CORROBORATED_SIGNAL" as const,
               independentSourceCount: 2,
@@ -68,7 +102,7 @@ databaseDescribe("persisted fixture scan", () => {
             };
           }
         : decideDeterministically,
-      maxCostUsd: 0.25,
+      maxCostUsd: 0.317,
       maxDurationMs: 30_000,
     };
   }
@@ -286,6 +320,55 @@ databaseDescribe("persisted fixture scan", () => {
     expect(retried.state).toBe("READY");
     expect(retried.costUsd).toBe(0);
     expect((await repositories.costs.totalsForScan(processed.runId!)).actualCostUsd).toBe(0);
+  });
+
+  it("remaps bounded exact-identity metric history onto the current run signal", async () => {
+    const velocityUrl = `https://velocity-history-${process.pid}.example`;
+    const first = await createProcessedScan("velocity-first", velocityUrl);
+    const firstRun = first.detail.run;
+    if (!firstRun) throw new Error("The first fixture scan is missing its persisted run");
+    const firstSignals = await repositories.scanData.listSignalsForRun(firstRun.id);
+    const firstHackerNews = firstSignals.find(({ signal }) => signal.source === "hacker_news");
+    if (!firstHackerNews) throw new Error("The fixture history requires a Hacker News signal");
+
+    const second = await createProcessedScan("velocity-second", velocityUrl);
+    const secondRun = second.detail.run;
+    if (!secondRun) throw new Error("The second fixture scan is missing its persisted run");
+    const secondSignals = await repositories.scanData.listSignalsForRun(secondRun.id);
+    const currentHackerNewsRow = secondSignals.find(
+      ({ signal }) => signal.source === "hacker_news",
+    );
+    if (!currentHackerNewsRow) throw new Error("The current fixture requires a Hacker News signal");
+    const currentHackerNews = currentHackerNewsRow.signal;
+
+    // Fixture provider IDs deliberately include scanId. Persist a historical
+    // observation with the current external identity instead of weakening that
+    // fixture-wide isolation contract merely to exercise cross-run remapping.
+    const historicalObservedAt = firstRun.createdAt;
+    const historicalSignal = await repositories.scanData.upsertSignal(
+      firstHackerNews.sourceRun.id,
+      {
+        ...storedSignal(currentHackerNewsRow),
+        id: `velocity_history_${process.pid}`,
+        observedAt: historicalObservedAt.toISOString(),
+        metrics: { points: 2, comments: 1 },
+      },
+    );
+    await repositories.scanData.addMetricSnapshot({
+      signalId: historicalSignal.id,
+      observedAt: new Date(historicalObservedAt.getTime() - 6 * 60 * 60 * 1_000).toISOString(),
+      metrics: { points: 1, comments: 1 },
+    });
+    const history = await repositories.scanData.listHistoricalMetricSnapshotsForRun(secondRun.id);
+    const remapped = history.filter((snapshot) => snapshot.signalId === currentHackerNews.id);
+
+    expect(remapped.length).toBeGreaterThanOrEqual(2);
+    expect(remapped.every((snapshot) => snapshot.signalId === currentHackerNews.id)).toBe(true);
+    expect(remapped.map((snapshot) => snapshot.observedAt.getTime())).toEqual(
+      [...remapped]
+        .sort((left, right) => left.observedAt.getTime() - right.observedAt.getTime())
+        .map((snapshot) => snapshot.observedAt.getTime()),
+    );
   });
 
   it("serializes edit-and-approve, preserves immutable decision data, and delivers only current evidence", async () => {
@@ -753,6 +836,120 @@ databaseDescribe("persisted fixture scan", () => {
         validUntil: new Date(Date.now() + 86_400_000),
       }),
     ).rejects.toBeInstanceOf(ReviewVersionConflictError);
+  });
+
+  it("refuses to rebind project-scoped processing after the saved URL changes", async () => {
+    const admittedUrl = `https://processing-pin-${process.pid}.example/first`;
+    const changedUrl = `https://processing-pin-${process.pid}.example/second`;
+    cleanupUrls.add(changedUrl);
+    const project = await repositories.scanData.upsertProject({ url: admittedUrl });
+    const created = await repositories.scans.createRequest({
+      request: { product_url: admittedUrl },
+      origin: "FIXTURE",
+      projectId: project.id,
+    });
+    const store = createDatabaseProcessingStore(repositories);
+    const snapshot = await store.load(created.request.publicId);
+    if (!snapshot) throw new Error("The project-scoped processing fixture was not stored");
+    const claim = await store.claim(snapshot, new Date(Date.now() + 60_000));
+    await client.pool.query(
+      "UPDATE projects SET url = $1, normalized_url = $1, updated_at = now() WHERE id = $2",
+      [changedUrl, project.id],
+    );
+    const inferred = await inferFixtureProjectContext(admittedUrl, []);
+
+    await expect(
+      store.saveContext(
+        {
+          requestId: claim.requestId,
+          runId: claim.runId,
+          processingFence: claim.processingFence,
+        },
+        inferred,
+      ),
+    ).rejects.toThrow(/project URL changed/i);
+    const request = await client.pool.query<{ project_id: string }>(
+      "SELECT project_id FROM scan_requests WHERE id = $1",
+      [created.request.id],
+    );
+    expect(request.rows[0]?.project_id).toBe(project.id);
+    const projectsAtAdmittedUrl = await repositories.scanData.listProjects({ activeOnly: false });
+    expect(projectsAtAdmittedUrl.filter((item) => item.normalizedUrl === admittedUrl)).toEqual([]);
+  });
+
+  it("prevents an anonymous scan from replacing an existing project's saved context", async () => {
+    const existingUrl = `https://public-context-guard-${process.pid}.example/`;
+    cleanupUrls.add(existingUrl);
+    const project = await repositories.scanData.upsertProject({ url: existingUrl });
+    const originalContext = await inferFixtureProjectContext(existingUrl, []);
+    const saved = await repositories.scanData.addProjectContext({
+      projectId: project.id,
+      context: originalContext,
+      createdBy: "test:public-context-guard",
+    });
+    const created = await repositories.scans.createRequest({
+      request: { product_url: existingUrl },
+      origin: "PUBLIC_FORM",
+    });
+    const store = createDatabaseProcessingStore(repositories);
+    const snapshot = await store.load(created.request.publicId);
+    if (!snapshot) throw new Error("The anonymous processing fixture was not stored");
+    const claim = await store.claim(snapshot, new Date(Date.now() + 60_000));
+
+    await expect(
+      store.saveContext(
+        {
+          requestId: claim.requestId,
+          runId: claim.runId,
+          processingFence: claim.processingFence,
+        },
+        ProjectContextSchema.parse({
+          ...originalContext,
+          audience: "An unauthorized replacement audience",
+        }),
+      ),
+    ).rejects.toThrow(/cannot replace an existing project context/i);
+    const profile = await repositories.scanData.getCurrentProjectProfile(project.id);
+    expect(profile?.contextVersion.id).toBe(saved.id);
+    expect(profile?.contextVersion.context).toEqual(originalContext);
+    const request = await repositories.scans.getByPublicId(created.request.publicId);
+    expect(request?.projectId).toBeNull();
+  });
+
+  it("rejects legacy unbound API work before project resolution", async () => {
+    const existingUrl = `https://api-project-guard-${process.pid}.example/`;
+    cleanupUrls.add(existingUrl);
+    const project = await repositories.scanData.upsertProject({ url: existingUrl });
+    const originalContext = await inferFixtureProjectContext(existingUrl, []);
+    const saved = await repositories.scanData.addProjectContext({
+      projectId: project.id,
+      context: originalContext,
+      createdBy: "test:api-project-guard",
+    });
+    const publicId = `scan_api_guard_${process.pid}`;
+    const inserted = await client.pool.query<{ id: string }>(
+      `INSERT INTO scan_requests
+         (public_id, origin, state, submitted_url, normalized_url, request_payload_hash)
+       VALUES ($1, 'API', 'QUEUED', $2, $2, $3)
+       RETURNING id`,
+      [publicId, existingUrl, "a".repeat(64)],
+    );
+    const requestId = inserted.rows[0]?.id;
+    if (!requestId) throw new Error("The legacy API guard fixture was not inserted");
+
+    await expect(
+      repositories.scanData.resolveProjectForInferredContext({
+        scanRequestId: requestId,
+        context: ProjectContextSchema.parse({
+          ...originalContext,
+          audience: "An unauthorized API replacement audience",
+        }),
+      }),
+    ).rejects.toThrow(/missing its project binding/i);
+    const profile = await repositories.scanData.getCurrentProjectProfile(project.id);
+    expect(profile?.contextVersion.id).toBe(saved.id);
+    expect(profile?.contextVersion.context).toEqual(originalContext);
+    await client.pool.query("DELETE FROM scan_requests WHERE id = $1", [requestId]);
   });
 
   it("allows exactly one competing context correction across two drafts for the same project", async () => {

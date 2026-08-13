@@ -22,6 +22,7 @@ rollout, and rollback.
 | 013     | [Stripe readiness](013-stripe-readiness.md)                                   |
 | 014     | [Analytics and open metrics](014-analytics-and-open-metrics.md)               |
 | 015     | [Dogfood and launch](015-dogfood-and-launch.md)                               |
+| 016     | [Enhanced decision contract](016-enhanced-decision-contract.md)               |
 
 The status at the top of a feature file is authoritative only for that document.
 Release completion is evidenced in `docs/operations/LAUNCH_CHECKLIST.md` and an

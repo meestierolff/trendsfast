@@ -96,6 +96,7 @@ describe("project, query, and next-move API contracts", () => {
   it("keeps product_url as the only required request field", () => {
     expect(NextMoveRequestSchema.parse({ product_url: "https://example.com" })).toEqual({
       product_url: "https://example.com",
+      generation_level: "brief",
     });
     expect(() => NextMoveRequestSchema.parse({})).toThrow();
   });
@@ -114,6 +115,8 @@ describe("project, query, and next-move API contracts", () => {
       NextMoveReadyResponseSchema.parse({
         id: "move_fixture_1",
         status: "READY",
+        contract_version: "next-move-v1",
+        generation_level: "brief",
         project: {
           name: "Example",
           url: "https://example.com",
@@ -134,6 +137,60 @@ describe("project, query, and next-move API contracts", () => {
           priority: 86,
           confidence: 0.82,
           valid_until: "2026-08-13T12:00:00.000Z",
+        },
+        action_details: {
+          action: "PUBLISH",
+          content_type: "founder_text",
+          blueprint: {
+            content_premise: "Explain a product-specific distribution decision.",
+            audience_tension: "Technical founders need timely evidence without false precision.",
+            product_role: "Show a reproducible evidence framework.",
+            format_family: "founder_text",
+            format_basis: "PRODUCT_FIT",
+            hook_family: "tension to proof",
+            hook_variants: [
+              { style: "direct", text: "Here is the evidence rule." },
+              { style: "contrarian", text: "More signals do not guarantee a better decision." },
+              { style: "proof", text: "We tested the rule on stored evidence." },
+            ],
+            tone: ["specific"],
+            structure: ["Problem", "Evidence", "Decision"],
+            cta: "Share how you choose what to publish.",
+            asset_requirements: [],
+            channel_instructions: ["Keep the limitation visible."],
+            production_options: ["FOUNDER_TEXT"],
+          },
+          publish_by: "2026-08-13T12:00:00.000Z",
+        },
+        trend_window: {
+          state: "ACTIVE",
+          basis: "CORROBORATED_INFERENCE",
+          observed_since: observedAt,
+          last_confirmed_at: observedAt,
+          recommended_action_by: "2026-08-13T12:00:00.000Z",
+          valid_until: "2026-08-13T12:00:00.000Z",
+          recheck_at: "2026-08-12T12:00:00.000Z",
+          estimated_remaining_hours: { min: 12, max: 36 },
+          confidence: 0.7,
+          explanation: "Independent current sources support a rounded inferred range.",
+        },
+        breakout_potential: {
+          level: "medium",
+          basis: "EVIDENCE_GROUNDED",
+          factors: {
+            audience_relevance: 0.8,
+            timing: 0.7,
+            novelty: 0.6,
+            product_credibility: 0.75,
+            format_fit: 0.7,
+            saturation_risk: 0.25,
+          },
+          explanation: "A categorical evidence-grounded label, not a probability.",
+        },
+        freshness: {
+          state: "CURRENT",
+          evaluated_at: observedAt,
+          requires_new_scan: false,
         },
         why_now: {
           summary: "Independent sources show current interest.",

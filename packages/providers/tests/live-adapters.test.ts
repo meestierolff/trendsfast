@@ -72,12 +72,12 @@ describe("bounded live REST adapters", () => {
             DATAFORSEO_LOGIN: "test-login",
             DATAFORSEO_PASSWORD: "test-password",
             DATAFORSEO_GOOGLE_TRENDS_MODE: "live",
-            DATAFORSEO_ESTIMATED_COST_USD_PER_TASK: "0.05",
+            DATAFORSEO_ESTIMATED_COST_USD_PER_TASK: "7.111",
           },
           fetch,
           now: () => now,
         }),
-        budget: new ProviderBudget(1),
+        budget: new ProviderBudget(91.333),
         circuitBreaker: new ProviderCircuitBreaker(),
         deadline: new Date(now.getTime() + 10),
       },
@@ -124,7 +124,7 @@ describe("bounded live REST adapters", () => {
           resolveDns: async () => [{ address: "93.184.216.34", family: 4 }],
           now: () => now,
         }),
-        budget: new ProviderBudget(1),
+        budget: new ProviderBudget(91.333),
         circuitBreaker: new ProviderCircuitBreaker(),
         deadline: new Date(now.getTime() + 10),
       },
@@ -144,11 +144,11 @@ describe("bounded live REST adapters", () => {
       credentialMode: "managed",
       env: {
         XAI_MAX_TOOL_CALLS_PER_SCAN: "1",
-        XAI_ESTIMATED_COST_USD_PER_SEARCH: "0.1",
+        XAI_ESTIMATED_COST_USD_PER_SEARCH: "9.333",
         TAVILY_MAX_CREDITS_PER_SCAN: "1",
-        TAVILY_ESTIMATED_COST_USD_PER_CREDIT: "0.05",
+        TAVILY_ESTIMATED_COST_USD_PER_CREDIT: "7.111",
         YOUTUBE_MAX_SEARCHES_PER_SCAN: "1",
-        YOUTUBE_INTERNAL_QUOTA_VALUE_USD: "0.01",
+        YOUTUBE_INTERNAL_QUOTA_VALUE_USD: "3.777",
       },
     });
     expect(
@@ -185,12 +185,12 @@ describe("bounded live REST adapters", () => {
       expect(body).toHaveLength(1);
       expect(body[0]?.keywords).toHaveLength(5);
       return json({
-        cost: 0.004,
+        cost: 3.777,
         tasks: [
           {
             id: "task-live-1",
             status_code: 20000,
-            cost: 0.004,
+            cost: 3.777,
             result: [
               {
                 check_url: "https://trends.google.com/trends/explore?q=TrendsFast",
@@ -223,7 +223,7 @@ describe("bounded live REST adapters", () => {
           DATAFORSEO_LOGIN: "test-login",
           DATAFORSEO_PASSWORD: "test-password",
           DATAFORSEO_GOOGLE_TRENDS_MODE: "live",
-          DATAFORSEO_ESTIMATED_COST_USD_PER_TASK: "0.05",
+          DATAFORSEO_ESTIMATED_COST_USD_PER_TASK: "7.111",
         },
         fetch,
         now: () => now,
@@ -232,7 +232,7 @@ describe("bounded live REST adapters", () => {
 
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(result.calls).toBe(1);
-    expect(result.cost.actualUsd).toBe(0.004);
+    expect(result.cost.actualUsd).toBe(3.777);
     expect(result.measurements).toHaveLength(5);
     expect(validateProviderRunResult(adapter, result)).toEqual([]);
   });
@@ -250,7 +250,7 @@ describe("bounded live REST adapters", () => {
           `https://x.com/founder/status/190000000000000000${sequence}`,
           "https://example.com/not-x",
         ],
-        usage: { input_tokens: 80, output_tokens: 20, cost_usd: 0.002 },
+        usage: { input_tokens: 80, output_tokens: 20, cost_usd: 3.555 },
       });
     });
     const registry = createLiveProviderRegistry();
@@ -265,7 +265,7 @@ describe("bounded live REST adapters", () => {
         env: {
           XAI_API_KEY: "test-key",
           XAI_MODEL: "grok-test",
-          XAI_ESTIMATED_COST_USD_PER_SEARCH: "0.1",
+          XAI_ESTIMATED_COST_USD_PER_SEARCH: "9.333",
         },
         fetch,
         now: () => now,
@@ -276,7 +276,7 @@ describe("bounded live REST adapters", () => {
     expect(result.calls).toBe(2);
     expect(result.signals).toHaveLength(2);
     expect(result.signals.every((signal) => signal.textExcerpt === undefined)).toBe(true);
-    expect(result.cost.actualUsd).toBe(0.004);
+    expect(result.cost.actualUsd).toBe(7.11);
     expect(validateProviderRunResult(adapter, result)).toEqual([]);
   });
 
@@ -311,7 +311,7 @@ describe("bounded live REST adapters", () => {
         credentialMode: "byok",
         env: {
           TAVILY_API_KEY: "test-key",
-          TAVILY_ESTIMATED_COST_USD_PER_CREDIT: "0.05",
+          TAVILY_ESTIMATED_COST_USD_PER_CREDIT: "7.111",
         },
         fetch,
         now: () => now,
@@ -431,7 +431,7 @@ describe("bounded live REST adapters", () => {
       credentialMode: "byok",
       env: {
         YOUTUBE_API_KEY: "test-youtube",
-        YOUTUBE_INTERNAL_QUOTA_VALUE_USD: "0.01",
+        YOUTUBE_INTERNAL_QUOTA_VALUE_USD: "3.777",
       },
       fetch,
       now: () => now,
@@ -485,7 +485,8 @@ describe("bounded live REST adapters", () => {
       runtime,
     );
     expect(validateProviderRunResult(website, websiteResult)).toEqual([]);
-    expect(websiteTransport).toHaveBeenCalledTimes(1);
+    expect(websiteTransport).toHaveBeenCalledTimes(5);
+    expect(websiteResult.signals).toHaveLength(5);
     expect(fetch).not.toHaveBeenCalled();
 
     const manual = registry.get("manual")!;

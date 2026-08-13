@@ -30,7 +30,7 @@ describe("provider read-back verification", () => {
           },
         ],
       },
-      maximumCostUsd: 0.25,
+      maximumCostUsd: 0.317,
       deadline: new Date(now.getTime() + 1_000),
     });
 
@@ -56,7 +56,7 @@ describe("provider read-back verification", () => {
       adapter,
       context: createProviderContext({ credentialMode: "managed", env: {}, now: () => now }),
       request: { scanId: "verify_unconfigured", queries: [] },
-      maximumCostUsd: 0.25,
+      maximumCostUsd: 0.317,
       deadline: new Date(now.getTime() + 1_000),
     });
 
@@ -91,7 +91,7 @@ describe("provider read-back verification", () => {
         now: () => now,
       }),
       request: { scanId: "verify_youtube_health_failed", queries: [] },
-      maximumCostUsd: 0.25,
+      maximumCostUsd: 0.317,
       healthCheckEstimatedCostUsd: 0.01,
       healthCheckQuotaUnits: 1,
       deadline: new Date(now.getTime() + 1_000),
@@ -131,7 +131,7 @@ describe("provider read-back verification", () => {
           },
         ],
       },
-      maximumCostUsd: 0.25,
+      maximumCostUsd: 0.317,
       deadline: new Date(now.getTime() + 1_000),
     });
 
@@ -173,7 +173,7 @@ describe("provider read-back verification", () => {
           },
         ],
       },
-      maximumCostUsd: 0.25,
+      maximumCostUsd: 0.317,
       deadline: new Date(now.getTime() + 1_000),
     });
 
@@ -207,7 +207,7 @@ describe("provider read-back verification", () => {
         productUrl: "https://trendsfast.com",
         queries: [],
       },
-      maximumCostUsd: 0.25,
+      maximumCostUsd: 0.317,
       deadline: new Date(now.getTime() + 1_000),
     });
 
@@ -215,7 +215,13 @@ describe("provider read-back verification", () => {
       state: "VERIFIED",
       healthStatus: "HEALTHY",
       readbackVerified: true,
-      canonicalUrls: ["https://trendsfast.com/"],
+      canonicalUrls: [
+        "https://trendsfast.com/",
+        "https://trendsfast.com/features",
+        "https://trendsfast.com/product",
+        "https://trendsfast.com/pricing",
+        "https://trendsfast.com/use-cases",
+      ],
     });
   });
 
@@ -246,7 +252,7 @@ describe("provider read-back verification", () => {
       adapter,
       context,
       request,
-      maximumCostUsd: 0.25,
+      maximumCostUsd: 0.317,
       deadline: new Date(now.getTime() + 1_000),
     });
 

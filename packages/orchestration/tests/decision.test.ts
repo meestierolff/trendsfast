@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ProjectContext, Signal } from "@trendsfast/schemas";
+import type { ContentCapabilities, ProjectContext, Signal } from "@trendsfast/schemas";
 import { decideDeterministically } from "../src/decision";
 import { DOGFOOD_FIXTURES } from "../src/dogfood";
 
@@ -19,6 +19,16 @@ const context: ProjectContext = {
   availableFormats: ["founder_text"],
   credibleTopics: ["distribution research", "developer distribution"],
   assumptions: [],
+};
+
+const textOnlyCapabilities: ContentCapabilities = {
+  founder_text: true,
+  founder_on_camera: false,
+  screen_recording: false,
+  ai_avatar: false,
+  carousel: false,
+  product_demo: false,
+  long_form: false,
 };
 
 function signal(id: string, source: Signal["source"], url: string): Signal {
@@ -63,6 +73,69 @@ describe("deterministic decision engine", () => {
     });
     expect(draft.move.action).toBe("PUBLISH");
     expect(new Set(draft.evidenceSignalIds)).toEqual(new Set(["sig_hn", "sig_gh"]));
+  });
+
+  it("skips a disabled first format and keeps the decision and blueprint capability-aligned", async () => {
+    const draft = await decideDeterministically({
+      context: { ...context, availableFormats: ["screen_recording", "founder_text"] },
+      contentCapabilities: textOnlyCapabilities,
+      signals: [
+        signal("sig_hn", "hacker_news", "https://news.ycombinator.com/item?id=1"),
+        signal("sig_gh", "github", "https://github.com/example/research"),
+      ],
+      measurements: [],
+      coverage: {
+        website: "SUCCEEDED",
+        hacker_news: "SUCCEEDED",
+        github: "SUCCEEDED",
+        google_trends: "SUCCEEDED",
+      },
+      now: new Date("2026-08-11T12:00:00.000Z"),
+    });
+
+    expect(draft.move).toMatchObject({ action: "PUBLISH", format: "founder_text" });
+    expect(draft.versionedMove).toMatchObject({
+      format: "founder_text",
+      details: {
+        action: "PUBLISH",
+        content_type: "founder_text",
+        blueprint: {
+          format_family: "founder_text",
+          production_options: ["FOUNDER_TEXT"],
+        },
+      },
+    });
+  });
+
+  it("returns an explicit WAIT when no production capability supports an actionable format", async () => {
+    const draft = await decideDeterministically({
+      context: { ...context, availableFormats: ["screen_recording"] },
+      contentCapabilities: { ...textOnlyCapabilities, founder_text: false },
+      signals: [
+        signal("sig_hn", "hacker_news", "https://news.ycombinator.com/item?id=1"),
+        signal("sig_gh", "github", "https://github.com/example/research"),
+      ],
+      measurements: [],
+      coverage: {
+        website: "SUCCEEDED",
+        hacker_news: "SUCCEEDED",
+        github: "SUCCEEDED",
+        google_trends: "SUCCEEDED",
+      },
+      now: new Date("2026-08-11T12:00:00.000Z"),
+    });
+
+    expect(draft.move).toMatchObject({ action: "WAIT", format: "none" });
+    expect(draft.versionedMove).toMatchObject({
+      details: { action: "WAIT", failure_reasons: ["MISSING_COVERAGE"] },
+    });
+    const watchConditions =
+      draft.versionedMove?.details.action === "WAIT"
+        ? draft.versionedMove.details.watch_conditions.join(" ")
+        : "";
+    expect(watchConditions).toMatch(/enabling a saved production capability/i);
+    expect(watchConditions).not.toMatch(/source coverage/i);
+    expect(draft.limitations.join(" ")).toMatch(/no enabled production capability/i);
   });
 
   it("returns WAIT under inadequate critical coverage", async () => {
@@ -158,6 +231,49 @@ describe("deterministic decision engine", () => {
 
     expect(draft.signalClass).toBe("CORROBORATED_SIGNAL");
     expect(draft.whyNow).not.toMatch(/external Google Trends series/i);
+  });
+
+  it("uses only cluster-bound time-separated snapshots for measured internal velocity", async () => {
+    const current = signal(
+      "sig_velocity",
+      "hacker_news",
+      "https://news.ycombinator.com/item?id=77",
+    );
+    const draft = await decideDeterministically({
+      context,
+      signals: [current],
+      snapshots: [
+        {
+          signalId: "sig_velocity",
+          observedAt: "2026-08-11T06:00:00.000Z",
+          metrics: { points: 12 },
+        },
+        {
+          signalId: "sig_velocity",
+          observedAt: "2026-08-11T12:00:00.000Z",
+          metrics: { points: 90 },
+        },
+        {
+          signalId: "unrelated_signal",
+          observedAt: "2026-08-11T12:00:00.000Z",
+          metrics: { points: 9_999 },
+        },
+      ],
+      measurements: [],
+      coverage: {
+        website: "SUCCEEDED",
+        hacker_news: "SUCCEEDED",
+        google_trends: "SUCCEEDED",
+        x: "SUCCEEDED",
+      },
+      now: new Date("2026-08-11T12:00:00.000Z"),
+    });
+
+    expect(draft.signalClass).toBe("MEASURED_INTERNAL_VELOCITY");
+    expect(draft.versionedMove?.trendWindow).toMatchObject({
+      state: "RISING",
+      basis: "MEASURED_INTERNAL_VELOCITY",
+    });
   });
 
   it("never injects dogfood fixture moves into evidence-derived decisions", async () => {

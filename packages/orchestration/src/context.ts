@@ -1,8 +1,106 @@
-import { ProjectContextSchema, type ProjectContext, type Signal } from "@trendsfast/schemas";
+import {
+  CONSERVATIVE_CONTENT_CAPABILITIES,
+  ContextProvenanceSchema,
+  VoiceProfileSchema,
+  contentCapabilitiesFromNames,
+  ProjectContextSchema,
+  type ContentCapabilityName,
+  type ContentCapabilities,
+  type ContextProvenance,
+  type ProjectContext,
+  type ProjectEntityType,
+  type Signal,
+  type VoiceProfile,
+} from "@trendsfast/schemas";
 import { dogfoodFixtureForUrl } from "./dogfood";
+import { contentCapabilitiesForFormat } from "./content-capability";
 import type { ModelClient, ReserveModelCost, SettleModelCost } from "./synthesis";
 
 export const CONTEXT_PROMPT_VERSION = "product-context-v1";
+
+export type ProjectContextProfile = {
+  entityType: ProjectEntityType;
+  contextProvenance: ContextProvenance;
+  voiceProfile: VoiceProfile;
+  contentCapabilities: ContentCapabilities;
+};
+
+function inferredEntityType(context: ProjectContext): ProjectEntityType {
+  const category = context.category.toLowerCase();
+  if (category.includes("creator") || category.includes("founder-led")) {
+    return "CREATOR_LED_BRAND";
+  }
+  if (category.includes("brand") && !category.includes("product")) return "BRAND";
+  return "PRODUCT";
+}
+
+function inferredCapabilities(context: ProjectContext): ContentCapabilities {
+  const names = new Set<ContentCapabilityName>(["founder_text"]);
+  for (const raw of context.availableFormats) {
+    contentCapabilitiesForFormat(raw).forEach((name) => names.add(name));
+  }
+  const parsed = contentCapabilitiesFromNames([...names]);
+  return { ...CONSERVATIVE_CONTENT_CAPABILITIES, ...parsed };
+}
+
+export function deriveProjectContextProfile(
+  context: ProjectContext,
+  websiteSignals: readonly Signal[],
+): ProjectContextProfile {
+  const pages = websiteSignals.filter((signal) => signal.source === "website").slice(0, 12);
+  const observedFacts = pages.flatMap((signal) => {
+    const facts: ContextProvenance["observed_facts"] = [];
+    if (signal.title?.trim()) {
+      facts.push({ field: "page_title", value: signal.title.trim(), source_url: signal.url });
+    }
+    if (signal.textExcerpt?.trim()) {
+      facts.push({
+        field: "page_excerpt",
+        value: signal.textExcerpt.trim().slice(0, 1_500),
+        source_url: signal.url,
+      });
+    }
+    return facts;
+  });
+  const inferredCandidates: Array<[string, string]> = [
+    ["entity_type", inferredEntityType(context)],
+    ["category", context.category],
+    ["audience", context.audience],
+    ["problem", context.problem],
+    ["desired_outcome", context.desiredOutcome],
+    ["suitable_channels", context.suitableChannels.join(", ")],
+    ["available_formats", context.availableFormats.join(", ")],
+  ];
+  const inferredContext = inferredCandidates
+    .filter((entry) => entry[1].trim().length > 0)
+    .map(([field, value]) => ({
+      field,
+      value,
+      rationale:
+        "Inferred from bounded same-origin website evidence; this remains editable founder context, not a verified external fact.",
+    }));
+  const contextProvenance = ContextProvenanceSchema.parse({
+    observed_facts: observedFacts,
+    inferred_context: inferredContext,
+    assumptions: context.assumptions,
+  });
+  const voiceProfile = VoiceProfileSchema.parse({
+    traits: [],
+    preferred_phrases: [],
+    avoid_phrases: [],
+    sample_texts: pages
+      .map((signal) => signal.textExcerpt?.trim().slice(0, 1_500))
+      .filter((value): value is string => Boolean(value))
+      .slice(0, 12),
+    sample_urls: [...new Set(pages.map((signal) => signal.url))].slice(0, 12),
+  });
+  return {
+    entityType: inferredEntityType(context),
+    contextProvenance,
+    voiceProfile,
+    contentCapabilities: inferredCapabilities(context),
+  };
+}
 
 function titleName(title: string | undefined, hostname: string): string {
   const candidate = title?.split(/\s+[—|·-]\s+/)[0]?.trim();

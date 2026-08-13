@@ -208,7 +208,12 @@ function store(sourceStates: Partial<Record<ProviderSlug, string>> = {}) {
     }),
     reserveModelCost: vi.fn(async () => ({ created: true, projectedCostUsd: 0 })),
     settleModelCost: vi.fn(async () => ({ committedCostUsd: 0 })),
-    loadCollectedData: vi.fn(async () => ({ signals: [], measurements: [], coverage: {} })),
+    loadCollectedData: vi.fn(async () => ({
+      signals: [],
+      snapshots: [],
+      measurements: [],
+      coverage: {},
+    })),
     saveDraft: vi.fn(async () => {
       events.push("draft");
       return { nextMoveId: "move_1" };
@@ -236,7 +241,7 @@ describe("resumable scan state machine", () => {
         execute: vi.fn(async (provider, _work, budget) => accountedResult(provider, budget)),
       },
       decide: vi.fn(async () => waitDraft()),
-      maxCostUsd: 0.25,
+      maxCostUsd: 0.317,
       maxDurationMs: 60_000,
       now: () => new Date("2026-08-11T12:00:00.000Z"),
     });
@@ -253,6 +258,48 @@ describe("resumable scan state machine", () => {
       "draft",
       "review",
     ]);
+  });
+
+  it("honors requested channels and intersects legacy format preferences with saved capabilities", async () => {
+    const { fixture } = store();
+    vi.mocked(fixture.claim).mockResolvedValue({
+      requestId: "request_1",
+      runId: "run_1",
+      processingFence: "fence_1",
+      state: "RUNNING",
+      sourceStates: {},
+      context: { ...project, availableFormats: ["screen_recording", "founder_text"] },
+      contextVersionId: "context_1",
+      preferredChannels: ["linkedin"],
+      availableFormats: ["screen_recording", "founder_text"],
+      contentCapabilities: {
+        founder_text: true,
+        founder_on_camera: false,
+        screen_recording: false,
+        ai_avatar: false,
+        carousel: false,
+        product_demo: false,
+        long_form: false,
+      },
+    });
+    const decide = vi.fn(async (input) => {
+      expect(input.context.suitableChannels).toEqual(["linkedin"]);
+      expect(input.context.availableFormats).toEqual(["founder_text"]);
+      return waitDraft();
+    });
+
+    await processScan("scan_1", {
+      store: fixture,
+      inferContext: vi.fn(),
+      planQueries: vi.fn(() => plan),
+      providers: { order: [], estimate: vi.fn(() => 0), execute: vi.fn() },
+      decide,
+      maxCostUsd: 0.317,
+      maxDurationMs: 60_000,
+      now: () => new Date("2026-08-11T12:00:00.000Z"),
+    });
+
+    expect(decide).toHaveBeenCalledTimes(1);
   });
 
   it("uses one persisted ceiling for context, synthesis, and provider work", async () => {
@@ -282,7 +329,7 @@ describe("resumable scan state machine", () => {
         await input.reserveModelCost(modelReservation("synthesis", 0.03));
         return waitDraft();
       }),
-      maxCostUsd: 0.25,
+      maxCostUsd: 0.317,
       maxDurationMs: 60_000,
       now: () => new Date("2026-08-11T12:00:00.000Z"),
     });
@@ -292,13 +339,13 @@ describe("resumable scan state machine", () => {
       1,
       { requestId: "request_1", runId: "run_1", processingFence: "fence_1" },
       expect.objectContaining({ operation: "context", estimatedCostUsd: 0.04 }),
-      0.25,
+      0.317,
     );
     expect(fixture.reserveModelCost).toHaveBeenNthCalledWith(
       2,
       { requestId: "request_1", runId: "run_1", processingFence: "fence_1" },
       expect.objectContaining({ operation: "synthesis", estimatedCostUsd: 0.03 }),
-      0.25,
+      0.317,
     );
   });
 
@@ -311,7 +358,7 @@ describe("resumable scan state machine", () => {
       planQueries: vi.fn(() => plan),
       providers: { order: ["hacker_news", "github"], estimate: vi.fn(() => 0), execute },
       decide: vi.fn(async () => waitDraft("Wait")),
-      maxCostUsd: 0.25,
+      maxCostUsd: 0.317,
       maxDurationMs: 60_000,
       now: () => new Date("2026-08-11T12:00:00.000Z"),
     });
@@ -333,7 +380,7 @@ describe("resumable scan state machine", () => {
         ),
       },
       decide: vi.fn(async () => waitDraft("Budget-limited wait")),
-      maxCostUsd: 0.25,
+      maxCostUsd: 0.317,
       maxDurationMs: 60_000,
       now: () => new Date("2026-08-11T12:00:00.000Z"),
     });
@@ -361,7 +408,7 @@ describe("resumable scan state machine", () => {
         ),
       },
       decide: vi.fn(async () => waitDraft("Conservative budget wait")),
-      maxCostUsd: 0.25,
+      maxCostUsd: 0.293,
       maxDurationMs: 60_000,
       now: () => new Date("2026-08-11T12:00:00.000Z"),
     });
@@ -385,7 +432,7 @@ describe("resumable scan state machine", () => {
       planQueries: vi.fn(),
       providers: { order: [], estimate: vi.fn(), execute: vi.fn() },
       decide: vi.fn(),
-      maxCostUsd: 0.25,
+      maxCostUsd: 0.317,
       maxDurationMs: 60_000,
     });
     expect(output.state).toBe("REVIEW_REQUIRED");
@@ -402,7 +449,7 @@ describe("resumable scan state machine", () => {
         planQueries: vi.fn(() => plan),
         providers: { order: ["hacker_news"], estimate: vi.fn(() => 0), execute: vi.fn() },
         decide: vi.fn(),
-        maxCostUsd: 0.25,
+        maxCostUsd: 0.317,
         maxDurationMs: 60_000,
         now: () => times.shift() ?? new Date("2026-08-11T12:01:01.000Z"),
       }),
@@ -433,7 +480,7 @@ describe("resumable scan state machine", () => {
         planQueries: vi.fn(() => plan),
         providers: { order: ["website"], estimate: vi.fn(() => 0), execute },
         decide: vi.fn(async () => waitDraft()),
-        maxCostUsd: 0.25,
+        maxCostUsd: 0.317,
         maxDurationMs: 60_000,
         now: () => new Date("2026-08-11T12:00:00.000Z"),
       }),
@@ -465,7 +512,7 @@ describe("resumable scan state machine", () => {
         planQueries: vi.fn(() => plan),
         providers: { order: ["hacker_news"], estimate: vi.fn(() => 0), execute: vi.fn() },
         decide: vi.fn(async () => waitDraft()),
-        maxCostUsd: 0.25,
+        maxCostUsd: 0.317,
         maxDurationMs: 60_000,
         now: () => new Date("2026-08-11T12:00:00.000Z"),
       }),
@@ -500,7 +547,7 @@ describe("resumable scan state machine", () => {
         planQueries: vi.fn(() => plan),
         providers: { order: ["hacker_news", "github"], estimate: vi.fn(() => 0), execute },
         decide: vi.fn(async () => waitDraft()),
-        maxCostUsd: 0.25,
+        maxCostUsd: 0.317,
         maxDurationMs: 60_000,
         now: () => new Date("2026-08-11T12:00:00.000Z"),
       }),
@@ -533,7 +580,7 @@ describe("resumable scan state machine", () => {
         execute: vi.fn(async (provider, _work, budget) => accountedResult(provider, budget)),
       },
       decide: vi.fn(async () => waitDraft()),
-      maxCostUsd: 0.25,
+      maxCostUsd: 0.317,
       maxDurationMs: 60_000,
       now: () => new Date("2026-08-11T12:00:00.000Z"),
     });
@@ -562,7 +609,7 @@ describe("resumable scan state machine", () => {
         planQueries: vi.fn(() => plan),
         providers: { order: ["hacker_news", "github"], estimate: vi.fn(() => 0.02), execute },
         decide: vi.fn(async () => waitDraft()),
-        maxCostUsd: 0.25,
+        maxCostUsd: 0.317,
         maxDurationMs: 60_000,
         now: () => new Date("2026-08-11T12:00:00.000Z"),
       }),
@@ -595,7 +642,7 @@ describe("resumable scan state machine", () => {
         planQueries: vi.fn(() => plan),
         providers: { order: [], estimate: vi.fn(() => 0), execute: vi.fn() },
         decide: vi.fn(async () => waitDraft()),
-        maxCostUsd: 0.25,
+        maxCostUsd: 0.317,
         maxDurationMs: 60_000,
         now: () => new Date("2026-08-11T12:00:00.000Z"),
       }),

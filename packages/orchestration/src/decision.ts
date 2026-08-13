@@ -1,4 +1,11 @@
-import type { ProjectContext, Signal } from "@trendsfast/schemas";
+import type {
+  ContentCapabilities,
+  GenerationLevel,
+  ProjectContext,
+  Signal,
+  SignalMetricSnapshot,
+  VoiceProfile,
+} from "@trendsfast/schemas";
 import type { ProviderMeasurement } from "@trendsfast/providers";
 import {
   clusterSignals,
@@ -13,8 +20,10 @@ import {
   type TrendSignalClass,
 } from "@trendsfast/scoring";
 import type { DecisionDraft } from "./state-machine";
+import { deriveVersionedNextMove } from "./decision-contract";
+import { formatHasEnabledCapability } from "./content-capability";
 
-export const DETERMINISTIC_PROMPT_VERSION = "deterministic-ranking-v2";
+export const DETERMINISTIC_PROMPT_VERSION = "deterministic-ranking-v3";
 
 function words(values: string[]): string[] {
   return values.flatMap((value) => value.split(/\s+/)).filter(Boolean);
@@ -93,6 +102,17 @@ function saturationLabel(value: number): DecisionDraft["saturation"] {
   return "high";
 }
 
+function selectedProductionFormat(input: {
+  context: ProjectContext;
+  contentCapabilities?: ContentCapabilities;
+}): string | undefined {
+  const capabilities = input.contentCapabilities;
+  if (!capabilities) return input.context.availableFormats[0];
+  return input.context.availableFormats.find((format) =>
+    formatHasEnabledCapability(format, capabilities),
+  );
+}
+
 function coverageLimitations(coverage: Record<string, string>): string[] {
   return Object.entries(coverage)
     .filter(([, status]) => !["SUCCESS", "SUCCEEDED"].includes(status))
@@ -123,10 +143,16 @@ function selectEvidenceSignals(cluster: SignalCluster | undefined, maximum = 4):
 export async function decideDeterministically(input: {
   context: ProjectContext;
   signals: Signal[];
+  snapshots?: SignalMetricSnapshot[];
   measurements: ProviderMeasurement[];
   coverage: Record<string, string>;
+  objective?: string;
+  generationLevel?: GenerationLevel;
+  contentCapabilities?: ContentCapabilities;
+  voiceProfile?: VoiceProfile;
   now: Date;
 }): Promise<DecisionDraft> {
+  const productionFormat = selectedProductionFormat(input);
   const clusters = clusterSignals(input.signals.map(toScoringSignal));
   const evaluated = clusters
     .map((cluster) => {
@@ -136,12 +162,25 @@ export async function decideDeterministically(input: {
       const truth = classifyTrendTruth({
         signals: cluster.signals,
         measurements: measurement,
+        snapshots: (input.snapshots ?? [])
+          .filter((snapshot) => cluster.memberIds.includes(snapshot.signalId))
+          .map((snapshot) => ({
+            signalId: snapshot.signalId,
+            observedAt: snapshot.observedAt,
+            metrics: Object.fromEntries(
+              Object.entries(snapshot.metrics).filter(
+                (entry): entry is [string, number] => typeof entry[1] === "number",
+              ),
+            ),
+          })),
         now: input.now,
         strengthBySignalId: Object.fromEntries(cluster.memberIds.map((id) => [id, 0.9])),
       });
+      const classifiedAction = actionFor(cluster, truth.signalClass);
+      const productionRequired = classifiedAction === "PUBLISH" || classifiedAction === "REMIX";
       const components = deriveOpportunityScoreComponents({
         cluster,
-        audienceTerms: words([input.context.audience]),
+        audienceTerms: words([input.context.audience, input.objective ?? ""]),
         productTerms: words([
           input.context.category,
           input.context.problem,
@@ -150,13 +189,12 @@ export async function decideDeterministically(input: {
         credibleTerms: words([...input.context.credibleTopics, ...input.context.credibleClaims]),
         signalClass: truth.signalClass,
         now: input.now,
-        formatFit: 0.8,
+        formatFit: productionFormat ? 0.8 : productionRequired ? 0 : 0.7,
       });
       const score = scoreOpportunityV1(components);
-      const requestedAction = actionFor(cluster, truth.signalClass);
-      const quality = enforceActionQualityFloor({
+      const baseQuality = enforceActionQualityFloor({
         id: cluster.id,
-        requestedAction,
+        requestedAction: classifiedAction,
         priority: score.priority,
         audienceFit: components.audienceFit,
         productRelevance: components.productRelevance,
@@ -174,6 +212,15 @@ export async function decideDeterministically(input: {
         coverageAdequate: adequateCoverage(input.coverage),
         recent: components.remainingWindow >= 0.35,
       });
+      const quality =
+        productionRequired && !productionFormat
+          ? {
+              action: "WAIT" as const,
+              passed: false,
+              reasons: ["NO_ENABLED_PRODUCTION_CAPABILITY_MATCHES_FORMAT"],
+            }
+          : baseQuality;
+      const requestedAction = classifiedAction;
       return { cluster, truth, components, score, requestedAction, quality };
     })
     .sort(
@@ -188,15 +235,20 @@ export async function decideDeterministically(input: {
   const fallback = evaluated[0];
   const action: NextMoveAction = winner?.quality.action ?? "WAIT";
   const chosen = winner ?? fallback;
+  const capabilityBlockedProduction =
+    !productionFormat &&
+    evaluated.some((candidate) =>
+      candidate.quality.reasons.includes("NO_ENABLED_PRODUCTION_CAPABILITY_MATCHES_FORMAT"),
+    );
   const topic =
     chosen?.cluster.representativeTitle ?? `No credible ${input.context.category} opportunity yet`;
   const angle =
     action === "WAIT"
       ? `Hold distribution until an independent, current signal supports a claim ${input.context.name} can credibly make.`
-      : `Translate the evidence into a product-specific ${input.context.credibleTopics[0] ?? input.context.category} insight for ${input.context.audience}.`;
+      : `Translate the evidence into a product-specific ${input.context.credibleTopics[0] ?? input.context.category} insight for ${input.context.audience}${input.objective ? `, in service of the saved objective: ${input.objective}` : ""}.`;
   const effectiveAction = action;
   const channel = input.context.suitableChannels[0] ?? "x";
-  const format = input.context.availableFormats[0] ?? "founder_text";
+  const format = effectiveAction === "REPLY" ? "reply" : (productionFormat ?? "none");
   const truth = chosen?.truth ?? {
     signalClass: "INSUFFICIENT_SIGNAL" as const,
     independentSourceCount: 0,
@@ -206,50 +258,87 @@ export async function decideDeterministically(input: {
   const limitations = [
     ...coverageLimitations(input.coverage),
     ...(!winner ? ["No candidate passed the deterministic action quality floor."] : []),
+    ...(capabilityBlockedProduction
+      ? ["No enabled production capability matched the requested or saved formats."]
+      : []),
     ...(input.signals.some((signal) => signal.provenance.provider.startsWith("fixture:"))
       ? ["Deterministic fixture evidence is not live provider evidence."]
       : []),
   ];
-  const windowHours = effectiveAction === "REPLY" ? 12 : effectiveAction === "WAIT" ? 72 : 48;
   const evidenceSignals = selectEvidenceSignals(
     effectiveAction === "WAIT" ? chosen?.cluster : winner?.cluster,
   );
+  if (effectiveAction === "REPLY") {
+    evidenceSignals.sort((left, right) => {
+      const leftEligible = ["x", "hacker_news"].includes(left.source) ? 1 : 0;
+      const rightEligible = ["x", "hacker_news"].includes(right.source) ? 1 : 0;
+      return rightEligible - leftEligible;
+    });
+  }
   const evidenceSignalIds = evidenceSignals.map((signal) => signal.id);
   const evidenceIndependentSourceCount = new Set(evidenceSignals.map(sourceIndependenceKey)).size;
   const score = chosen?.score;
+  const hook =
+    effectiveAction === "WAIT"
+      ? "Do not force a move from thin evidence."
+      : `The ${input.context.category} lesson most founders miss: evidence must change the decision.`;
+  const outline =
+    effectiveAction === "WAIT"
+      ? [
+          "Keep the strongest query cluster.",
+          "Wait for independent corroboration or measured demand.",
+          "Re-run before publishing the held draft.",
+        ]
+      : [
+          "Open with the product-specific tension.",
+          "Show the strongest independent evidence receipts.",
+          "Give one useful framework or worked example.",
+          "Close with a low-pressure next step.",
+        ];
+  const cta =
+    effectiveAction === "WAIT"
+      ? "Re-check when the evidence window changes."
+      : "Invite one relevant founder to compare the framework with their situation.";
+  const move = deriveVersionedNextMove({
+    action: effectiveAction,
+    context: input.context,
+    topic,
+    channel,
+    format,
+    angle,
+    hook,
+    outline,
+    cta,
+    priority: effectiveAction === "WAIT" ? 0 : (score?.priority ?? 50),
+    confidence:
+      effectiveAction === "WAIT" ? 0.88 : Math.min(0.9, 0.55 + (score?.rawScore ?? 0) * 0.45),
+    signalClass: truth.signalClass,
+    saturation: saturationLabel(chosen?.components.saturation ?? 0),
+    ...(chosen?.components ? { components: chosen.components } : {}),
+    storedSignals: input.signals,
+    evidenceSignalIds,
+    qualityReasons,
+    coverage: input.coverage,
+    ...(input.generationLevel ? { generationLevel: input.generationLevel } : {}),
+    ...(input.contentCapabilities ? { contentCapabilities: input.contentCapabilities } : {}),
+    ...(input.voiceProfile ? { voiceProfile: input.voiceProfile } : {}),
+    now: input.now,
+  });
   return {
     move: {
-      action: effectiveAction,
-      channel,
-      topic,
-      angle,
-      format,
-      hook:
-        effectiveAction === "WAIT"
-          ? "Do not force a move from thin evidence."
-          : `The ${input.context.category} lesson most founders miss: evidence must change the decision.`,
-      outline:
-        effectiveAction === "WAIT"
-          ? [
-              "Keep the strongest query cluster.",
-              "Wait for independent corroboration or measured demand.",
-              "Re-run before publishing the held draft.",
-            ]
-          : [
-              "Open with the product-specific tension.",
-              "Show the strongest independent evidence receipts.",
-              "Give one useful framework or worked example.",
-              "Close with a low-pressure next step.",
-            ],
-      cta:
-        effectiveAction === "WAIT"
-          ? "Re-check when the evidence window changes."
-          : "Invite one relevant founder to compare the framework with their situation.",
-      priority: effectiveAction === "WAIT" ? 0 : (score?.priority ?? 50),
-      confidence:
-        effectiveAction === "WAIT" ? 0.88 : Math.min(0.9, 0.55 + (score?.rawScore ?? 0) * 0.45),
-      validUntil: new Date(input.now.getTime() + windowHours * 3_600_000).toISOString(),
+      action: move.action,
+      channel: move.channel,
+      topic: move.topic,
+      angle: move.angle,
+      format: move.format,
+      hook: move.hook,
+      outline: move.outline,
+      cta: move.cta,
+      priority: move.priority,
+      confidence: move.confidence,
+      validUntil: move.validUntil,
     },
+    versionedMove: move,
     whyNow: truth.reason,
     signalClass: truth.signalClass,
     independentSourceCount: evidenceIndependentSourceCount,

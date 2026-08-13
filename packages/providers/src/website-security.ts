@@ -15,6 +15,7 @@ export type WebsiteFetchErrorCode =
   | "NON_PUBLIC_ADDRESS"
   | "REDIRECT_LIMIT"
   | "INVALID_REDIRECT"
+  | "CROSS_ORIGIN_REDIRECT"
   | "HTTP_STATUS"
   | "CONTENT_TYPE"
   | "RESPONSE_TOO_LARGE"
@@ -382,6 +383,8 @@ export type SafeWebsiteFetchOptions = {
   resolve: DnsResolver;
   transport?: WebsiteTransport;
   limits?: Partial<WebsiteFetchLimits>;
+  /** Exact origin that every request and redirect hop must retain. */
+  allowedOrigin?: string;
   /** Optional outer execution capability; aborting it closes the pinned transport. */
   signal?: AbortSignal;
 };
@@ -465,6 +468,14 @@ export async function safeFetchWebsite(
   });
   let redirects = 0;
   let current: string | URL = input;
+  let allowedOrigin: string | undefined;
+  if (options.allowedOrigin) {
+    try {
+      allowedOrigin = new URL(options.allowedOrigin).origin;
+    } catch {
+      throw new WebsiteFetchError("INVALID_URL", "Allowed website origin is invalid");
+    }
+  }
 
   try {
     if (limits.timeoutMs <= 0 || controller.signal.aborted) {
@@ -476,6 +487,12 @@ export async function safeFetchWebsite(
         validatePublicHttpUrl(current, options.resolve),
         deadline,
       ]);
+      if (allowedOrigin && validated.url.origin !== allowedOrigin) {
+        throw new WebsiteFetchError(
+          "CROSS_ORIGIN_REDIRECT",
+          "Website navigation left the approved origin",
+        );
+      }
       let response: Response;
       try {
         response = await Promise.race([
@@ -508,14 +525,22 @@ export async function safeFetchWebsite(
         if (!location) {
           throw new WebsiteFetchError("INVALID_REDIRECT", "Website redirect has no location");
         }
+        let redirected: URL;
         try {
-          current = new URL(location, validated.url);
+          redirected = new URL(location, validated.url);
         } catch {
           throw new WebsiteFetchError(
             "INVALID_REDIRECT",
             "Website returned an invalid redirect URL",
           );
         }
+        if (allowedOrigin && redirected.origin !== allowedOrigin) {
+          throw new WebsiteFetchError(
+            "CROSS_ORIGIN_REDIRECT",
+            "Website redirect left the approved origin",
+          );
+        }
+        current = redirected;
         redirects += 1;
         continue;
       }
@@ -589,9 +614,84 @@ export type ExtractedWebsiteDocument = {
   url: string;
   title: string;
   description?: string;
+  openGraph: string[];
+  structuredData: string[];
+  headings: string[];
+  primaryCtas: string[];
+  faqPrompts: string[];
   text: string;
   untrusted: true;
 };
+
+function htmlAttributes(tag: string): Record<string, string> {
+  const attributes: Record<string, string> = {};
+  for (const match of tag.matchAll(
+    /([a-z_:][-a-z0-9_:.]*)\s*=\s*(?:["']([^"']*)["']|([^\s>]+))/gi,
+  )) {
+    const name = match[1]?.toLocaleLowerCase("en");
+    const value = match[2] ?? match[3];
+    if (name && value !== undefined) attributes[name] = decodeHtmlEntities(value);
+  }
+  return attributes;
+}
+
+function uniqueClean(values: Iterable<string>, maximum: number, length: number): string[] {
+  const output: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const cleaned = cleanText(decodeHtmlEntities(value.replace(/<[^>]+>/g, " ")), length);
+    if (!cleaned) continue;
+    const key = cleaned.toLocaleLowerCase("en");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(cleaned);
+    if (output.length >= maximum) break;
+  }
+  return output;
+}
+
+function selectedStructuredData(html: string): string[] {
+  const selected: string[] = [];
+  const allowedKeys = new Set([
+    "@type",
+    "name",
+    "headline",
+    "description",
+    "category",
+    "audience",
+    "price",
+    "pricecurrency",
+  ]);
+  for (const match of html.matchAll(
+    /<script\b[^>]*\btype=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi,
+  )) {
+    if (selected.length >= 12) break;
+    try {
+      const parsed: unknown = JSON.parse((match[1] ?? "").slice(0, 50_000));
+      const queue: unknown[] = [parsed];
+      while (queue.length > 0 && selected.length < 12) {
+        const current = queue.shift();
+        if (Array.isArray(current)) {
+          queue.push(...current.slice(0, 20));
+          continue;
+        }
+        if (!current || typeof current !== "object") continue;
+        for (const [key, value] of Object.entries(current as Record<string, unknown>)) {
+          if (Array.isArray(value) || (value && typeof value === "object")) {
+            queue.push(value);
+          } else if (allowedKeys.has(key.toLocaleLowerCase("en")) && typeof value === "string") {
+            const cleaned = cleanText(value, 300);
+            if (cleaned) selected.push(`${key}: ${cleaned}`);
+          }
+          if (selected.length >= 12) break;
+        }
+      }
+    } catch {
+      // Invalid JSON-LD is ignored; ordinary sanitized page text remains usable.
+    }
+  }
+  return uniqueClean(selected, 12, 350);
+}
 
 export function extractWebsiteDocument(url: string, html: string): ExtractedWebsiteDocument {
   const titleMatch = /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(html);
@@ -611,13 +711,92 @@ export function extractWebsiteDocument(url: string, html: string): ExtractedWebs
   const fallbackTitle = new URL(url).hostname;
   const title = cleanText(decodeHtmlEntities(titleMatch?.[1] ?? ""), 300) ?? fallbackTitle;
   const description = cleanText(decodeHtmlEntities(descriptionMatch?.[1] ?? ""), 500);
+  const openGraph = uniqueClean(
+    [...html.matchAll(/<meta\b[^>]*>/gi)].flatMap((match) => {
+      const attributes = htmlAttributes(match[0]);
+      const property = (attributes.property ?? attributes.name)?.toLocaleLowerCase("en");
+      const content = attributes.content;
+      return property?.startsWith("og:") && content ? [`${property}: ${content}`] : [];
+    }),
+    12,
+    550,
+  );
+  const headings = uniqueClean(
+    [...html.matchAll(/<h[1-3]\b[^>]*>([\s\S]*?)<\/h[1-3]>/gi)].map((match) => match[1] ?? ""),
+    20,
+    300,
+  );
+  const primaryCtas = uniqueClean(
+    [...html.matchAll(/<(?:a|button)\b[^>]*>([\s\S]*?)<\/(?:a|button)>/gi)].map(
+      (match) => match[1] ?? "",
+    ),
+    16,
+    160,
+  );
+  const faqPrompts = uniqueClean(
+    [
+      ...[...html.matchAll(/<summary\b[^>]*>([\s\S]*?)<\/summary>/gi)].map(
+        (match) => match[1] ?? "",
+      ),
+      ...headings.filter((heading) => heading.endsWith("?")),
+    ],
+    12,
+    300,
+  );
   return {
     url,
     title,
     ...(description === undefined ? {} : { description }),
+    openGraph,
+    structuredData: selectedStructuredData(html),
+    headings,
+    primaryCtas,
+    faqPrompts,
     text,
     untrusted: true,
   };
+}
+
+const CONTEXT_PATH_MARKERS = [
+  "features",
+  "product",
+  "pricing",
+  "use-case",
+  "about",
+  "docs",
+  "blog",
+  "changelog",
+] as const;
+
+/** Returns a small deterministic same-origin candidate set; it never fetches. */
+export function extractSameOriginContextLinks(baseUrl: string, html: string): string[] {
+  const base = new URL(baseUrl);
+  const candidates = new Map<string, { url: string; rank: number }>();
+  for (const match of html.matchAll(/<a\b[^>]*\bhref\s*=\s*(?:["']([^"']+)["']|([^\s>]+))/gi)) {
+    const raw = decodeHtmlEntities(match[1] ?? match[2] ?? "").trim();
+    if (!raw || raw.startsWith("#")) continue;
+    try {
+      const candidate = new URL(raw, base);
+      candidate.hash = "";
+      if (candidate.origin !== base.origin || !["http:", "https:"].includes(candidate.protocol)) {
+        continue;
+      }
+      const path = candidate.pathname.toLocaleLowerCase("en").replace(/\/+$/, "") || "/";
+      const markerIndex = CONTEXT_PATH_MARKERS.findIndex((marker) => path.includes(marker));
+      if (markerIndex < 0) continue;
+      candidate.search = "";
+      const href = candidate.href;
+      const rank = markerIndex * 10 + path.split("/").filter(Boolean).length;
+      const prior = candidates.get(href);
+      if (!prior || rank < prior.rank) candidates.set(href, { url: href, rank });
+    } catch {
+      // Malformed links are untrusted page data and are ignored.
+    }
+  }
+  return [...candidates.values()]
+    .sort((left, right) => left.rank - right.rank || left.url.localeCompare(right.url))
+    .slice(0, 20)
+    .map((candidate) => candidate.url);
 }
 
 export function wrapUntrustedContent(content: string): string {
