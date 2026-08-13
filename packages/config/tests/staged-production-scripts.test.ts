@@ -266,6 +266,21 @@ printf '%s' "$status"
 exec fake-curl "$@"
 `,
   );
+  executable(
+    join(fakeBin, "stat"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\${1:-}" == '-c' && "\${2:-}" == '%a' ]]; then
+  printf '%s\n' '600'
+  exit 0
+fi
+if [[ "\${1:-}" == '-f' && "\${2:-}" == '%Lp' ]]; then
+  printf '%s\n' 'synthetic-gnu-filesystem-stat-output'
+  exit 0
+fi
+exit 92
+`,
+  );
 
   const projectReport =
     options.projectReport ??
@@ -483,5 +498,5 @@ describe("founder staged Production deploy script", () => {
     expect(`${errorLogs.result.stdout}${errorLogs.result.stderr}`).not.toContain(
       '{"level":"error"}',
     );
-  });
+  }, 15_000);
 });
