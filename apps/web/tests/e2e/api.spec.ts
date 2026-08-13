@@ -7,6 +7,11 @@ const API_HEADERS = {
   Authorization: `Bearer ${FIXTURE_API_KEY}`,
   "Content-Type": "application/json",
 };
+const OPS_BASE_URL = process.env.OPS_BASE_URL ?? "http://127.0.0.1:3001";
+
+function opsUrl(path: string): string {
+  return new URL(path, `${OPS_BASE_URL.replace(/\/$/, "")}/`).toString();
+}
 const REQUEST = {
   product_url: "https://trendsfast.com",
   goal: "qualified_signups",
@@ -52,11 +57,11 @@ test("project API creates, reviews, delivers, polls, and replays one Next Move",
     )
     .toBe("REVIEW_REQUIRED");
 
-  await page.goto("/ops");
+  await page.goto(opsUrl("/ops"));
   await page.getByLabel("Operations token").fill(opsToken);
   await page.getByRole("button", { name: "Enter operations" }).click();
   await expect(page.getByText("PRIVATE / REVIEW QUEUE")).toBeVisible();
-  await page.goto(`/ops/${accepted.id}`);
+  await page.goto(opsUrl(`/ops/${accepted.id}`));
   await expect(page.getByText("REVIEW PENDING", { exact: true })).toBeVisible();
 
   const verifyButtons = page.getByRole("button", { name: "Verify receipt" });

@@ -8,6 +8,8 @@ type AxeViolation = {
   nodes: Array<{ target: string[]; failureSummary?: string }>;
 };
 
+const OPS_BASE_URL = process.env.OPS_BASE_URL ?? "http://127.0.0.1:3001";
+
 const pages = [
   { name: "landing", path: "/" },
   { name: "agents", path: "/agents" },
@@ -20,7 +22,7 @@ const pages = [
   { name: "trend detection API", path: "/trend-detection-api" },
   { name: "content distribution API", path: "/content-distribution-api" },
   { name: "private fixture result", path: "/scan/scan_fixture_trendsfast" },
-  { name: "founder login", path: "/ops" },
+  { name: "founder login", path: new URL("/ops", OPS_BASE_URL).toString() },
 ] as const;
 
 for (const target of pages) {

@@ -1,7 +1,13 @@
 import { expect, test } from "@playwright/test";
 
+const OPS_BASE_URL = process.env.OPS_BASE_URL ?? "http://127.0.0.1:3001";
+
+function opsUrl(path: string): string {
+  return new URL(path, `${OPS_BASE_URL.replace(/\/$/, "")}/`).toString();
+}
+
 test("ops requires founder authentication", async ({ page }) => {
-  await page.goto("/ops");
+  await page.goto(opsUrl("/ops"));
 
   await expect(page.getByRole("heading", { name: "Founder operations" })).toBeVisible();
   await expect(page.getByLabel("Operations token")).toBeVisible();
@@ -44,12 +50,12 @@ test("founder reviews, approves, and privately delivers a persisted scan", async
     )
     .toBe("REVIEW_REQUIRED");
 
-  await page.goto("/ops");
+  await page.goto(opsUrl("/ops"));
   await page.getByLabel("Operations token").fill(opsToken);
   await page.getByRole("button", { name: "Enter operations" }).click();
   await expect(page.getByText("PRIVATE / REVIEW QUEUE")).toBeVisible();
 
-  await page.goto(`/ops/${scanId}`);
+  await page.goto(opsUrl(`/ops/${scanId}`));
   await expect(page.getByText("REVIEW PENDING", { exact: true })).toBeVisible();
   const verifyButtons = page.getByRole("button", { name: "Verify receipt" });
   await expect(verifyButtons.first()).toBeVisible();
@@ -100,7 +106,7 @@ test("founder reviews, approves, and privately delivers a persisted scan", async
   await expect(page.getByRole("heading", { name: "Your next distribution move." })).toBeVisible();
   await expect(page.getByText(/Founder-reviewed/).first()).toBeVisible();
 
-  await page.goto(`/ops/${scanId}`);
+  await page.goto(opsUrl(`/ops/${scanId}`));
   await expect(page.getByText("This review is closed.")).toBeVisible();
   await expect(page.getByText("ONE-TIME DELIVERY TOKEN", { exact: true })).toHaveCount(0);
 });

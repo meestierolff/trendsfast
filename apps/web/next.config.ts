@@ -3,6 +3,7 @@ import type { NextConfig } from "next";
 
 const isProduction = process.env.NODE_ENV === "production";
 const isHttpsDeployment = process.env.APP_URL?.startsWith("https://") ?? false;
+const distDir = process.env.NEXT_DIST_DIR?.trim() || ".next";
 
 function configuredMediaOrigin(value: string | undefined): string | null {
   if (!value) return null;
@@ -57,6 +58,7 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  distDir,
   pageExtensions: ["js", "jsx", "mdx", "ts", "tsx"],
   allowedDevOrigins: ["127.0.0.1"],
   poweredByHeader: false,

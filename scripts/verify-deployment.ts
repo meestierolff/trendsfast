@@ -1,3 +1,5 @@
+import { isSameOriginDashboardRedirect } from "./deployment-verification";
+
 const REQUIRED_PUBLIC_ROUTES = [
   { path: "/", contentType: "text/html" },
   { path: "/agents", contentType: "text/html" },
@@ -18,7 +20,6 @@ const REQUIRED_PUBLIC_ROUTES = [
   { path: "/news/rss.xml", contentType: "application/rss+xml" },
   { path: "/open", contentType: "text/html" },
   { path: "/open-source", contentType: "text/html" },
-  { path: "/ops", contentType: "text/html" },
   { path: "/pricing", contentType: "text/html" },
   { path: "/privacy", contentType: "text/html" },
   { path: "/robots.txt", contentType: "text/plain" },
@@ -97,6 +98,12 @@ async function main() {
     await inspect(origin, `/scan/${UNKNOWN_SCAN_TOKEN}`, 404),
     await inspect(origin, `/api/scans/${UNKNOWN_SCAN_TOKEN}/status`, 404),
   ];
+  const memberAuthResults = [
+    await inspect(origin, "/login", 200, "text/html"),
+    await inspect(origin, "/dashboard", 307, "text/html"),
+  ];
+  const dashboardRedirect = memberAuthResults[1]?.redirectLocation;
+  const dashboardRedirectOk = isSameOriginDashboardRedirect(origin, dashboardRedirect ?? null);
   const canonicalOk = !canonicalHost || origin.hostname.toLowerCase() === canonicalHost;
   const ok =
     canonicalOk &&
@@ -116,7 +123,20 @@ async function main() {
         result.noSecretMarker &&
         result.cacheControl?.includes("no-store") === true &&
         (result.path.startsWith("/api/") || result.robotsHeader?.includes("noindex") === true),
-    );
+    ) &&
+    memberAuthResults.every(
+      (result) =>
+        result.statusOk &&
+        result.contentTypeOk &&
+        result.noSecretMarker &&
+        result.cacheControl?.includes("no-store") === true &&
+        result.robotsHeader?.includes("noindex") === true &&
+        result.security.contentSecurityPolicy &&
+        result.security.noSniff &&
+        result.security.frameDenied &&
+        result.security.hsts,
+    ) &&
+    dashboardRedirectOk;
   console.info(
     JSON.stringify(
       {
@@ -127,6 +147,8 @@ async function main() {
         checkedAt: new Date().toISOString(),
         routes: results,
         privateCapabilityProbes: privateResults,
+        memberAuthProbes: memberAuthResults,
+        dashboardRedirectOk,
       },
       null,
       2,
