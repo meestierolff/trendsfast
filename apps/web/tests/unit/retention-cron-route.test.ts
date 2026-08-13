@@ -82,15 +82,19 @@ describe("retention cron route", () => {
     expect((await GET(request())).status).toBe(500);
   });
 
-  it("keeps the schedule in the ops template and out of the Hobby config", () => {
+  it("keeps the schedule in the ops template and out of the default and Hobby configs", () => {
     const ops = JSON.parse(
       readFileSync(fileURLToPath(new URL("../../vercel.ops.json", import.meta.url)), "utf8"),
+    );
+    const defaultConfig = JSON.parse(
+      readFileSync(fileURLToPath(new URL("../../vercel.json", import.meta.url)), "utf8"),
     );
     const hobby = JSON.parse(
       readFileSync(fileURLToPath(new URL("../../vercel.hobby.json", import.meta.url)), "utf8"),
     );
     expect(maxDuration).toBe(300);
     expect(ops.crons).toEqual([{ path: "/api/cron/retention", schedule: "17 3 * * *" }]);
+    expect(defaultConfig.crons).toBeUndefined();
     expect(hobby.crons).toBeUndefined();
   });
 });

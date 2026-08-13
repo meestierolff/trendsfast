@@ -81,16 +81,20 @@ describe("monitoring cron route", () => {
     expect(mocks.runMonitoringBatch).not.toHaveBeenCalled();
   });
 
-  it("commits a bounded paid cadence while the Hobby config has no cron", () => {
-    const paid = JSON.parse(
+  it("keeps the default Hobby-safe and commits the bounded cadence only in the Pro config", () => {
+    const defaultConfig = JSON.parse(
       readFileSync(fileURLToPath(new URL("../../vercel.json", import.meta.url)), "utf8"),
+    );
+    const pro = JSON.parse(
+      readFileSync(fileURLToPath(new URL("../../vercel.pro.json", import.meta.url)), "utf8"),
     );
     const hobby = JSON.parse(
       readFileSync(fileURLToPath(new URL("../../vercel.hobby.json", import.meta.url)), "utf8"),
     );
     expect(maxDuration).toBe(300);
-    expect(paid.crons).toEqual([{ path: "/api/cron/monitoring", schedule: "*/10 * * * *" }]);
+    expect(defaultConfig.crons).toBeUndefined();
     expect(hobby.crons).toBeUndefined();
+    expect(pro.crons).toEqual([{ path: "/api/cron/monitoring", schedule: "*/10 * * * *" }]);
   });
 
   it("drains reconciliation and queued alerts while paid monitoring is disabled", async () => {

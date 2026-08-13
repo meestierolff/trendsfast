@@ -4,14 +4,15 @@ This procedure is executable only after the release SHA, remote CI, database,
 and secret inventory are approved. It does not make an unaudited deployment a
 public launch.
 
-Observed state on 2026-08-12: the founder-owned team `Finnie`
+Observed project configuration on 2026-08-13: the founder-owned team `Finnie`
 (`team_UVAUfp4G8CmlSNPI9w5FasKj`) is on Hobby. One linked, protected-dogfood public
-project exists: `trendsfast` (`prj_nYn6zjWW4BcKd03QaVO6LTOF3CSC`). Its observed
-Root Directory is the monorepo root (`.`), its production branch is `main`, and
-it has no deployment, alias, custom domain, or active cron. Upgrade the team to
-Pro before commercial production. This inventory is not deployment evidence.
-No separate `trendsfast-ops` project exists. Creating it on an approved plan,
-protecting it, and reading back its private deployment/cron are founder blockers.
+project exists: `trendsfast` (`prj_nYn6zjWW4BcKd03QaVO6LTOF3CSC`). Its verified
+Root Directory is `apps/web` and its production branch is `main`. The latest
+deployment inventory has no accepted deployment, alias, custom domain, or active
+cron. Upgrade the team to Pro before commercial production. This inventory is
+not deployment evidence. No separate `trendsfast-ops` project exists. Creating
+it on an approved plan, protecting it, and reading back its private
+deployment/cron are founder blockers.
 
 ## Preflight and existing-project check
 
@@ -30,22 +31,25 @@ vercel git connect --yes
 vercel project inspect trendsfast
 ```
 
-The verified remote configuration currently retains the monorepo root so every
-workspace package is available. It uses Next.js, Node 22, production branch
-`main`, frozen pnpm install, and `pnpm --filter @trendsfast/web build`. Do not
-change the Root Directory by assumption and do not run migrations in the build.
+The verified remote configuration uses `apps/web` as its Root Directory, so
+automatic Git deployments discover `apps/web/vercel.json`. It uses Next.js,
+Node 22, production branch `main`, a frozen pnpm install, and the web workspace
+build. Preserve monorepo workspace-package access and do not run migrations in
+the build.
 
-The plan-specific files live below `apps/web`, so they are inert for automatic
-Git deployments while Root Directory is `.`. Use an explicit local-config
-contract for reviewed CLI deployments: `-A apps/web/vercel.hobby.json` on Hobby
-and, only after Pro approval, `-A apps/web/vercel.json` for the ten-minute
-production cron. A deployment is not accepted until its inspect/read-back proves
-the intended config was applied.
+`apps/web/vercel.json` is deliberately the no-cron default, making automatic
+Git previews and Hobby deployments safe. `apps/web/vercel.pro.json` is the
+explicit Pro-only public configuration containing the ten-minute monitoring
+cron. `apps/web/vercel.hobby.json` remains a no-cron compatibility config, but
+the default is preferred. For reviewed CLI deployments from the repository
+root, select `-A apps/web/vercel.json` on Hobby and only after Pro and monitoring
+approval select `-A apps/web/vercel.pro.json`. A deployment is not accepted
+until its inspect/read-back proves the intended config was applied.
 
 The founder control plane must be a separate Vercel project, not another domain
 on the public deployment. After Pro/Deployment Protection approval, create or
-link the exact `trendsfast-ops` project from the repository root, keep its Root
-Directory at `.`, and verify it before deployment:
+link the exact `trendsfast-ops` project from the repository root, set its Root
+Directory to `apps/web`, and verify it before deployment:
 
 ```bash
 vercel link --yes --project trendsfast-ops
@@ -88,7 +92,7 @@ credentials where available, and Stripe webhook secrets.
 ## Preview-first deployment
 
 ```bash
-vercel deploy -A apps/web/vercel.hobby.json
+vercel deploy -A apps/web/vercel.json
 vercel curl / --deployment <preview-url>
 vercel logs --deployment <deployment-id> --level error
 DEPLOYMENT_URL=<preview-url> pnpm verify:deployment
@@ -99,7 +103,8 @@ idempotency/limits, source status, mobile, accessibility, and security-header
 checks against the preview. Run provider read-backs separately and record them;
 a successful deploy does not mark sources Connected.
 
-Only after preview acceptance, deploy the same reviewed tree:
+Only after preview acceptance, deploy the same reviewed tree with the no-cron
+default while the team remains on Hobby and paid monitoring remains disabled:
 
 ```bash
 vercel deploy --prod -A apps/web/vercel.json
@@ -109,6 +114,13 @@ Then repeat the deployment verifier and an independent browser/API smoke. Check
 logs for errors without emitting request bodies, capability tokens, API keys,
 model payloads, evidence text, or payment data.
 
+Only after the team is on Pro and every paid-monitoring gate passes, opt in to
+the monitoring schedule with the same accepted release SHA:
+
+```bash
+vercel deploy --prod -A apps/web/vercel.pro.json
+```
+
 Deploy the separately linked private control plane only after its gates pass:
 
 ```bash
@@ -116,8 +128,8 @@ vercel deploy --prod -A apps/web/vercel.ops.json
 vercel inspect <ops-deployment-url>
 ```
 
-The inspect/read-back must show project `trendsfast-ops`, Root Directory `.`,
-Deployment Protection, `TRENDSFAST_SURFACE=ops`, and the daily
+The inspect/read-back must show project `trendsfast-ops`, Root Directory
+`apps/web`, Deployment Protection, `TRENDSFAST_SURFACE=ops`, and the daily
 `/api/cron/retention` schedule. Exercise the exact cron bearer and verify the
 aggregate health result without logging secret values or deleted rows.
 

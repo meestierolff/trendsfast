@@ -179,12 +179,14 @@ standalone maximum of 10 is not an independently valid production setting.
 These checks encode the current cron-route budget but do not prove that a
 scheduler is deployed, configured, or completing within that budget.
 
-`apps/web/vercel.json` is the reviewed paid public-host configuration and
-schedules the UTC monitoring route every ten minutes. `apps/web/vercel.ops.json`
-is the separate private ops-surface template and schedules retention daily at
-03:17 UTC. `apps/web/vercel.hobby.json` has no cron and is the only safe
-configuration for Hobby/private-preview deployment. The runtime also denies
-Vercel previews even if production flags were copied.
+`apps/web/vercel.json` is the no-cron default discovered by automatic Git
+deployments because the Vercel Root Directory is `apps/web`; it is safe for
+Hobby and private previews. `apps/web/vercel.pro.json` is the explicit Pro-only
+public configuration and schedules the UTC monitoring route every ten minutes.
+`apps/web/vercel.ops.json` is the separate private ops-surface template and
+schedules retention daily at 03:17 UTC. `apps/web/vercel.hobby.json` remains a
+no-cron compatibility config. The runtime also denies Vercel previews even if
+production flags were copied.
 
 Monitoring failures are durable. Only known outcomes receive a capped retry;
 unknown provider/model outcomes are quarantined with no automatic replay.

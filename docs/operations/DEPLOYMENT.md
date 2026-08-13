@@ -119,14 +119,16 @@ successful production-shaped purge remain explicit gates.
 
 ## 4. Vercel deployment
 
-Use the already linked founder-owned public `trendsfast` project. Its verified remote
-Root Directory is the repository root (`.`), which retains access to every
-workspace package. Do not change that setting by assumption. Because the
-plan-specific Vercel files live under `apps/web`, reviewed CLI deployments must
-select one explicitly: `-A apps/web/vercel.hobby.json` while the team remains on
-Hobby, and only after Pro approval `-A apps/web/vercel.json` for the public
-ten-minute monitoring cron. Separately create/link a founder-owned
-`trendsfast-ops` project rooted at `.`, set `TRENDSFAST_SURFACE=ops`, give it
+Use the already linked founder-owned public `trendsfast` project. Its verified
+remote Root Directory is `apps/web`, so automatic Git previews discover the
+no-cron `apps/web/vercel.json` default. Preserve access to the monorepo workspace
+packages. Reviewed CLI deployments from the repository root must select
+`-A apps/web/vercel.json` while the team remains on Hobby. Only after Pro and
+paid-monitoring approval may they select `-A apps/web/vercel.pro.json` for the
+public ten-minute monitoring cron. `apps/web/vercel.hobby.json` remains a
+no-cron compatibility config, not the automatic-deployment contract. Separately
+create/link a founder-owned `trendsfast-ops` project rooted at `apps/web`, set
+`TRENDSFAST_SURFACE=ops`, give it
 its protected ops origin as `APP_URL`, the public canonical origin as
 `PUBLIC_APP_URL`, only ops/retention-scoped runtime URLs and private secrets, enable Deployment
 Protection, and deploy with `-A apps/web/vercel.ops.json`. No such ops project

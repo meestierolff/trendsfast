@@ -25,7 +25,7 @@ Two entrypoints share the same repository contract:
 - `GET /api/cron/retention` is hidden on the public surface, accepted only on
   `TRENDSFAST_SURFACE=ops`, and requires the exact `CRON_SECRET` bearer. The
   `apps/web/vercel.ops.json` template schedules it daily at `03:17 UTC`; the
-  Hobby template contains no cron.
+  default and Hobby compatibility templates contain no cron.
 
 The retention login is distinct from public, worker, billing, and founder ops.
 It has no direct table or column grants and no health/alert DML. Its sole
