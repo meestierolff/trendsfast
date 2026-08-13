@@ -4,7 +4,7 @@ import { pageMetadata } from "../../lib/site";
 export const metadata: Metadata = pageMetadata({
   title: "Open product metrics",
   description:
-    "TrendsFast publishes denominator-backed usefulness, usage, evidence validity, cost, review-time, WAIT, and repeat-scan metrics only when verified.",
+    "TrendsFast publishes denominator-backed usefulness, usage, evidence validity, review-time, WAIT, and repeat-scan metrics only when verified.",
   path: "/open",
 });
 
@@ -14,7 +14,6 @@ const metrics = [
   "Useful-move rate",
   "Moves used",
   "Evidence validity",
-  "Median provider cost",
   "Median founder review time",
   "WAIT rate",
   "Research time replaced",
@@ -32,7 +31,7 @@ export default function OpenMetricsPage() {
         </h1>
         <p>
           The first cohort is measured for usefulness, evidence validity, actual usage, founder
-          review time, and provider cost—not signups or dashboard sessions.
+          review time—not signups or dashboard sessions.
         </p>
       </section>
       <section className="content-page section-pad">
@@ -47,10 +46,10 @@ export default function OpenMetricsPage() {
         <div className="prose">
           <h2>Publication rule</h2>
           <p>
-            Rates appear only with a denominator and verified events. Costs come from the provider
-            cost ledger. Review time uses recorded review timestamps. Evidence validity is checked
-            at delivery. No fixture, internal dogfood, or unapproved public scan is blended into
-            external cohort proof without a label.
+            Rates appear only with a denominator and verified events. Review time uses recorded
+            review timestamps. Evidence validity is checked at delivery. No fixture, internal
+            dogfood, or unapproved public scan is blended into external cohort proof without a
+            label. Managed-cloud economics stay private.
           </p>
         </div>
       </section>

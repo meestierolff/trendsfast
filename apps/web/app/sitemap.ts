@@ -1,4 +1,5 @@
 import type { MetadataRoute } from "next";
+import { deploymentSurface } from "@trendsfast/config";
 import { BLOG_POSTS } from "../lib/blog-posts";
 import { absoluteUrl } from "../lib/site";
 
@@ -23,6 +24,7 @@ const routes = [
 ] as const;
 
 export default function sitemap(): MetadataRoute.Sitemap {
+  if (deploymentSurface() === "ops") return [];
   return [
     ...routes.map(([path, changeFrequency, priority]) => ({
       url: absoluteUrl(path),

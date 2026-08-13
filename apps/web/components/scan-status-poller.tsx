@@ -18,6 +18,7 @@ export type ScanStatusView = {
   sourcePlan: readonly ScanSourcePlanItem[];
   founderReview: boolean;
   resultToken?: string | null;
+  requiresNewScan?: boolean;
   failure?: string | { message?: string; code?: string } | null;
 };
 
@@ -164,16 +165,17 @@ export function ScanStatusPoller({
       router.replace(`/scan/${encodeURIComponent(status.resultToken)}`);
       return;
     }
-    if (status.state === "FAILED") return;
+    if (status.state === "FAILED" || status.requiresNewScan) return;
 
     const interval = window.setInterval(() => void refresh(), 5_000);
     return () => window.clearInterval(interval);
-  }, [refresh, router, status.resultToken, status.state]);
+  }, [refresh, router, status.requiresNewScan, status.resultToken, status.state]);
 
   const copy = stateCopy[status.state];
   const productName = inferredProductName(status.inferredProduct);
   const recordedFailure = failureText(status.failure);
-  const waitingForDeliveryToken = status.state === "READY" && !status.resultToken;
+  const waitingForDeliveryToken =
+    status.state === "READY" && !status.resultToken && !status.requiresNewScan;
   const submittedUrl = safeHttpUrl(status.submittedUrl);
 
   return (
@@ -239,6 +241,18 @@ export function ScanStatusPoller({
             {recordedFailure ?? "The scan stopped before a trustworthy move could be delivered."}
           </p>
           <Link href="/#scan">Submit a new product URL →</Link>
+        </section>
+      ) : null}
+
+      {status.requiresNewScan ? (
+        <section className="scan-failure" role="status">
+          <p className="scan-mono-label">Recommendation expired</p>
+          <h2>This result is no longer current.</h2>
+          <p>
+            The decision contract is stale or unavailable. Existing projects can only be refreshed
+            by their verified owner; a public scan will not replace this project.
+          </p>
+          <Link href="/login">Sign in to your project →</Link>
         </section>
       ) : null}
 

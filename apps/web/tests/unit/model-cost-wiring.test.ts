@@ -22,28 +22,35 @@ describe("live model cost wiring", () => {
     const client = createConfiguredModelClient(
       parseEnv({
         PROVIDER_CREDENTIAL_MODE: "byok",
+        PROVIDER_CALLS_ENABLED: "true",
+        PUBLIC_SCAN_DAILY_LIMIT: "17",
+        PUBLIC_SCAN_GLOBAL_DAILY_LIMIT: "29",
+        PUBLIC_SCAN_GLOBAL_DAILY_BUDGET_USD: "113.777",
+        API_CREATE_RATE_LIMIT_PER_HOUR: "31",
+        API_STATUS_RATE_LIMIT_PER_HOUR: "317",
+        API_AUTH_FAILURE_LIMIT_PER_HOUR: "37",
         DATAFORSEO_LOGIN: "founder@example.com",
         DATAFORSEO_PASSWORD: "provider-password",
         TAVILY_API_KEY: "tvly-key",
         LLM_PROVIDER: "openai",
         LLM_MODEL: "priced-model",
         OPENAI_API_KEY: "openai-key",
-        LLM_INPUT_PRICE_USD_PER_MILLION_TOKENS: "0.25",
-        LLM_OUTPUT_PRICE_USD_PER_MILLION_TOKENS: "2",
-        DATAFORSEO_ESTIMATED_COST_USD_PER_TASK: "0.05",
-        TAVILY_ESTIMATED_COST_USD_PER_CREDIT: "0.05",
-        MAX_PROVIDER_COST_USD_PER_SCAN: "1",
-        API_PROVIDER_COST_LIMIT_USD_PER_HOUR: "5",
+        LLM_INPUT_PRICE_USD_PER_MILLION_TOKENS: "3.17",
+        LLM_OUTPUT_PRICE_USD_PER_MILLION_TOKENS: "7.31",
+        DATAFORSEO_ESTIMATED_COST_USD_PER_TASK: "0.113",
+        TAVILY_ESTIMATED_COST_USD_PER_CREDIT: "0.271",
+        MAX_PROVIDER_COST_USD_PER_SCAN: "91.333",
+        API_PROVIDER_COST_LIMIT_USD_PER_HOUR: "407.444",
       }),
       { fetch: fetcher },
     );
     const reserve = vi.fn(async () => {
       events.push("reserve");
-      return { created: true, projectedCostUsd: 0.01 };
+      return { created: true, projectedCostUsd: 17.111 };
     });
     const settle = vi.fn(async () => {
       events.push("settle");
-      return { committedCostUsd: 0.01 };
+      return { committedCostUsd: 17.111 };
     });
 
     await expect(
@@ -71,8 +78,8 @@ describe("live model cost wiring", () => {
         model: "priced-model",
         operation: "context",
         attempt: 1,
-        inputUsdPerMillionTokens: 0.25,
-        outputUsdPerMillionTokens: 2,
+        inputUsdPerMillionTokens: 3.17,
+        outputUsdPerMillionTokens: 7.31,
         outputTokenUpperBound: 2_048,
       }),
     );
@@ -81,7 +88,7 @@ describe("live model cost wiring", () => {
         provider: "openai",
         inputTokens: 40,
         outputTokens: 10,
-        actualCostUsd: 0.00003,
+        actualCostUsd: expect.closeTo(0.0001999, 10),
       }),
     );
   });

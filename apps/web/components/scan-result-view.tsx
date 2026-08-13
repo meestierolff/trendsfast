@@ -2,6 +2,14 @@ import { FeedbackControls } from "./feedback-controls";
 import { DeliveredMonitoringCta } from "./delivered-monitoring-cta";
 import { NextMoveCard, type NextMoveCardModel } from "./next-move-card";
 import { TrackedEvidenceLink } from "./tracked-evidence-link";
+import { ClaimProjectCta } from "./claim-project-cta";
+import type {
+  ActionDetails,
+  BreakoutPotential,
+  GenerationLevel,
+  NextMoveFreshness,
+  TrendWindow,
+} from "@trendsfast/schemas";
 import {
   dateTimeValue,
   formatCodeLabel,
@@ -14,6 +22,8 @@ export { confidenceLabel, formatCodeLabel, formatScanDate } from "./scan-view-fo
 export type ReadyScanResultView = {
   tokenId: string;
   nextMoveId: string;
+  contractVersion: "next-move-v1";
+  generationLevel: GenerationLevel;
   product: {
     name: string;
     url: string;
@@ -22,6 +32,11 @@ export type ReadyScanResultView = {
     credibleTopics: readonly string[];
     assumptions: readonly string[];
   };
+  actionDetails: ActionDetails;
+  trendWindow: TrendWindow;
+  breakoutPotential: BreakoutPotential;
+  draftContent?: string;
+  freshness: NextMoveFreshness;
   move: {
     action: "PUBLISH" | "REPLY" | "REMIX" | "WAIT";
     channel: string;
@@ -58,6 +73,105 @@ export type ReadyScanResultView = {
   founderReviewed: boolean;
   autoPublish: boolean;
 };
+
+function ActionPlan({ details }: { details: ActionDetails }) {
+  switch (details.action) {
+    case "PUBLISH":
+      return (
+        <>
+          <h3>Publish {formatCodeLabel(details.content_type)}</h3>
+          <p>{details.blueprint.content_premise}</p>
+          <p>
+            <strong>Audience tension:</strong> {details.blueprint.audience_tension}
+          </p>
+          <p>
+            <strong>Product role:</strong> {details.blueprint.product_role}
+          </p>
+          <ul>
+            {details.blueprint.hook_variants.map((hook) => (
+              <li key={hook.style}>
+                <strong>{formatCodeLabel(hook.style)}:</strong> {hook.text}
+              </li>
+            ))}
+          </ul>
+          <p>
+            Publish by{" "}
+            <time dateTime={details.publish_by}>{formatScanDate(details.publish_by)}</time>.
+          </p>
+        </>
+      );
+    case "REPLY": {
+      const targets = [details.primary_target, ...details.secondary_targets];
+      return (
+        <>
+          <h3>Reply to these exact conversations</h3>
+          {targets.map((target) => (
+            <article key={target.url}>
+              <p>
+                <strong>{target.author ?? formatCodeLabel(target.source)}</strong> ·{" "}
+                <a href={target.url} rel="noreferrer">
+                  Open original <span aria-hidden="true">↗</span>
+                </a>
+              </p>
+              {target.title_or_excerpt ? <p>{target.title_or_excerpt}</p> : null}
+              <p>
+                <strong>Suggested reply:</strong> {target.suggested_reply}
+              </p>
+              <p>
+                Reply by <time dateTime={target.reply_by}>{formatScanDate(target.reply_by)}</time>.
+              </p>
+            </article>
+          ))}
+        </>
+      );
+    }
+    case "REMIX":
+      return (
+        <>
+          <h3>Transform the observed pattern</h3>
+          <p>{details.transformed_concept}</p>
+          <ul>
+            {details.source_content.map((source) => (
+              <li key={source.url}>
+                <a href={source.url} rel="noreferrer">
+                  {source.observed_hook ?? source.url}
+                </a>
+                {source.author ? ` — ${source.author}` : ""}
+              </li>
+            ))}
+          </ul>
+          <p>
+            <strong>Preserve:</strong> {details.preserve.join(" · ")}
+          </p>
+          <p>
+            <strong>Transform:</strong> {details.transform.join(" · ")}
+          </p>
+          <p>
+            <strong>Do not copy:</strong> {details.do_not_copy.join(" · ")}
+          </p>
+        </>
+      );
+    case "WAIT":
+      return (
+        <>
+          <h3>Why this is a WAIT</h3>
+          <p>{details.considered_opportunity}</p>
+          <p>
+            <strong>Failed:</strong> {details.failure_reasons.map(formatCodeLabel).join(" · ")}
+          </p>
+          <ul>
+            {details.watch_conditions.map((condition) => (
+              <li key={condition}>{condition}</li>
+            ))}
+          </ul>
+          <p>
+            Recheck at{" "}
+            <time dateTime={details.recheck_at}>{formatScanDate(details.recheck_at)}</time>.
+          </p>
+        </>
+      );
+  }
+}
 
 function safeHttpUrl(value: string): string | null {
   try {
@@ -296,6 +410,59 @@ export function ScanResultView({
 
       <NextMoveCard move={signatureMove} className="result-signature-card" />
 
+      <section className="scan-why-now" aria-labelledby="scan-action-plan-title">
+        <div>
+          <p className="scan-mono-label">
+            {formatCodeLabel(result.actionDetails.action)} plan · {result.contractVersion} ·{" "}
+            {result.generationLevel}
+          </p>
+          <h2 id="scan-action-plan-title">The concrete action.</h2>
+          <ActionPlan details={result.actionDetails} />
+          {result.draftContent ? (
+            <div>
+              <h3>Founder-review draft</h3>
+              <pre>{result.draftContent}</pre>
+            </div>
+          ) : null}
+        </div>
+        <dl>
+          <div>
+            <dt>Trend window</dt>
+            <dd>
+              {formatCodeLabel(result.trendWindow.state)} ·{" "}
+              {formatCodeLabel(result.trendWindow.basis)}
+            </dd>
+          </div>
+          <div>
+            <dt>Valid until</dt>
+            <dd>
+              <time dateTime={result.trendWindow.valid_until}>
+                {formatScanDate(result.trendWindow.valid_until)}
+              </time>
+            </dd>
+          </div>
+          <div>
+            <dt>Recheck</dt>
+            <dd>
+              <time dateTime={result.trendWindow.recheck_at}>
+                {formatScanDate(result.trendWindow.recheck_at)}
+              </time>
+            </dd>
+          </div>
+          <div>
+            <dt>Breakout potential</dt>
+            <dd>
+              {formatCodeLabel(result.breakoutPotential.level)} ·{" "}
+              {formatCodeLabel(result.breakoutPotential.basis)}
+            </dd>
+          </div>
+          <div>
+            <dt>Freshness</dt>
+            <dd>{formatCodeLabel(result.freshness.state)}</dd>
+          </div>
+        </dl>
+      </section>
+
       <section className="scan-why-now" aria-labelledby="scan-why-now-title">
         <div>
           <p className="scan-mono-label">Why now</p>
@@ -382,6 +549,8 @@ export function ScanResultView({
         </div>
         <code>auto_publish={String(result.autoPublish)}</code>
       </section>
+
+      <ClaimProjectCta token={token} />
 
       {monitoringCheckoutAvailable ? <DeliveredMonitoringCta token={token} /> : null}
 

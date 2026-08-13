@@ -1,16 +1,26 @@
 import "server-only";
 
-import { loadEnv, resolveProviderCosts } from "@trendsfast/config";
+import { loadEnv, resolveApiRateLimit, resolveProviderCosts } from "@trendsfast/config";
 import { normalizeProductUrl } from "@trendsfast/database";
+import { assertActionDetailsBoundToStoredEvidence, storedSignal } from "@trendsfast/orchestration";
 import {
+  ActionDetailsSchema,
+  BreakoutPotentialSchema,
+  ContentCapabilityNameSchema,
+  GenerationLevelSchema,
+  NEXT_MOVE_CONTRACT_VERSION,
   NextMoveStatusResponseSchema,
   ProjectContextSchema,
+  ProjectNextMoveRequestSchema,
+  TrendWindowSchema,
+  VersionedNextMoveSchema,
+  evaluateNextMoveFreshness,
   type NextMoveRequest,
   type NextMoveStatusResponse,
 } from "@trendsfast/schemas";
 
 import { anonymizeAddress, clientAddress } from "./request-security";
-import { getRepositories } from "./server-database";
+import { getAuthRepositories, getRepositories } from "./server-database";
 import { ApiServiceError, type ApiPrincipal, type V1ApiDependencies } from "./v1-api";
 
 function statusUrl(id: string): string {
@@ -32,7 +42,7 @@ async function responseFor(
   id: string,
 ): Promise<NextMoveStatusResponse | null> {
   if (id.length < 1 || id.length > 160) return null;
-  const status = await getRepositories().scans.getStatusByPublicId(id);
+  const status = await getRepositories().scans.getPublicStatusByPublicId(id);
   if (!status || status.request.apiKeyId !== principal.apiKeyId) return null;
   if (principal.projectId && status.request.projectId !== principal.projectId) return null;
   if (principal.environment === "live") {
@@ -73,10 +83,68 @@ async function responseFor(
   ) {
     throw new Error("A READY scan is missing its reviewed persisted result");
   }
+  if (
+    status.move.decisionContractVersion !== NEXT_MOVE_CONTRACT_VERSION ||
+    status.move.actionDetails === null ||
+    status.move.trendWindow === null ||
+    status.move.breakoutPotential === null
+  ) {
+    return NextMoveStatusResponseSchema.parse({
+      id: status.request.publicId,
+      status: "FAILED",
+      error: {
+        code: "NEW_SCAN_REQUIRED",
+        message: "This result predates the current decision contract. Request a new scan.",
+        retryable: true,
+      },
+    });
+  }
   const context = ProjectContextSchema.parse(status.context);
+  const actionDetails = ActionDetailsSchema.parse(status.move.actionDetails);
+  const trendWindow = TrendWindowSchema.parse(status.move.trendWindow);
+  const breakoutPotential = BreakoutPotentialSchema.parse(status.move.breakoutPotential);
+  const generationLevel = GenerationLevelSchema.parse(status.move.generationLevel);
+  const validUntil = status.move.validUntil.toISOString();
+  const versionedMove = VersionedNextMoveSchema.parse({
+    contractVersion: status.move.decisionContractVersion,
+    generationLevel,
+    action: status.move.action,
+    channel: status.move.channel,
+    topic: status.move.topic,
+    angle: status.move.angle,
+    format: status.move.format,
+    hook: status.move.hook,
+    outline: status.move.outline,
+    cta: status.move.cta,
+    priority: status.move.priority,
+    confidence: Number(status.move.confidence),
+    validUntil,
+    trendWindow,
+    breakoutPotential,
+    details: actionDetails,
+    ...(status.move.draftContent === null ? {} : { draftContent: status.move.draftContent }),
+  });
+  const signalRows = await getRepositories().scanData.listPublicSignalsForRun(
+    status.move.scanRunId,
+  );
+  const storedSignals = signalRows.map(storedSignal);
+  const evidenceSignalIds = status.evidence
+    .filter((receipt) => receipt.bindingRole === "DECISION_SUPPORT")
+    .map((receipt) => receipt.signalId);
+  assertActionDetailsBoundToStoredEvidence({
+    details: versionedMove.details,
+    evidenceSignalIds,
+    storedSignals,
+  });
+  const freshness = evaluateNextMoveFreshness({
+    validUntil,
+    proposalStale: status.move.proposalStale,
+  });
   return NextMoveStatusResponseSchema.parse({
     id: status.request.publicId,
     status: "READY",
+    contract_version: versionedMove.contractVersion,
+    generation_level: versionedMove.generationLevel,
     project: {
       name: context.name,
       url: status.project.url,
@@ -86,18 +154,25 @@ async function responseFor(
       assumptions: context.assumptions,
     },
     next_move: {
-      action: status.move.action,
-      channel: status.move.channel,
-      topic: status.move.topic,
-      angle: status.move.angle,
-      format: status.move.format,
-      hook: status.move.hook,
-      outline: status.move.outline,
-      cta: status.move.cta,
-      priority: status.move.priority,
-      confidence: Number(status.move.confidence),
-      valid_until: status.move.validUntil.toISOString(),
+      action: versionedMove.action,
+      channel: versionedMove.channel,
+      topic: versionedMove.topic,
+      angle: versionedMove.angle,
+      format: versionedMove.format,
+      hook: versionedMove.hook,
+      outline: versionedMove.outline,
+      cta: versionedMove.cta,
+      priority: versionedMove.priority,
+      confidence: versionedMove.confidence,
+      valid_until: versionedMove.validUntil,
     },
+    action_details: versionedMove.details,
+    trend_window: versionedMove.trendWindow,
+    breakout_potential: versionedMove.breakoutPotential,
+    ...(versionedMove.draftContent === undefined
+      ? {}
+      : { draft_content: versionedMove.draftContent }),
+    freshness,
     why_now: {
       summary: status.move.whyNow,
       signal_class: status.move.signalClass,
@@ -123,19 +198,20 @@ async function responseFor(
 }
 
 async function enforceRateLimit(principal: ApiPrincipal, requestKind: "CREATE" | "STATUS") {
-  const repositories = getRepositories();
+  const repositories = getAuthRepositories();
   const env = loadEnv();
   const usage = await repositories.apiKeys.usageSince({
     apiKeyId: principal.apiKeyId,
     since: new Date(Date.now() - 3_600_000),
   });
+  const policyLimit = resolveApiRateLimit(
+    env,
+    requestKind === "CREATE" ? "API_CREATE_RATE_LIMIT_PER_HOUR" : "API_STATUS_RATE_LIMIT_PER_HOUR",
+  );
   const configuredLimit =
     requestKind === "CREATE"
-      ? Math.min(
-          principal.rateLimitPerHour ?? env.API_CREATE_RATE_LIMIT_PER_HOUR,
-          env.API_CREATE_RATE_LIMIT_PER_HOUR,
-        )
-      : env.API_STATUS_RATE_LIMIT_PER_HOUR;
+      ? Math.min(principal.rateLimitPerHour ?? policyLimit, policyLimit)
+      : policyLimit;
   const used = requestKind === "CREATE" ? usage.createRequests : usage.statusRequests;
   const admitted = principal.requestId
     ? await repositories.apiKeys.admitAuthenticatedRequest({
@@ -162,7 +238,9 @@ async function enforceRateLimit(principal: ApiPrincipal, requestKind: "CREATE" |
 }
 
 async function assertProjectRestriction(principal: ApiPrincipal, request: NextMoveRequest) {
-  if (!principal.projectId) return;
+  if (!principal.projectId) {
+    throw new ApiServiceError("FORBIDDEN", "Next Move creation requires a project-scoped API key.");
+  }
   const project = await getRepositories().scanData.getProject(principal.projectId);
   if (!project || normalizeProductUrl(request.product_url) !== project.normalizedUrl) {
     throw new ApiServiceError("FORBIDDEN", "This API key is restricted to a different project.");
@@ -170,21 +248,29 @@ async function assertProjectRestriction(principal: ApiPrincipal, request: NextMo
 }
 
 export function createV1Service(input: { schedule(publicId: string): void }): V1ApiDependencies {
-  const providerCredentialMode = loadEnv().PROVIDER_CREDENTIAL_MODE;
-  return {
+  const initialEnv = loadEnv();
+  const providerCredentialMode = initialEnv.PROVIDER_CREDENTIAL_MODE;
+  const service: V1ApiDependencies = {
     providerCredentialMode,
+    liveApiCreationEnabled: initialEnv.LIVE_API_CREATION_ENABLED,
     async admitAuthenticationAttempt(request) {
       const env = loadEnv();
+      let authFailureLimit: number;
+      try {
+        authFailureLimit = resolveApiRateLimit(env, "API_AUTH_FAILURE_LIMIT_PER_HOUR");
+      } catch {
+        return false;
+      }
       const pepper = env.API_KEY_PEPPER ?? env.SESSION_SECRET;
       if (!pepper || pepper.length < 32) return false;
-      const repositories = getRepositories();
+      const repositories = getAuthRepositories();
       const fingerprintHash = anonymizeAddress(clientAddress(request.headers), pepper);
       const since = new Date(Date.now() - 3_600_000);
       if (
         (await repositories.apiKeys.failedAuthenticationAttemptsSince({
           requesterFingerprintHash: fingerprintHash,
           since,
-        })) >= env.API_AUTH_FAILURE_LIMIT_PER_HOUR
+        })) >= authFailureLimit
       ) {
         return "AUTH_FAILURE_LIMITED" as const;
       }
@@ -197,7 +283,12 @@ export function createV1Service(input: { schedule(publicId: string): void }): V1
       const env = loadEnv();
       const pepper = env.API_KEY_PEPPER ?? env.SESSION_SECRET;
       if (!pepper || pepper.length < 32) return false;
-      const maximum = env.API_AUTH_FAILURE_LIMIT_PER_HOUR;
+      let maximum: number;
+      try {
+        maximum = resolveApiRateLimit(env, "API_AUTH_FAILURE_LIMIT_PER_HOUR");
+      } catch {
+        return false;
+      }
       return getRepositories().authAdmission.admit({
         namespace: "v1-failure",
         fingerprintHash: anonymizeAddress(clientAddress(request.headers), pepper),
@@ -213,7 +304,7 @@ export function createV1Service(input: { schedule(publicId: string): void }): V1
         pepper && metadata
           ? anonymizeAddress(clientAddress(metadata.request.headers), pepper)
           : undefined;
-      const authenticated = await getRepositories().apiKeys.authenticate({
+      const authenticated = await getAuthRepositories().apiKeys.authenticate({
         rawKey,
         requestKind: metadata?.requestKind ?? "OTHER",
         ...(requesterFingerprintHash ? { requesterFingerprintHash } : {}),
@@ -233,13 +324,33 @@ export function createV1Service(input: { schedule(publicId: string): void }): V1
       };
     },
 
-    async createOrReuse({ principal, idempotencyKey, request }) {
+    async createOrReuse({ principal, idempotencyKey, request, projectContextVersionId }) {
+      const env = loadEnv();
+      if (!env.LIVE_API_CREATION_ENABLED) {
+        throw new ApiServiceError(
+          "UNAVAILABLE",
+          "New API research is disabled by the deployment policy.",
+        );
+      }
+      if (env.PROVIDER_CREDENTIAL_MODE !== "fixture" && !env.PROVIDER_CALLS_ENABLED) {
+        throw new ApiServiceError(
+          "UNAVAILABLE",
+          "Provider-backed scan creation is disabled by the deployment policy.",
+        );
+      }
+      if (!principal.projectId) {
+        throw new ApiServiceError(
+          "FORBIDDEN",
+          "Next Move creation requires a project-scoped API key.",
+        );
+      }
       await enforceRateLimit(principal, "CREATE");
       const repositories = getRepositories();
       const prior = await repositories.scans.resolveApiIdempotency({
         apiKeyId: principal.apiKeyId,
         idempotencyKey,
         request,
+        ...(projectContextVersionId ? { projectContextVersionId } : {}),
       });
       if (prior) {
         if (prior.idempotencyConflict) {
@@ -254,13 +365,13 @@ export function createV1Service(input: { schedule(publicId: string): void }): V1
         return reused;
       }
       await assertProjectRestriction(principal, request);
-      const env = loadEnv();
       const now = new Date();
       const admitted = await repositories.scans.admitApiRequest({
         apiKeyId: principal.apiKeyId,
         idempotencyKey,
         request,
         ...(principal.projectId ? { projectId: principal.projectId } : {}),
+        ...(projectContextVersionId ? { projectContextVersionId } : {}),
         ...(principal.requesterFingerprintHash
           ? { requesterFingerprintHash: principal.requesterFingerprintHash }
           : {}),
@@ -269,7 +380,7 @@ export function createV1Service(input: { schedule(publicId: string): void }): V1
         now,
       });
       if (admitted.status === "COST_LIMITED") {
-        await repositories.apiKeys.recordLimited({
+        await getAuthRepositories().apiKeys.recordLimited({
           apiKeyId: principal.apiKeyId,
           presentedPrefix: principal.visiblePrefix ?? "unknown",
           outcome: "COST_LIMITED",
@@ -285,6 +396,12 @@ export function createV1Service(input: { schedule(publicId: string): void }): V1
       }
       if (admitted.status === "KEY_INACTIVE") {
         throw new ApiServiceError("FORBIDDEN", "The API key is no longer active.");
+      }
+      if (admitted.status === "PROJECT_MISMATCH") {
+        throw new ApiServiceError(
+          "CONFLICT",
+          "The saved project URL changed before this request could be admitted.",
+        );
       }
       if (admitted.status === "USAGE_LIMITED") {
         throw new ApiServiceError(
@@ -314,9 +431,58 @@ export function createV1Service(input: { schedule(publicId: string): void }): V1
       return response;
     },
 
+    async createOrReuseForProject({ principal, projectId, idempotencyKey, request }) {
+      if (!principal.projectId || principal.projectId !== projectId) {
+        throw new ApiServiceError(
+          "FORBIDDEN",
+          "The API key is not restricted to this claimed project.",
+        );
+      }
+      const profile = await getRepositories().scanData.getCurrentProjectProfile(projectId);
+      if (!profile) {
+        throw new ApiServiceError(
+          "CONFLICT",
+          "The claimed project has no active saved context profile.",
+        );
+      }
+      const context = ProjectContextSchema.parse(profile.contextVersion.context);
+      const savedCapabilityNames = ContentCapabilityNameSchema.options.filter(
+        (name) => profile.contextVersion.contentCapabilities[name],
+      );
+      const requested = ProjectNextMoveRequestSchema.parse(request);
+      const requestedCapabilityNames = requested.content_capabilities ?? savedCapabilityNames;
+      const unavailableCapabilities = requestedCapabilityNames.filter(
+        (name) => !savedCapabilityNames.includes(name),
+      );
+      if (unavailableCapabilities.length > 0) {
+        throw new ApiServiceError(
+          "INVALID_REQUEST",
+          "Requested content capabilities must already be enabled in the saved project profile.",
+        );
+      }
+      return service.createOrReuse({
+        principal,
+        idempotencyKey,
+        projectContextVersionId: profile.contextVersion.id,
+        request: {
+          product_url: profile.project.url,
+          ...(requested.objective === undefined ? {} : { objective: requested.objective }),
+          ...(context.markets[0] === undefined ? {} : { market: context.markets[0] }),
+          language: context.language,
+          preferred_channels: requested.preferred_channels ?? context.suitableChannels,
+          available_formats: context.availableFormats,
+          ...(requestedCapabilityNames.length === 0
+            ? {}
+            : { content_capabilities: requestedCapabilityNames }),
+          generation_level: requested.generation_level,
+        },
+      });
+    },
+
     async getStatus({ principal, id }) {
       await enforceRateLimit(principal, "STATUS");
       return responseFor(principal, id);
     },
   };
+  return service;
 }

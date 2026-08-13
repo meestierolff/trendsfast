@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   createProviderRegistry: vi.fn(),
   providerCollect: vi.fn(),
   verifyProviderReadback: vi.fn(),
-  getRepositories: vi.fn(),
+  getOpsRepositories: vi.fn(),
   deploymentProvenance: vi.fn(() => ({
     deploymentEnvironment: "preview",
     releaseSha: "verification-test-sha",
@@ -32,7 +32,7 @@ vi.mock("@trendsfast/providers", () => ({
   createProviderRegistry: mocks.createProviderRegistry,
   verifyProviderReadback: mocks.verifyProviderReadback,
 }));
-vi.mock("../../lib/server-database", () => ({ getRepositories: mocks.getRepositories }));
+vi.mock("../../lib/server-database", () => ({ getOpsRepositories: mocks.getOpsRepositories }));
 vi.mock("../../lib/deployment-provenance", () => ({
   deploymentProvenance: mocks.deploymentProvenance,
 }));
@@ -55,7 +55,7 @@ function record(id: string) {
     readbackVerified: false,
     canonicalUrls: [],
     latencyMs: null,
-    estimatedCostUsd: "0.500000",
+    estimatedCostUsd: "0.731000",
     actualCostUsd: null,
     quotaUsed: "0.0000",
     limitations: [],
@@ -75,13 +75,14 @@ describe("provider verification paid-effect admission", () => {
     vi.clearAllMocks();
     mocks.loadEnv.mockReturnValue({
       PROVIDER_CREDENTIAL_MODE: "managed",
+      PROVIDER_CALLS_ENABLED: true,
       PROVIDER_TIMEOUT_MS: 15_000,
       TAVILY_API_KEY: "server-side-key",
     });
     mocks.resolveProviderCosts.mockReturnValue({
-      tavilyCreditUsd: 0.25,
-      youtubeQuotaUnitUsd: 0.01,
-      maximumProviderCostUsdPerScan: 1,
+      tavilyCreditUsd: 0.317,
+      youtubeQuotaUnitUsd: 3.777,
+      maximumProviderCostUsdPerScan: 91.333,
     });
     mocks.createProviderRegistry.mockReturnValue(
       new Map([
@@ -95,7 +96,7 @@ describe("provider verification paid-effect admission", () => {
               retryPolicy: { maxAttempts: 2 },
               maxResultsPerScan: 3,
             },
-            estimate: vi.fn(() => ({ estimatedUsd: 0.25, calls: 1, quotaUnits: 1 })),
+            estimate: vi.fn(() => ({ estimatedUsd: 0.317, calls: 1, quotaUnits: 1 })),
             collect: mocks.providerCollect,
           },
         ],
@@ -119,14 +120,14 @@ describe("provider verification paid-effect admission", () => {
         completedAt: new Date("2026-08-12T10:00:01.000Z"),
       })),
     };
-    mocks.getRepositories.mockReturnValue({ providerVerifications: repository });
+    mocks.getOpsRepositories.mockReturnValue({ providerVerifications: repository });
     const verificationResult = {
       state: "VERIFIED",
       healthStatus: "HEALTHY",
       readbackVerified: true,
       canonicalUrls: ["https://example.com/original"],
       latencyMs: 10,
-      estimatedCostUsd: 0.25,
+      estimatedCostUsd: 0.317,
       actualCostUsd: 0.2,
       quotaUsed: 1,
       limitations: [],
@@ -166,7 +167,7 @@ describe("provider verification paid-effect admission", () => {
       admitAttempt: vi.fn(async () => ({ record: denied, created: true, admitted: false })),
       complete: vi.fn(),
     };
-    mocks.getRepositories.mockReturnValue({ providerVerifications: repository });
+    mocks.getOpsRepositories.mockReturnValue({ providerVerifications: repository });
 
     const result = await runConfiguredProviderVerification({
       attemptId: denied.id,
@@ -183,7 +184,7 @@ describe("provider verification paid-effect admission", () => {
   it("does not truncate a retry-inclusive reservation to the configured ceiling", async () => {
     const attemptId = "382531bc-3455-48b9-a04e-266ee1c77b36";
     const adapter = mocks.createProviderRegistry().get("tavily")!;
-    vi.mocked(adapter.estimate).mockReturnValue({ estimatedUsd: 0.75, calls: 1, quotaUnits: 1 });
+    vi.mocked(adapter.estimate).mockReturnValue({ estimatedUsd: 47.111, calls: 1, quotaUnits: 1 });
     const denied = {
       ...record(attemptId),
       state: "FAILED" as const,
@@ -193,7 +194,7 @@ describe("provider verification paid-effect admission", () => {
       admitAttempt: vi.fn(async () => ({ record: denied, created: true, admitted: false })),
       complete: vi.fn(),
     };
-    mocks.getRepositories.mockReturnValue({ providerVerifications: repository });
+    mocks.getOpsRepositories.mockReturnValue({ providerVerifications: repository });
 
     await runConfiguredProviderVerification({
       attemptId,
@@ -203,7 +204,7 @@ describe("provider verification paid-effect admission", () => {
     });
 
     expect(repository.admitAttempt).toHaveBeenCalledWith(
-      expect.objectContaining({ estimatedCostReservationUsd: 1.5, maximumCostUsd: 1 }),
+      expect.objectContaining({ estimatedCostReservationUsd: 94.222, maximumCostUsd: 91.333 }),
     );
     expect(mocks.verifyProviderReadback).not.toHaveBeenCalled();
   });
@@ -212,13 +213,14 @@ describe("provider verification paid-effect admission", () => {
     vi.stubEnv("YOUTUBE_API_KEY", "server-side-key");
     mocks.loadEnv.mockReturnValue({
       PROVIDER_CREDENTIAL_MODE: "managed",
+      PROVIDER_CALLS_ENABLED: true,
       PROVIDER_TIMEOUT_MS: 15_000,
       YOUTUBE_API_KEY: "server-side-key",
     });
     mocks.resolveProviderCosts.mockReturnValue({
-      tavilyCreditUsd: 0.25,
+      tavilyCreditUsd: 0.317,
       youtubeQuotaUnitUsd: 0,
-      maximumProviderCostUsdPerScan: 1,
+      maximumProviderCostUsdPerScan: 91.333,
     });
     mocks.createProviderRegistry.mockReturnValue(
       new Map([
@@ -247,7 +249,7 @@ describe("provider verification paid-effect admission", () => {
         completedAt: new Date("2026-08-12T10:00:01.000Z"),
       })),
     };
-    mocks.getRepositories.mockReturnValue({ providerVerifications: repository });
+    mocks.getOpsRepositories.mockReturnValue({ providerVerifications: repository });
     mocks.verifyProviderReadback.mockResolvedValue({
       state: "DEGRADED",
       healthStatus: "DEGRADED",
@@ -269,5 +271,65 @@ describe("provider verification paid-effect admission", () => {
     expect(mocks.verifyProviderReadback).toHaveBeenCalledWith(
       expect.objectContaining({ healthCheckEstimatedCostUsd: 0, healthCheckQuotaUnits: 1 }),
     );
+  });
+
+  it("records the exact public deployment target for production verification", async () => {
+    mocks.deploymentProvenance.mockReturnValueOnce({
+      deploymentEnvironment: "production",
+      releaseSha: "9afad5e123456789",
+      deploymentHost: "ops.trendsfast.example",
+      deploymentId: "dpl_ops_123",
+    });
+    mocks.loadEnv.mockReturnValue({
+      PROVIDER_CREDENTIAL_MODE: "managed",
+      PROVIDER_CALLS_ENABLED: true,
+      PROVIDER_TIMEOUT_MS: 15_000,
+      TAVILY_API_KEY: "server-side-key",
+      PUBLIC_DEPLOYMENT_HOST: "trendsfast.example",
+      PUBLIC_DEPLOYMENT_ID: "dpl_public_123",
+    });
+    const attemptId = "09f68db5-e407-47c2-9af9-99fa82f2be58";
+    const admitted = record(attemptId);
+    const repository = {
+      admitAttempt: vi.fn(async () => ({ record: admitted, created: true, admitted: false })),
+      complete: vi.fn(),
+    };
+    mocks.getOpsRepositories.mockReturnValue({ providerVerifications: repository });
+
+    await runConfiguredProviderVerification({
+      attemptId,
+      provider: "tavily",
+      initiatedBy: "founder:test",
+      query: "distribution research",
+    });
+
+    expect(repository.admitAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deploymentEnvironment: "production",
+        releaseSha: "9afad5e123456789",
+        deploymentHost: "trendsfast.example",
+        deploymentId: "dpl_public_123",
+      }),
+    );
+  });
+
+  it("fails closed when production verification lacks the public target identity", async () => {
+    mocks.deploymentProvenance.mockReturnValueOnce({
+      deploymentEnvironment: "production",
+      releaseSha: "9afad5e123456789",
+      deploymentHost: "ops.trendsfast.example",
+      deploymentId: "dpl_ops_123",
+    });
+
+    await expect(
+      runConfiguredProviderVerification({
+        attemptId: "31d7bdcb-b940-490e-a735-d820e21c4a32",
+        provider: "tavily",
+        initiatedBy: "founder:test",
+        query: "distribution research",
+      }),
+    ).rejects.toThrow("PROVIDER_VERIFICATION_PUBLIC_TARGET_NOT_CONFIGURED");
+    expect(mocks.getOpsRepositories).toHaveBeenCalledTimes(1);
+    expect(mocks.verifyProviderReadback).not.toHaveBeenCalled();
   });
 });

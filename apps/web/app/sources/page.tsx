@@ -91,14 +91,6 @@ export default async function SourcesPage() {
                       <dt>Canonical URLs</dt>
                       <dd>{source.readBackEvidence.canonicalUrlCount}</dd>
                     </div>
-                    <div>
-                      <dt>Actual provider cost</dt>
-                      <dd>{source.readBackEvidence.actualCostUsd ?? "Unknown"}</dd>
-                    </div>
-                    <div>
-                      <dt>Quota</dt>
-                      <dd>{source.readBackEvidence.quotaUsed}</dd>
-                    </div>
                   </>
                 ) : null}
               </dl>

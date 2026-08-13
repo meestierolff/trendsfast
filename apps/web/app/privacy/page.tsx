@@ -40,11 +40,12 @@ export default function PrivacyPage() {
           <h2>Retention and deletion</h2>
           <p>
             The current configuration defaults to a 90-day scan and analytics retention target.
-            Paid-launch interest expires after 180 days unless you consent again. No automated purge
-            scheduler or self-service deletion endpoint is enabled yet. A reviewed operator can
-            invoke the exact-project, launch-interest, or expiry-purge procedure; completion and
-            lawful retention exceptions must be verified manually. Public launch remains gated on an
-            owned, monitored workflow.
+            Paid-launch interest expires after 180 days unless you consent again. The application
+            includes an authenticated, dedicated-role retention job and an ops-only daily schedule
+            template, but no hosted execution or self-service deletion endpoint is verified yet. A
+            reviewed operator can invoke the exact-project, launch-interest, or expiry-purge
+            procedure; completion and lawful retention exceptions must be verified manually. Public
+            launch remains gated on owned, monitored privacy intake and scheduler workflows.
           </p>
           <h2>Providers</h2>
           <p>

@@ -18,9 +18,9 @@ function repository(overrides: Partial<PublicScanRepository> = {}): PublicScanRe
 }
 
 const globalPolicy = {
-  globalDailyLimit: 20,
-  globalDailyBudgetUsd: 5,
-  costReservationUsd: 0.25,
+  globalDailyLimit: 23,
+  globalDailyBudgetUsd: 7.25,
+  costReservationUsd: 0.317,
 } as const;
 
 describe("public scan acceptance", () => {
@@ -39,8 +39,17 @@ describe("public scan acceptance", () => {
     expect(
       publicScanCredentialModeAvailable("fixture", "https://localhost:3000", undefined, true),
     ).toBe(false);
-    expect(publicScanCredentialModeAvailable("managed", "https://trendsfast.com")).toBe(true);
-    expect(publicScanCredentialModeAvailable("byok", "https://trendsfast.com")).toBe(true);
+    expect(publicScanCredentialModeAvailable("managed", "https://trendsfast.com")).toBe(false);
+    expect(publicScanCredentialModeAvailable("byok", "https://trendsfast.com")).toBe(false);
+    expect(
+      publicScanCredentialModeAvailable(
+        "managed",
+        "https://trendsfast.com",
+        "production",
+        true,
+        true,
+      ),
+    ).toBe(true);
   });
 
   it("stores only a keyed requester hash and creates an unguessable token", async () => {
@@ -51,7 +60,7 @@ describe("public scan acceptance", () => {
         repository: repo,
         fingerprintPepper: "pepper-pepper-pepper-pepper-pepper",
         anonymousSessionHash: "a".repeat(64),
-        dailyLimit: 20,
+        dailyLimit: 31,
         ...globalPolicy,
       },
     );
@@ -80,11 +89,29 @@ describe("public scan acceptance", () => {
       {
         repository: repo,
         fingerprintPepper: "pepper-pepper-pepper-pepper-pepper",
-        dailyLimit: 20,
+        dailyLimit: 31,
         ...globalPolicy,
       },
     );
     expect(accepted.reused).toBe(true);
+  });
+
+  it("routes an existing product to its authenticated owner instead of starting a public refresh", async () => {
+    await expect(
+      acceptPublicScan(
+        { productUrl: "https://claimed.example", address: "203.0.113.10" },
+        {
+          repository: repository({
+            admitPublicRequest: vi.fn(async () => ({
+              status: "PROJECT_ALREADY_EXISTS" as const,
+            })),
+          }),
+          fingerprintPepper: "pepper-pepper-pepper-pepper-pepper",
+          dailyLimit: 31,
+          ...globalPolicy,
+        },
+      ),
+    ).rejects.toMatchObject({ code: "PROJECT_ALREADY_EXISTS", status: 409 });
   });
 
   it("rejects honeypot and rate-limit abuse", async () => {
@@ -94,7 +121,7 @@ describe("public scan acceptance", () => {
         {
           repository: repository(),
           fingerprintPepper: "pepper-pepper-pepper-pepper-pepper",
-          dailyLimit: 20,
+          dailyLimit: 31,
           ...globalPolicy,
         },
       ),
@@ -108,7 +135,7 @@ describe("public scan acceptance", () => {
             admitPublicRequest: vi.fn(async () => ({ status: "RATE_LIMITED" as const })),
           }),
           fingerprintPepper: "pepper-pepper-pepper-pepper-pepper",
-          dailyLimit: 20,
+          dailyLimit: 31,
           ...globalPolicy,
         },
       ),
@@ -126,7 +153,7 @@ describe("public scan acceptance", () => {
               admitPublicRequest: vi.fn(async () => ({ status })),
             }),
             fingerprintPepper: "pepper-pepper-pepper-pepper-pepper",
-            dailyLimit: 1,
+            dailyLimit: 3,
             now: new Date("2026-08-12T12:00:00.000Z"),
             ...globalPolicy,
           },

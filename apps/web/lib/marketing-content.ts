@@ -164,7 +164,7 @@ export const FAQS = [
   {
     question: "What are the plan limits?",
     answer:
-      "The planned Founder plan covers one monitored product, one scheduled run per day, ten accepted on-demand refreshes per billing month, at most one delivered move per day, and 30-day history.",
+      "Founder is €39/month and covers one monitored product, one scheduled run per day, ten accepted on-demand refreshes per billing month, at most one delivered move per day, and 30-day history.",
   },
   {
     question: "How does cloud differ from open source?",

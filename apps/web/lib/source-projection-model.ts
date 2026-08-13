@@ -12,19 +12,10 @@ export type SourceVerificationView = {
   state: SourceEngineeringState | "RUNNING";
   credentialMode: string;
   deploymentEnvironment: "local" | "preview" | "production";
-  releaseSha: string | null;
-  deploymentHost: string | null;
-  deploymentId: string | null;
   healthStatus: string | null;
   readbackVerified: boolean;
-  canonicalUrls: string[];
+  canonicalUrlCount: number;
   latencyMs: number | null;
-  estimatedCostUsd: string;
-  actualCostUsd: string | null;
-  quotaUsed: string;
-  limitations: string[];
-  failureCode: string | null;
-  failureMessage: string | null;
   checkedAt: Date | null;
   completedAt: Date | null;
 };
@@ -45,14 +36,9 @@ export type PublicSourceStatusView = {
     provider: string;
     credentialMode: string;
     deploymentEnvironment: "local" | "preview" | "production";
-    releaseSha: string | null;
     healthStatus: string | null;
     canonicalUrlCount: number;
     latencyMs: number | null;
-    estimatedCostUsd: string;
-    actualCostUsd: string | null;
-    quotaUsed: string;
-    failureCode: string | null;
     checkedAt: string | null;
   } | null;
 };
@@ -81,10 +67,13 @@ function applyVerification(
   verification: SourceVerificationView | undefined,
 ): SourceCatalogItem {
   if (!verification || verification.state === "RUNNING") return source;
-  const effectiveState =
+  if (["ADAPTER_ONLY", "LEGAL_REVIEW", "PLANNED"].includes(source.status)) return source;
+  const verifiedState =
     verification.state === "VERIFIED" && verification.healthStatus !== "HEALTHY"
       ? "DEGRADED"
       : verification.state;
+  const effectiveState =
+    source.slug === "manual" && verifiedState === "VERIFIED" ? "DEGRADED" : verifiedState;
   return {
     ...source,
     engineeringState: effectiveState,
@@ -93,7 +82,7 @@ function applyVerification(
       verification.healthStatus === "HEALTHY" &&
       verification.readbackVerified === true &&
       verification.deploymentEnvironment === "production" &&
-      Boolean(verification.releaseSha && verification.deploymentHost),
+      source.slug !== "manual",
   };
 }
 
@@ -111,11 +100,10 @@ export function projectPublicSourceStatuses(
       currentDeployment.deploymentEnvironment !== "production" ||
       !currentDeployment.releaseSha ||
       !currentDeployment.deploymentHost ||
+      !currentDeployment.deploymentId ||
       record.deploymentEnvironment !== "production" ||
-      record.releaseSha !== currentDeployment.releaseSha ||
-      record.deploymentHost !== currentDeployment.deploymentHost ||
-      (currentDeployment.deploymentId !== null &&
-        record.deploymentId !== currentDeployment.deploymentId)
+      !Number.isSafeInteger(record.canonicalUrlCount) ||
+      record.canonicalUrlCount < 0
     ) {
       continue;
     }
@@ -126,7 +114,10 @@ export function projectPublicSourceStatuses(
     }
   }
   return SOURCE_CATALOG.map((catalogItem) => {
-    const verification = bySource.get(catalogToSource[catalogItem.slug] ?? catalogItem.slug);
+    const candidate = bySource.get(catalogToSource[catalogItem.slug] ?? catalogItem.slug);
+    const verification = ["ADAPTER_ONLY", "LEGAL_REVIEW", "PLANNED"].includes(catalogItem.status)
+      ? undefined
+      : candidate;
     const source = applyVerification(catalogItem, verification);
     const completedAt = verification?.completedAt?.toISOString() ?? null;
     return {
@@ -136,9 +127,7 @@ export function projectPublicSourceStatuses(
       publicLabel: publicSourceLabel(source),
       role: source.role,
       limitation: source.limitation,
-      limitations: verification?.limitations.length
-        ? [...verification.limitations]
-        : [source.limitation],
+      limitations: [source.limitation],
       exampleAvailable: source.exampleAvailable,
       productionVerified: source.productionVerified,
       lastVerifiedAt: verification?.checkedAt?.toISOString() ?? completedAt,
@@ -148,17 +137,12 @@ export function projectPublicSourceStatuses(
             provider: verification.provider,
             credentialMode: verification.credentialMode,
             deploymentEnvironment: verification.deploymentEnvironment,
-            releaseSha: verification.releaseSha,
             healthStatus: verification.healthStatus,
             // Verification targets can belong to private founder scans. The
             // durable ops record retains exact URLs; the public projection
             // exposes only proof cardinality.
-            canonicalUrlCount: verification.canonicalUrls.length,
+            canonicalUrlCount: verification.canonicalUrlCount,
             latencyMs: verification.latencyMs,
-            estimatedCostUsd: verification.estimatedCostUsd,
-            actualCostUsd: verification.actualCostUsd,
-            quotaUsed: verification.quotaUsed,
-            failureCode: verification.failureCode,
             checkedAt: verification.checkedAt?.toISOString() ?? completedAt,
           }
         : null,

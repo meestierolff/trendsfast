@@ -14,19 +14,10 @@ function record(
     state: "VERIFIED",
     credentialMode: "managed",
     deploymentEnvironment,
-    releaseSha: "9afad5e123456789",
-    deploymentHost: "trendsfast.example",
-    deploymentId: "deployment_123",
     healthStatus: "HEALTHY",
     readbackVerified: true,
-    canonicalUrls: ["https://private-founder.example"],
+    canonicalUrlCount: 1,
     latencyMs: 50,
-    estimatedCostUsd: "0.000000",
-    actualCostUsd: "0.000000",
-    quotaUsed: "0.0000",
-    limitations: [],
-    failureCode: null,
-    failureMessage: null,
     checkedAt: new Date("2026-08-11T12:00:00.000Z"),
     completedAt: new Date("2026-08-11T12:00:00.000Z"),
   };
@@ -93,6 +84,9 @@ describe("public source projection", () => {
     );
     expect(serialized).not.toContain("private-founder.example");
     expect(serialized).not.toContain("failureMessage");
+    expect(serialized).not.toContain("releaseSha");
+    expect(serialized).not.toContain("estimatedCostUsd");
+    expect(serialized).not.toContain("actualCostUsd");
     expect(serialized).toContain('"canonicalUrlCount":1');
   });
 
@@ -136,9 +130,7 @@ describe("public source projection", () => {
       ...record("production"),
       state: "FAILED" as const,
       readbackVerified: false,
-      canonicalUrls: [],
-      failureCode: "PROVIDER_HEALTH_FAILED",
-      failureMessage: "Bearer secret-that-must-not-be-public",
+      canonicalUrlCount: 0,
     };
     const website = projectPublicSourceStatuses([failed], currentProduction).find(
       (source) => source.slug === "website",
@@ -148,23 +140,34 @@ describe("public source projection", () => {
       productionVerified: false,
       lastVerifiedAt: "2026-08-11T12:00:00.000Z",
     });
-    expect(JSON.stringify(website)).not.toContain("secret-that-must-not-be-public");
+    expect(JSON.stringify(website)).not.toContain("failureMessage");
   });
 
-  it("does not carry Connected truth across a different release or deployment", () => {
-    const priorRelease = record("production");
-    const nextDeployment = {
+  it("does not project truth when the public deployment identity is incomplete", () => {
+    const incompleteDeployment = {
       ...currentProduction,
-      releaseSha: "newrelease1234567",
-      deploymentId: "deployment_456",
+      deploymentId: null,
     };
-    const website = projectPublicSourceStatuses([priorRelease], nextDeployment).find(
+    const website = projectPublicSourceStatuses([record("production")], incompleteDeployment).find(
       (source) => source.slug === "website",
     );
     expect(website).toMatchObject({
       publicLabel: "Coming soon",
       productionVerified: false,
       technicalState: "UNVERIFIED",
+      readBackEvidence: null,
+    });
+  });
+
+  it("never upgrades a legal-review source from a technical verification row", () => {
+    const reddit = projectPublicSourceStatuses(
+      [{ ...record("production"), source: "reddit", provider: "Technical probe" }],
+      currentProduction,
+    ).find((source) => source.slug === "reddit");
+    expect(reddit).toMatchObject({
+      publicLabel: "Permission required",
+      productionVerified: false,
+      technicalState: "LEGAL_REVIEW",
       readBackEvidence: null,
     });
   });
