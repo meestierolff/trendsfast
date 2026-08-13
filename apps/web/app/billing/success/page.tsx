@@ -7,7 +7,7 @@ import { loadEnv } from "@trendsfast/config";
 
 import { BillingSuccessClient } from "../../../components/billing-success-client";
 import { configuredStripeBilling } from "../../../lib/billing-service";
-import { getRepositories } from "../../../lib/server-database";
+import { getBillingRepositories } from "../../../lib/server-database";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
@@ -21,9 +21,15 @@ export default async function BillingSuccessPage({
 }: {
   searchParams: Promise<{ session_id?: string | string[] }>;
 }) {
+  const env = loadEnv();
+  if (
+    !env.BILLING_CHECKOUT_ENABLED ||
+    !configuredStripeBilling(env).availability.checkoutAvailable
+  ) {
+    notFound();
+  }
   const { session_id: value } = await searchParams;
-  if (!configuredStripeBilling().availability.checkoutAvailable) notFound();
-  const portalLoginUrl = loadEnv().STRIPE_PORTAL_LOGIN_URL;
+  const portalLoginUrl = env.STRIPE_PORTAL_LOGIN_URL;
   const sessionId = typeof value === "string" ? value : null;
   if (!sessionId || !/^cs_(?:test_|live_)?[A-Za-z0-9_]{8,255}$/.test(sessionId)) {
     notFound();
@@ -50,7 +56,7 @@ export default async function BillingSuccessPage({
       </main>
     );
   }
-  const claim = await getRepositories().billing.checkoutClaimStatus({
+  const claim = await getBillingRepositories().billing.checkoutClaimStatus({
     claimHash,
     stripeCheckoutSessionId: sessionId,
   });
@@ -67,8 +73,9 @@ export default async function BillingSuccessPage({
       <p className="eyebrow">Founder monitoring</p>
       <h1>Confirming your subscription.</h1>
       <p>
-        This return page never grants access. TrendsFast waits for the signed subscription and
-        current-period invoice webhooks to agree before monitoring or an API key becomes active.
+        This return page never grants access or infers payment. TrendsFast waits for the signed
+        €39/month Founder subscription and current-period invoice webhooks to agree before
+        monitoring or an API key becomes active.
       </p>
       <BillingSuccessClient sessionId={sessionId} initialState={initialState} />
       {portalLoginUrl ? (

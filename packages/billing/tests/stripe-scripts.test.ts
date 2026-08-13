@@ -59,10 +59,10 @@ describe("Stripe operator scripts", () => {
     }
   });
 
-  it("requires both explicit live acknowledgements before any live operation", () => {
+  it("requires both explicit catalog acknowledgements before any live catalog operation", () => {
     for (const script of ["bootstrap-live.sh", "verify-live.sh"] as const) {
       expect(source(script)).toContain('I_UNDERSTAND_LIVE_STRIPE:-}" != "YES"');
-      expect(source(script)).toContain('STRIPE_LIVE_ENABLEMENT_APPROVED:-}" != "YES"');
+      expect(source(script)).toContain('STRIPE_LIVE_CATALOG_APPROVED:-}" != "YES"');
       expect(source(script).indexOf("I_UNDERSTAND_LIVE_STRIPE")).toBeLessThan(
         source(script).indexOf("require_cli_identity"),
       );
@@ -119,7 +119,11 @@ describe("Stripe operator scripts", () => {
     const catalog = source("_catalog.sh");
     const bootstraps = `${source("bootstrap-sandbox.sh")}\n${source("bootstrap-live.sh")}`;
     expect(catalog).toContain('stripe_api_version="2026-07-29.dahlia"');
-    expect(catalog).toContain('lookup_key="trendsfast_founder_monthly"');
+    expect(catalog).toContain('lookup_key="trendsfast_founder_monthly_eur"');
+    expect(catalog).toContain('price?.currency !== "eur"');
+    expect(catalog).toContain('price?.tax_behavior !== "exclusive"');
+    expect(bootstraps).toContain("--currency=eur");
+    expect(bootstraps).toContain("--tax-behavior=exclusive");
     expect(bootstraps).toContain("products create");
     expect(bootstraps).toContain("prices create");
     for (const script of [

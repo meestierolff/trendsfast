@@ -5,13 +5,20 @@ import { createHash } from "node:crypto";
 import { createStripeBilling, normalizeStripeEvent } from "@trendsfast/billing";
 import { loadEnv, type Environment } from "@trendsfast/config";
 
-import { getRepositories } from "./server-database";
+import { getBillingRepositories } from "./server-database";
 import { deploymentProvenance } from "./deployment-provenance";
 
 export class StripeWebhookVerificationError extends Error {
   constructor() {
     super("The Stripe webhook signature could not be verified");
     this.name = "StripeWebhookVerificationError";
+  }
+}
+
+export class StripeWebhookUnavailableError extends Error {
+  constructor() {
+    super("Stripe webhook projection is disabled by the deployment policy");
+    this.name = "StripeWebhookUnavailableError";
   }
 }
 
@@ -22,6 +29,7 @@ export function configuredStripeBilling(env: Environment = loadEnv()) {
     paidMonitoringEnabled: env.PAID_MONITORING_ENABLED,
     mode: env.STRIPE_MODE,
     providerCredentialMode: env.PROVIDER_CREDENTIAL_MODE,
+    sandboxKeyRotated: env.STRIPE_SANDBOX_KEY_ROTATED === "YES",
     ...(env.STRIPE_SECRET_KEY ? { secretKey: env.STRIPE_SECRET_KEY } : {}),
     ...(env.STRIPE_WEBHOOK_SECRET ? { webhookSecret: env.STRIPE_WEBHOOK_SECRET } : {}),
     ...(env.STRIPE_FOUNDER_CLOUD_PRICE_ID
@@ -38,13 +46,20 @@ export async function projectStripeWebhook(input: { rawBody: Uint8Array; signatu
   const env = loadEnv();
   const deployment = deploymentProvenance();
   const billing = configuredStripeBilling(env);
+  if (!billing.availability.enabled) {
+    throw new StripeWebhookUnavailableError();
+  }
   if (
+    (env.STRIPE_MODE === "test" && env.STRIPE_SANDBOX_KEY_ROTATED !== "YES") ||
     (deployment.deploymentEnvironment === "production" && env.STRIPE_MODE !== "live") ||
     (deployment.deploymentEnvironment !== "production" && env.STRIPE_MODE === "live") ||
     (env.STRIPE_MODE === "test" && env.PROVIDER_CREDENTIAL_MODE !== "fixture") ||
     (env.STRIPE_MODE === "live" && env.PROVIDER_CREDENTIAL_MODE === "fixture")
   ) {
     throw new StripeWebhookVerificationError();
+  }
+  if (!billing.availability.checkoutAvailable) {
+    throw new StripeWebhookUnavailableError();
   }
   const body = Buffer.from(input.rawBody);
   let stripeEvent: unknown;
@@ -56,7 +71,7 @@ export async function projectStripeWebhook(input: { rawBody: Uint8Array; signatu
   const event = normalizeStripeEvent(stripeEvent);
   if (!event) return { status: "IGNORED" as const, reason: "UNSUPPORTED_OR_INVALID_EVENT" };
   const payloadHash = `sha256:${createHash("sha256").update(body).digest("hex")}`;
-  const repositories = getRepositories();
+  const repositories = getBillingRepositories();
   return repositories.billing.projectWebhook({
     event,
     payloadHash,

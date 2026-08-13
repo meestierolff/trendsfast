@@ -16,17 +16,21 @@ const mocks = vi.hoisted(() => ({
   retrieveCheckout: vi.fn(),
   rotateProjectCheckoutClaim: vi.fn(),
   checkoutAvailable: true,
+  billingCheckoutEnabled: true,
 }));
 
 vi.mock("@trendsfast/config", () => ({
   loadEnv: () => ({
     APP_URL: "https://trendsfast.example",
     BILLING_ENABLED: true,
+    BILLING_CHECKOUT_ENABLED: mocks.billingCheckoutEnabled,
     PAID_MONITORING_ENABLED: true,
     STRIPE_MODE: "test",
-    API_CREATE_RATE_LIMIT_PER_HOUR: 20,
+    STRIPE_SANDBOX_KEY_ROTATED: "YES",
+    API_CREATE_RATE_LIMIT_PER_HOUR: 31,
   }),
   resolveApiProviderCostLimitUsdPerHour: () => 0,
+  resolveApiRateLimit: () => 31,
 }));
 vi.mock("../../lib/billing-service", () => ({
   configuredStripeBilling: () => ({
@@ -44,7 +48,7 @@ vi.mock("../../lib/scan-view-service", () => ({
   resolveReadyScanIdentity: mocks.resolveReadyScanIdentity,
 }));
 vi.mock("../../lib/server-database", () => ({
-  getRepositories: () => ({
+  getBillingRepositories: () => ({
     billing: {
       bindProjectCheckout: mocks.bindProjectCheckout,
       checkoutClaimStatus: mocks.checkoutClaimStatus,
@@ -120,6 +124,7 @@ describe("delivered-result billing routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.checkoutAvailable = true;
+    mocks.billingCheckoutEnabled = true;
     mocks.resolveReadyScanIdentity.mockResolvedValue({
       scanRequestId: "5ba369db-80df-4473-9ba1-f55bfb713a66",
       nextMoveId: "1cb9c6e8-dcb2-41ab-8923-a07128624069",
@@ -279,6 +284,25 @@ describe("delivered-result billing routes", () => {
     expect(mocks.consumeCheckoutClaim).not.toHaveBeenCalled();
   });
 
+  it("stops Checkout and claim activation at the independent kill switch before billing work", async () => {
+    mocks.billingCheckoutEnabled = false;
+
+    const checkout = await deliveredCheckout(checkoutRequest(), {
+      params: Promise.resolve({ token: privateResultToken }),
+    });
+
+    expect(checkout.status).toBe(503);
+    expect(mocks.resolveReadyScanIdentity).not.toHaveBeenCalled();
+    expect(mocks.reserveProjectCheckout).not.toHaveBeenCalled();
+    expect(mocks.createCheckout).not.toHaveBeenCalled();
+
+    const { rawClaim } = createCheckoutClaim();
+    expect((await claimStatus(claimRequest("GET", rawClaim))).status).toBe(503);
+    expect((await consumeClaim(claimRequest("POST", rawClaim))).status).toBe(503);
+    expect(mocks.checkoutClaimStatus).not.toHaveBeenCalled();
+    expect(mocks.consumeCheckoutClaim).not.toHaveBeenCalled();
+  });
+
   it("does not create a chargeable session when the delivery expires before its claim window", async () => {
     mocks.resolveReadyScanIdentity.mockResolvedValueOnce({
       scanRequestId: "5ba369db-80df-4473-9ba1-f55bfb713a66",
@@ -356,7 +380,7 @@ describe("delivered-result billing routes", () => {
     expect(mocks.consumeCheckoutClaim).toHaveBeenCalledWith(
       expect.objectContaining({
         environment: "test",
-        rateLimitPerHour: 20,
+        rateLimitPerHour: 31,
         providerCostLimitUsd: 0,
       }),
     );

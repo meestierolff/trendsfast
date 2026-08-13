@@ -81,7 +81,7 @@ export function BillingSuccessClient({
   if (state === "READY_TO_ISSUE") {
     return (
       <div>
-        <p>Your webhook-authoritative entitlement is active.</p>
+        <p>Your webhook-authoritative €39/month Founder entitlement is active.</p>
         <button type="button" onClick={() => void issueKey()}>
           Reveal my project API key
         </button>

@@ -64,7 +64,7 @@ export function PricingCards({
       <article className="pricing-card pricing-card-featured" id="founder">
         <span className="pricing-kicker">Founder</span>
         <h3>
-          $39 <small>/ month</small>
+          €39 <small>/ month</small>
         </h3>
         <p>Planned managed monitoring for one product, with bounded research usage.</p>
         <FeatureList items={founder} />

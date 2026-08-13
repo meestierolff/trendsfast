@@ -2,14 +2,23 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-const mocks = vi.hoisted(() => ({ projectStripeWebhook: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  projectStripeWebhook: vi.fn(),
+  dispatchOperationsAlerts: vi.fn(),
+}));
 vi.mock("../../lib/billing-service", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../lib/billing-service")>();
   return { ...actual, projectStripeWebhook: mocks.projectStripeWebhook };
 });
+vi.mock("../../lib/ops-alert-service", () => ({
+  dispatchOperationsAlerts: mocks.dispatchOperationsAlerts,
+}));
 
-import { WebhookPayloadConflictError } from "@trendsfast/database";
-import { StripeWebhookVerificationError } from "../../lib/billing-service";
+import { StripeWebhookProjectionError, WebhookPayloadConflictError } from "@trendsfast/database";
+import {
+  StripeWebhookUnavailableError,
+  StripeWebhookVerificationError,
+} from "../../lib/billing-service";
 import { POST } from "../../app/api/billing/webhook/route";
 
 function request(body: BodyInit = "{}", signature = "t=1,v1=signature") {
@@ -21,7 +30,10 @@ function request(body: BodyInit = "{}", signature = "t=1,v1=signature") {
 }
 
 describe("Stripe webhook route", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.dispatchOperationsAlerts.mockResolvedValue({ delivered: 1 });
+  });
 
   it("passes the exact raw bytes to the signature/projection service", async () => {
     mocks.projectStripeWebhook.mockResolvedValueOnce({ status: "APPLIED" });
@@ -66,7 +78,37 @@ describe("Stripe webhook route", () => {
   it("separates signature failures from retryable projection failures", async () => {
     mocks.projectStripeWebhook.mockRejectedValueOnce(new StripeWebhookVerificationError());
     expect(await POST(request())).toMatchObject({ status: 400 });
-    mocks.projectStripeWebhook.mockRejectedValueOnce(new Error("database unavailable"));
+    expect(mocks.dispatchOperationsAlerts).not.toHaveBeenCalled();
+    mocks.projectStripeWebhook.mockRejectedValueOnce(
+      new StripeWebhookProjectionError({ cause: new Error("database unavailable") }),
+    );
     expect(await POST(request())).toMatchObject({ status: 500 });
+    expect(mocks.dispatchOperationsAlerts).toHaveBeenCalledOnce();
+  });
+
+  it("keeps policy-disabled projection retryable without touching the database", async () => {
+    mocks.projectStripeWebhook.mockRejectedValueOnce(new StripeWebhookUnavailableError());
+
+    const response = await POST(request());
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: "The Stripe webhook projection is temporarily unavailable.",
+    });
+    expect(mocks.dispatchOperationsAlerts).not.toHaveBeenCalled();
+  });
+
+  it("keeps Stripe retryable when opportunistic alert delivery also fails", async () => {
+    mocks.projectStripeWebhook.mockRejectedValueOnce(
+      new StripeWebhookProjectionError({ cause: new Error("database unavailable") }),
+    );
+    mocks.dispatchOperationsAlerts.mockRejectedValueOnce(new Error("alert destination down"));
+
+    const response = await POST(request());
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      error: "The Stripe webhook projection is temporarily unavailable.",
+    });
   });
 });

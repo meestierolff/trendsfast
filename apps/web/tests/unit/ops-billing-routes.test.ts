@@ -33,7 +33,7 @@ vi.mock("../../lib/billing-service", () => ({
   }),
 }));
 vi.mock("../../lib/server-database", () => ({
-  getRepositories: () => ({
+  getOpsRepositories: () => ({
     scanData: { getProject: mocks.getProject },
     billing: {
       customerForProject: mocks.customerForProject,
