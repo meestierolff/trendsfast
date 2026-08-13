@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { getRepositories } from "../../../../../../lib/server-database";
+import { getOpsRepositories } from "../../../../../../lib/server-database";
 import { authorizeOpsActionRequest } from "../../../_security";
 
 export const runtime = "nodejs";
@@ -26,7 +26,7 @@ export async function POST(request: Request, context: { params: Promise<{ grantI
       { status: 400, headers },
     );
   }
-  const result = await getRepositories().founderGrants.revoke({
+  const result = await getOpsRepositories().founderGrants.revoke({
     grantId: parsed.data,
     revokedBy: authorization.reviewerId,
   });

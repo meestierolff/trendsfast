@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../../lib/server-database", () => ({
-  getRepositories: () => mocks.repositories,
+  getOpsRepositories: () => mocks.repositories,
 }));
 vi.mock("../../lib/review-bundle-service", () => ({
   buildReviewBundle: mocks.buildReviewBundle,
@@ -20,6 +20,7 @@ import { issueOpsSession } from "../../lib/ops-session";
 import { redactReviewBundle, type ReviewBundle } from "../../lib/review-bundle";
 
 const secret = "review-bundle-route-secret-that-is-at-least-32-characters";
+const now = new Date();
 const scanId = "scan_review_bundle_route";
 const stripeSecretFixture = ["sk", "live", "51AbCdEfGhIjKlMnOpQrStUv"].join("_");
 const bundle = redactReviewBundle({
@@ -44,7 +45,7 @@ const bundle = redactReviewBundle({
 } satisfies ReviewBundle);
 
 function request(path: string, authenticated = true): Request {
-  const session = issueOpsSession({ secret, now: new Date("2026-08-12T10:00:00.000Z") });
+  const session = issueOpsSession({ secret, now });
   return new Request(`https://trendsfast.example${path}`, {
     headers: {
       "sec-fetch-site": "same-origin",

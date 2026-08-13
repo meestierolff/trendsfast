@@ -692,6 +692,7 @@ export function OpsActionControls({
         <div className="ops-action-card">
           <span>DOGFOOD / REDACTED</span>
           <h3>Export review bundle</h3>
+          <p>Browser downloads are public-safe and omit private monetary fields.</p>
           <p>
             Founder-only, no-store exports exclude capabilities, secrets, raw payloads, e-mail, and
             IP addresses.

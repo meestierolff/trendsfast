@@ -3,7 +3,7 @@ import Link from "next/link";
 
 import { OpsLoginForm } from "../../components/ops-login-form";
 import { OpsQueue, type OpsQueueItemView } from "../../components/ops-queue";
-import { getRepositories } from "../../lib/server-database";
+import { getOpsRepositories } from "../../lib/server-database";
 import { getOpsPageAuthorization } from "./_auth";
 
 import "./ops.css";
@@ -44,7 +44,7 @@ export default async function OpsPage({
   let readError: string | undefined;
 
   try {
-    const queue = await getRepositories().reviews.listQueue({ limit: 100 });
+    const queue = await getOpsRepositories().reviews.listQueue({ limit: 100 });
     items = queue.map((item) => ({
       publicId: item.request.publicId,
       state: item.request.state,

@@ -8,13 +8,15 @@ const mocks = vi.hoisted(() => ({
   approve: vi.fn(),
   editAndApprove: vi.fn(),
   bindEvidence: vi.fn(),
+  deliver: vi.fn(),
 }));
 
 vi.mock("../../lib/server-database", () => ({
-  getRepositories: () => ({
+  getOpsRepositories: () => ({
     scans: { getStatusByPublicId: mocks.getStatus },
     reviews: { approve: mocks.approve, editAndApprove: mocks.editAndApprove },
     scanData: { bindEvidence: mocks.bindEvidence },
+    delivery: { deliver: mocks.deliver },
   }),
 }));
 
@@ -23,17 +25,21 @@ import { ReviewVersionConflictError } from "@trendsfast/database";
 import { POST } from "../../app/api/ops/scans/[scanId]/actions/[action]/route";
 import { createCsrfToken, issueOpsSession } from "../../lib/ops-session";
 
-const origin = "https://trendsfast.example";
+const origin = "https://ops.trendsfast.example";
+const publicOrigin = "https://trendsfast.example";
 const secret = "ops-edit-route-test-secret-that-is-at-least-32-characters";
 
 describe("ops edit-and-approve route", () => {
   beforeEach(() => {
     vi.stubEnv("APP_URL", origin);
+    vi.stubEnv("PUBLIC_APP_URL", publicOrigin);
+    vi.stubEnv("TRENDSFAST_SURFACE", "ops");
     vi.stubEnv("SESSION_SECRET", secret);
     mocks.getStatus.mockReset();
     mocks.approve.mockReset();
     mocks.editAndApprove.mockReset();
     mocks.bindEvidence.mockReset();
+    mocks.deliver.mockReset();
     mocks.getStatus.mockResolvedValue({
       request: { state: "REVIEW_REQUIRED" },
       run: { id: "run_1", state: "REVIEW_REQUIRED" },
@@ -159,6 +165,52 @@ describe("ops edit-and-approve route", () => {
     expect(response.status).toBe(409);
     expect(mocks.approve).toHaveBeenCalledWith(
       expect.objectContaining({ expectedVersion: 3, note: "Founder verified this exact draft." }),
+    );
+  });
+
+  it("returns private delivery links on the public origin from the isolated ops surface", async () => {
+    mocks.getStatus.mockResolvedValueOnce({
+      request: { state: "REVIEW_REQUIRED" },
+      run: { id: "run_1", state: "REVIEW_REQUIRED" },
+      move: {
+        id: "00000000-0000-4000-8000-000000000001",
+        state: "APPROVED",
+        proposalStale: false,
+        founderReviewed: true,
+        autoPublish: false,
+      },
+      evidence: [],
+    });
+    mocks.deliver.mockResolvedValueOnce({
+      created: true,
+      rawToken: "scan_private.delivery-capability",
+      tokenPrefix: "scan_private",
+      expiresAt: new Date("2026-09-12T10:00:00.000Z"),
+    });
+    const session = issueOpsSession({ secret });
+    const request = new Request(`${origin}/api/ops/scans/scan_1/actions/deliver`, {
+      method: "POST",
+      headers: {
+        origin,
+        "content-type": "application/json",
+        cookie: `tf_ops_session=${session}`,
+        "x-csrf-token": createCsrfToken(session, secret),
+      },
+      body: JSON.stringify({ expiresInDays: 30 }),
+    });
+
+    const response = await POST(request, {
+      params: Promise.resolve({ scanId: "scan_1", action: "deliver" }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      deliveryUrl: `${publicOrigin}/scan/scan_private.delivery-capability`,
+    });
+    expect(mocks.deliver).toHaveBeenCalledWith(
+      expect.objectContaining({
+        nextMoveId: "00000000-0000-4000-8000-000000000001",
+      }),
     );
   });
 });

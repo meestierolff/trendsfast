@@ -4,7 +4,7 @@ import { loadEnv } from "@trendsfast/config";
 
 import { readBoundedFormBody, readBoundedJsonBody } from "../../../../lib/bounded-json";
 import { anonymizeAddress, clientAddress } from "../../../../lib/request-security";
-import { getRepositories } from "../../../../lib/server-database";
+import { getOpsRepositories } from "../../../../lib/server-database";
 import {
   authenticateOpsLoginRequest,
   MAX_OPS_LOGIN_BODY_BYTES,
@@ -72,7 +72,7 @@ export async function POST(request: Request) {
       { status: 503, headers: privateHeaders },
     );
   }
-  const durablyAdmitted = await getRepositories().authAdmission.admit({
+  const durablyAdmitted = await getOpsRepositories().authAdmission.admit({
     namespace: "ops",
     fingerprintHash: anonymizeAddress(clientAddress(request.headers), fingerprintSecret),
     windowMs: 5 * 60_000,

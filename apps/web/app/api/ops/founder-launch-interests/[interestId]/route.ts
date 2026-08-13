@@ -1,5 +1,5 @@
 import { readBoundedBodyBytes } from "../../../../../lib/bounded-json";
-import { getRepositories } from "../../../../../lib/server-database";
+import { getOpsRepositories } from "../../../../../lib/server-database";
 import { authorizeOpsActionRequest } from "../../_security";
 
 export const runtime = "nodejs";
@@ -31,7 +31,7 @@ export async function DELETE(
     return json({ error: "The launch-interest identifier is invalid." }, 400);
   }
   try {
-    const result = await getRepositories().founderLaunchInterests.hardDelete({
+    const result = await getOpsRepositories().founderLaunchInterests.hardDelete({
       id: interestId,
       actorId: authorization.reviewerId,
     });

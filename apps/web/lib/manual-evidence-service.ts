@@ -11,7 +11,7 @@ import {
 } from "@trendsfast/providers";
 import { SignalSchema } from "@trendsfast/schemas";
 
-import { getRepositories } from "./server-database";
+import { getOpsRepositories } from "./server-database";
 import { deploymentProvenance } from "./deployment-provenance";
 
 export type FounderManualEvidenceInput = Omit<ManualEvidenceInput, "reviewedBy">;
@@ -47,7 +47,7 @@ export async function addManualFounderEvidence(input: {
   if (result.status !== "SUCCESS" || result.signals.length !== 1 || !signal.success) {
     throw new Error("Manual evidence did not pass the bounded provider contract");
   }
-  return getRepositories().manualEvidence.add({
+  return getOpsRepositories().manualEvidence.add({
     scanPublicId: input.scanPublicId,
     signal: signal.data,
     reason: input.evidence.reason,

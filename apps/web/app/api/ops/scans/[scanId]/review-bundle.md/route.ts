@@ -1,5 +1,5 @@
 import { authorizeOpsReadRequest } from "../../../_security";
-import { getRepositories } from "../../../../../../lib/server-database";
+import { getOpsRepositories } from "../../../../../../lib/server-database";
 import { renderReviewBundleMarkdown } from "../../../../../../lib/review-bundle";
 import { buildReviewBundle } from "../../../../../../lib/review-bundle-service";
 
@@ -29,7 +29,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ scan
       { status: 400, headers: privateHeaders },
     );
   }
-  const bundle = await buildReviewBundle(getRepositories(), scanId);
+  const bundle = await buildReviewBundle(getOpsRepositories(), scanId);
   if (!bundle) {
     return Response.json(
       { error: "The review bundle was not found." },

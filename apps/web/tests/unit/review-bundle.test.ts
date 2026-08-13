@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  exportReviewBundle,
   redactReviewBundle,
   renderReviewBundleMarkdown,
   type ReviewBundle,
@@ -51,8 +52,8 @@ const rawBundle = {
       calls: 1,
       maxCalls: 2,
       quota: 1,
-      estimatedCostUsd: 0.01,
-      settledActualCostUsd: 0.01,
+      estimatedCostUsd: 7.111,
+      settledActualCostUsd: 3.777,
       measurements: [],
       limitations: [
         "Bearer raw-bearer-secret",
@@ -64,7 +65,7 @@ const rawBundle = {
       ],
     },
   ],
-  cost: { estimatedUsd: 0.01, settledActualUsd: 0.01, quota: 1, attempts: [] },
+  cost: { estimatedUsd: 7.111, settledActualUsd: 3.777, quota: 1, attempts: [] },
   evidence: [
     {
       id: "receipt_1",
@@ -151,12 +152,31 @@ describe("dogfood review bundle redaction", () => {
       unitMetadata: { usage_status: "unknown_not_settled" },
     };
     const settled = {
-      actualCostUsd: "0.0125",
+      actualCostUsd: "3.1250",
       unitMetadata: { usage_status: "provider_reported_settled" },
     };
 
     expect(settledActualCostForEntries([unknown])).toBeNull();
-    expect(settledActualCostForEntries([settled])).toBe(0.0125);
+    expect(settledActualCostForEntries([settled])).toBe(3.125);
     expect(settledActualCostForEntries([settled, unknown])).toBeNull();
   }, 15_000);
+
+  it("omits monetary fields by default and includes them only by explicit opt-in", () => {
+    const publicSafe = exportReviewBundle({
+      ...rawBundle,
+      queryPlan: { queries: [], privateBudgetUsd: 987.654 },
+    });
+    const privateCosts = exportReviewBundle(rawBundle, { includePrivateCosts: true });
+    const publicJson = JSON.stringify(publicSafe);
+    const privateJson = JSON.stringify(privateCosts);
+
+    expect(publicJson).not.toContain("estimatedCostUsd");
+    expect(publicJson).not.toContain("settledActualCostUsd");
+    expect(publicJson).not.toContain("estimatedUsd");
+    expect(publicJson).not.toContain("settledActualUsd");
+    expect(publicJson).not.toContain("privateBudgetUsd");
+    expect(publicJson).not.toContain("987.654");
+    expect(privateJson).toContain("estimatedCostUsd");
+    expect(privateJson).toContain("settledActualUsd");
+  });
 });

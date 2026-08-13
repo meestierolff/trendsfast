@@ -186,6 +186,38 @@ export function redactReviewBundle(bundle: ReviewBundle): ReviewBundle {
   return redactUnknown(bundle) as ReviewBundle;
 }
 
+const MONETARY_FIELD = /(?:cost|price|currency|amount|spend|budget|margin|usd|eur)/i;
+
+function omitPrivateCosts(value: unknown, key = ""): unknown {
+  if (
+    key &&
+    MONETARY_FIELD.test(key) &&
+    !(key === "cost" && value !== null && typeof value === "object")
+  ) {
+    return undefined;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => omitPrivateCosts(item)).filter((item) => item !== undefined);
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as JsonRecord)
+        .map(([childKey, child]) => [childKey, omitPrivateCosts(child, childKey)] as const)
+        .filter((entry): entry is readonly [string, unknown] => entry[1] !== undefined),
+    );
+  }
+  return value;
+}
+
+/** Public-safe is the default; private monetary fields require an explicit opt-in. */
+export function exportReviewBundle(
+  bundle: ReviewBundle,
+  options: { includePrivateCosts?: boolean } = {},
+): ReviewBundle {
+  const redacted = redactReviewBundle(bundle);
+  return options.includePrivateCosts ? redacted : (omitPrivateCosts(redacted) as ReviewBundle);
+}
+
 function jsonBlock(value: unknown): string {
   return `\`\`\`json\n${JSON.stringify(value, null, 2).replaceAll("```", "``\u200b`")}\n\`\`\``;
 }

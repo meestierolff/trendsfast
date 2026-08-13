@@ -3,7 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { OpsFounderLaunchInterestManager } from "../../../components/ops-founder-launch-interest-manager";
-import { getRepositories } from "../../../lib/server-database";
+import { getOpsRepositories } from "../../../lib/server-database";
 import { getOpsPageAuthorization } from "../_auth";
 
 import "../ops.css";
@@ -17,7 +17,7 @@ export const dynamic = "force-dynamic";
 export default async function OpsLaunchInterestPage() {
   const authorization = await getOpsPageAuthorization();
   if (!authorization) redirect("/ops");
-  const interests = await getRepositories().founderLaunchInterests.list({ limit: 500 });
+  const interests = await getOpsRepositories().founderLaunchInterests.list({ limit: 500 });
 
   return (
     <section className="ops-shell ops-detail-shell section-pad">

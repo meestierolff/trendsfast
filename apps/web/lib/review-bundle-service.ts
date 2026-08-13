@@ -4,7 +4,7 @@ import type { createRepositories } from "@trendsfast/database";
 import { measurementFragment } from "@trendsfast/orchestration";
 
 import { deploymentProvenance } from "./deployment-provenance";
-import { redactReviewBundle, type ReviewBundle } from "./review-bundle";
+import { exportReviewBundle, type ReviewBundle } from "./review-bundle";
 
 type Repositories = ReturnType<typeof createRepositories>;
 
@@ -63,6 +63,7 @@ export async function buildReviewBundle(
   repositories: Repositories,
   scanPublicId: string,
   now = new Date(),
+  options: { includePrivateCosts?: boolean } = {},
 ): Promise<ReviewBundle | null> {
   const detail = await repositories.scans.getStatusByPublicId(scanPublicId);
   if (!detail?.run || !detail.move || !detail.project || !detail.context) return null;
@@ -287,5 +288,5 @@ export async function buildReviewBundle(
       occurredAt: event.createdAt.toISOString(),
     })),
   };
-  return redactReviewBundle(bundle);
+  return exportReviewBundle(bundle, options);
 }

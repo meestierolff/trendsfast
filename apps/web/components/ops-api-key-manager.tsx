@@ -185,7 +185,7 @@ export function OpsApiKeyManager({
             type="number"
             min={1}
             max={10_000}
-            defaultValue={20}
+            placeholder="Required private policy"
             required
           />
           <label htmlFor="key-cost">Provider-cost limit per hour (USD)</label>
@@ -196,7 +196,7 @@ export function OpsApiKeyManager({
             min={0}
             max={10_000}
             step="0.0001"
-            defaultValue={5}
+            placeholder="Required private policy"
             required
           />
           <label htmlFor="key-expiry">Expiry</label>

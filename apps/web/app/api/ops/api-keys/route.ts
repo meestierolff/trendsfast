@@ -2,7 +2,7 @@ import { loadEnv } from "@trendsfast/config";
 
 import { apiKeyEnvironmentMatchesProviderMode } from "../../../../lib/api-auth-guard";
 import { readBoundedJsonBody } from "../../../../lib/bounded-json";
-import { getRepositories } from "../../../../lib/server-database";
+import { getOpsRepositories } from "../../../../lib/server-database";
 import { authorizeOpsActionRequest } from "../_security";
 import { ApiKeyIssueBodySchema, parseBoundedFutureExpiry } from "./_validation";
 
@@ -41,7 +41,7 @@ export async function POST(request: Request) {
     return json({ error: "The key environment does not match the active provider mode." }, 409);
   }
 
-  const repositories = getRepositories();
+  const repositories = getOpsRepositories();
   const project = await repositories.scanData.getProject(body.data.projectId);
   if (!project || project.status !== "ACTIVE") {
     return json({ error: "An active project is required." }, 404);

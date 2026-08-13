@@ -68,6 +68,7 @@ describe("stored-evidence recompute truth boundary", () => {
           run: { id: "run_1" },
           move: { id: "move_1", reviewVersion: 4 },
           context,
+          project: { id: "project_1" },
         })),
       },
       scanData: {
@@ -77,7 +78,9 @@ describe("stored-evidence recompute truth boundary", () => {
           { signal: { id: "signal_retained" } },
           { signal: { id: "signal_unbound" } },
         ]),
+        listHistoricalMetricSnapshotsForRun: vi.fn(async () => []),
         listSourceRuns: vi.fn(async () => []),
+        getCurrentProjectProfile: vi.fn(async () => null),
       },
       reviews: {
         listEvidenceHistory: vi.fn(async () => [
