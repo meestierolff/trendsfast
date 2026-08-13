@@ -61,11 +61,20 @@ describe("hosted least-privilege database roles", () => {
     );
     expect(provisioner).toContain("c.relname = any($2::text[])");
     expect(provisioner).toContain("t.typname = any($2::text[])");
+    expect(provisioner).toContain("owner.rolname <> $1");
+    expect(provisioner).toContain("if (owner.rows[0]?.owner === role) continue");
+    expect(provisioner).toContain("revokeUnsafeApplicationBaseline");
     expect(provisioner).not.toContain("ALTER SCHEMA %I OWNER");
     expect(provisioner).not.toContain("p.oid::regprocedure");
     expect(provisioner).toContain("REVOKE SELECT (${columns}), INSERT (${columns})");
     expect(provisioner).toContain("APPLICATION_FUNCTIONS");
     expect(provisioner).toContain("ALTER FUNCTION");
+    expect(provisioner).toContain("pg_has_role(current_user, $1, 'SET')");
+    expect(provisioner).toContain("pg_has_role(current_user, $1, 'MEMBER')");
+    expect(provisioner).toContain("serverVersion >= 160000");
+    expect(provisioner).toContain("WITH ADMIN FALSE, INHERIT FALSE, SET TRUE");
+    expect(provisioner).toContain("GRANTED BY CURRENT_USER");
+    expect(provisioner).toContain('["anon", "authenticated", "service_role"]');
   });
 
   it("keeps the provider projection migration exact, safe, and separately granted", () => {
@@ -276,8 +285,35 @@ describe("hosted least-privilege database roles", () => {
     );
     expect(provisioner).toContain("RUNTIME_ROLE_SECRETS_FILE");
     expect(provisioner).toContain("passwordsPrinted: false");
+    expect(provisioner).toContain('operatorIsSuperuser ? "NOSUPERUSER " : ""');
+    expect(provisioner).toContain("cannot safely demote it");
     expect(provisioner).not.toMatch(/process\.argv/);
     expect(provisioner).not.toMatch(/console\.(?:info|log|error)\([^)]*password/i);
+  });
+
+  it("allows only PostgreSQL 16+ managed-creator administration without data inheritance", () => {
+    const verifier = readFileSync(
+      fileURLToPath(new URL("../../../scripts/db/verify-runtime-roles.ts", import.meta.url)),
+      "utf8",
+    );
+    expect(verifier).toContain("serverVersion >= 160000");
+    expect(verifier).toContain("legacyMembershipSql");
+    expect(verifier).toContain("modernMembershipSql");
+    expect(verifier).toContain("managedMemberships.length !== expectedManagedGrantedRoles.size");
+    expect(verifier).toContain("membership.admin_option");
+    expect(verifier).toContain("!membership.inherit_option");
+    expect(verifier).toContain("!membership.set_option");
+    expect(verifier).toContain("membership.grantor !== operator");
+    expect(verifier).toContain("membership.grantor_is_superuser");
+    expect(verifier).toContain("managedGrantedRoles.size !== expectedManagedGrantedRoles.size");
+    expect(verifier).toContain("!managedGrantedRoles.has(role)");
+    expect(verifier).toContain("!managedCreatorMembership(membership)");
+    expect(verifier).not.toContain("information_schema");
+    expect(verifier).toContain('["anon", "authenticated", "service_role"]');
+    expect(verifier).toContain("unsafeMigratorDefaults");
+    expect(verifier).toContain("coalesce(defaults.defaclacl, acldefault");
+    expect(verifier).toContain("schema_additions");
+    expect(verifier).toContain("migratorDefaultAclClean: true");
   });
 
   it("looks up named PostgreSQL functions by their type-only argument signature", () => {

@@ -29,6 +29,7 @@ const PASSWORD_VARIABLES: Readonly<Record<DatabaseRoleKind, string>> = {
 
 const runtimeKinds = ["public", "member", "ops", "worker", "billing", "auth", "retention"] as const;
 const allKinds = ["migrator", ...runtimeKinds] as const;
+const supabaseDataApiRoles = ["anon", "authenticated", "service_role"] as const;
 const identifierPattern = /^[a-z][a-z0-9_]{0,62}$/;
 const MAX_ROLE_SECRETS_FILE_BYTES = 64 * 1_024;
 
@@ -84,19 +85,33 @@ async function formattedStatement(
   return statement;
 }
 
-async function ensureRole(client: PoolClient, kind: DatabaseRoleKind, password: string) {
+async function ensureRole(
+  client: PoolClient,
+  kind: DatabaseRoleKind,
+  password: string,
+  operatorIsSuperuser: boolean,
+) {
   const role = DATABASE_ROLES[kind];
-  const existing = await client.query<{ exists: boolean }>(
-    "select exists(select 1 from pg_roles where rolname = $1) as exists",
+  const existing = await client.query<{ rolsuper: boolean }>(
+    "select rolsuper from pg_roles where rolname = $1",
     [role],
   );
-  if (!existing.rows[0]?.exists) {
+  if (existing.rows[0]?.rolsuper && !operatorIsSuperuser) {
+    throw new Error(`${role} is unexpectedly superuser and this operator cannot safely demote it`);
+  }
+  if (existing.rows.length === 0) {
     await client.query(
       `CREATE ROLE ${identifier(role)} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 30`,
     );
   }
+  // Managed PostgreSQL operators such as Supabase's `postgres` have CREATEROLE
+  // but are intentionally not true superusers. PostgreSQL already guarantees a
+  // newly created role is NOSUPERUSER above, while the managed hook rejects even
+  // a no-op attempt to alter the SUPERUSER attribute. A true superuser retains
+  // the original idempotent demotion behavior.
+  const noSuperuser = operatorIsSuperuser ? "NOSUPERUSER " : "";
   await client.query(
-    `ALTER ROLE ${identifier(role)} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 30`,
+    `ALTER ROLE ${identifier(role)} LOGIN ${noSuperuser}NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 30`,
   );
   await client.query("set local password_encryption = 'scram-sha-256'");
   const passwordStatement = await formattedStatement(client, "ALTER ROLE %I PASSWORD %L", [
@@ -113,15 +128,22 @@ async function ensureRole(client: PoolClient, kind: DatabaseRoleKind, password: 
   );
 }
 
-async function transferApplicationOwnership(client: PoolClient) {
+async function transferApplicationOwnership(client: PoolClient, serverVersion: number) {
   const role = DATABASE_ROLES.migrator;
-  const membership = await client.query<{ member: boolean }>(
-    "select pg_has_role(current_user, $1, 'MEMBER') as member",
+  const modernMemberships = serverVersion >= 160000;
+  const membership = await client.query<{ allowed: boolean }>(
+    modernMemberships
+      ? "select pg_has_role(current_user, $1, 'SET') as allowed"
+      : "select pg_has_role(current_user, $1, 'MEMBER') as allowed",
     [role],
   );
-  const temporaryMembership = !membership.rows[0]?.member;
+  const temporaryMembership = !membership.rows[0]?.allowed;
   if (temporaryMembership) {
-    await client.query(`GRANT ${identifier(role)} TO CURRENT_USER`);
+    await client.query(
+      modernMemberships
+        ? `GRANT ${identifier(role)} TO CURRENT_USER WITH ADMIN FALSE, INHERIT FALSE, SET TRUE GRANTED BY CURRENT_USER`
+        : `GRANT ${identifier(role)} TO CURRENT_USER`,
+    );
   }
 
   const relations = await client.query<{ statement: string }>(
@@ -141,7 +163,9 @@ async function transferApplicationOwnership(client: PoolClient) {
      ) as statement
      from pg_class c
      join pg_namespace n on n.oid = c.relnamespace
+     join pg_roles owner on owner.oid = c.relowner
      where c.relkind in ('r','p','S','v','m','f')
+       and owner.rolname <> $1
        and (
          (n.nspname = 'public' and c.relname = any($2::text[]))
          or (n.nspname = 'drizzle' and c.relname = '__drizzle_migrations')
@@ -155,15 +179,28 @@ async function transferApplicationOwnership(client: PoolClient) {
     `select format('ALTER TYPE %I.%I OWNER TO %I', n.nspname, t.typname, $1::text) as statement
        from pg_type t
        join pg_namespace n on n.oid = t.typnamespace
+       join pg_roles owner on owner.oid = t.typowner
       where n.nspname = 'public'
         and t.typtype in ('e', 'd')
         and t.typname = any($2::text[])
+        and owner.rolname <> $1
       order by t.typname`,
     [role, APPLICATION_TYPES],
   );
   for (const row of types.rows) await client.query(row.statement);
 
   for (const functionRecord of APPLICATION_FUNCTIONS) {
+    const owner = await client.query<{ owner: string }>(
+      `select owner.rolname as owner
+         from pg_proc function
+         join pg_namespace namespace on namespace.oid = function.pronamespace
+         join pg_roles owner on owner.oid = function.proowner
+        where namespace.nspname = $1
+          and function.proname = $2
+          and pg_catalog.oidvectortypes(function.proargtypes) = $3`,
+      [functionRecord.schema, functionRecord.name, functionRecord.identityArguments],
+    );
+    if (owner.rows[0]?.owner === role) continue;
     await client.query(
       `ALTER FUNCTION ${identifier(functionRecord.schema)}.${identifier(functionRecord.name)}(${functionRecord.identityArguments}) OWNER TO ${identifier(role)}`,
     );
@@ -173,7 +210,11 @@ async function transferApplicationOwnership(client: PoolClient) {
   return async () => {
     await client.query("RESET ROLE");
     if (temporaryMembership) {
-      await client.query(`REVOKE ${identifier(role)} FROM CURRENT_USER`);
+      await client.query(
+        modernMemberships
+          ? `REVOKE ${identifier(role)} FROM CURRENT_USER GRANTED BY CURRENT_USER`
+          : `REVOKE ${identifier(role)} FROM CURRENT_USER`,
+      );
     }
   };
 }
@@ -189,7 +230,7 @@ async function revokeUnsafeDefaultPrivileges(client: PoolClient) {
   await client.query(
     `ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM PUBLIC`,
   );
-  for (const browserRole of ["anon", "authenticated"]) {
+  for (const browserRole of supabaseDataApiRoles) {
     const exists = await client.query<{ exists: boolean }>(
       "select exists(select 1 from pg_roles where rolname = $1) as exists",
       [browserRole],
@@ -231,8 +272,20 @@ async function clearApplicationColumnPrivileges(client: PoolClient, grantees: re
   }
 }
 
-async function revokeUnsafeBaseline(client: PoolClient) {
+async function revokeUnsafeSchemaBaseline(client: PoolClient) {
   await client.query(`REVOKE ALL PRIVILEGES ON SCHEMA public FROM PUBLIC`);
+  for (const dataApiRole of supabaseDataApiRoles) {
+    const exists = await client.query<{ exists: boolean }>(
+      "select exists(select 1 from pg_roles where rolname = $1) as exists",
+      [dataApiRole],
+    );
+    if (exists.rows[0]?.exists) {
+      await client.query(`REVOKE ALL PRIVILEGES ON SCHEMA public FROM ${identifier(dataApiRole)}`);
+    }
+  }
+}
+
+async function revokeUnsafeApplicationBaseline(client: PoolClient) {
   for (const table of APPLICATION_TABLES) {
     await client.query(`REVOKE ALL PRIVILEGES ON TABLE public.${identifier(table)} FROM PUBLIC`);
   }
@@ -241,27 +294,26 @@ async function revokeUnsafeBaseline(client: PoolClient) {
       `REVOKE ALL PRIVILEGES ON FUNCTION ${identifier(functionRecord.schema)}.${identifier(functionRecord.name)}(${functionRecord.identityArguments}) FROM PUBLIC`,
     );
   }
-  const browserGrantees = ["PUBLIC"];
-  for (const browserRole of ["anon", "authenticated"]) {
+  const dataApiGrantees = ["PUBLIC"];
+  for (const dataApiRole of supabaseDataApiRoles) {
     const exists = await client.query<{ exists: boolean }>(
       "select exists(select 1 from pg_roles where rolname = $1) as exists",
-      [browserRole],
+      [dataApiRole],
     );
     if (!exists.rows[0]?.exists) continue;
-    browserGrantees.push(browserRole);
-    await client.query(`REVOKE ALL PRIVILEGES ON SCHEMA public FROM ${identifier(browserRole)}`);
+    dataApiGrantees.push(dataApiRole);
     for (const table of APPLICATION_TABLES) {
       await client.query(
-        `REVOKE ALL PRIVILEGES ON TABLE public.${identifier(table)} FROM ${identifier(browserRole)}`,
+        `REVOKE ALL PRIVILEGES ON TABLE public.${identifier(table)} FROM ${identifier(dataApiRole)}`,
       );
     }
     for (const functionRecord of APPLICATION_FUNCTIONS) {
       await client.query(
-        `REVOKE ALL PRIVILEGES ON FUNCTION ${identifier(functionRecord.schema)}.${identifier(functionRecord.name)}(${functionRecord.identityArguments}) FROM ${identifier(browserRole)}`,
+        `REVOKE ALL PRIVILEGES ON FUNCTION ${identifier(functionRecord.schema)}.${identifier(functionRecord.name)}(${functionRecord.identityArguments}) FROM ${identifier(dataApiRole)}`,
       );
     }
   }
-  await clearApplicationColumnPrivileges(client, browserGrantees);
+  await clearApplicationColumnPrivileges(client, dataApiGrantees);
   await revokeUnsafeDefaultPrivileges(client);
 }
 
@@ -355,7 +407,20 @@ async function main() {
   const client = await database.pool.connect();
   try {
     await client.query("BEGIN");
-    for (const kind of allKinds) await ensureRole(client, kind, passwords[kind]);
+    const operator = await client.query<{ rolsuper: boolean; server_version_num: string }>(
+      `select role.rolsuper,
+              current_setting('server_version_num') as server_version_num
+         from pg_roles role
+        where role.rolname = current_user`,
+    );
+    const operatorIsSuperuser = operator.rows[0]?.rolsuper === true;
+    const serverVersion = Number(operator.rows[0]?.server_version_num ?? "0");
+    if (!Number.isSafeInteger(serverVersion) || serverVersion < 150000) {
+      throw new Error("Role provisioning requires PostgreSQL 15 or newer");
+    }
+    for (const kind of allKinds) {
+      await ensureRole(client, kind, passwords[kind], operatorIsSuperuser);
+    }
     const databaseName = await client.query<{ name: string }>("select current_database() as name");
     const name = databaseName.rows[0]?.name;
     if (!name) throw new Error("The current PostgreSQL database could not be identified");
@@ -392,11 +457,12 @@ async function main() {
     );
     await client.query(grantTemporary);
 
-    await revokeUnsafeBaseline(client);
+    await revokeUnsafeSchemaBaseline(client);
+    await revokeUnsafeDefaultPrivileges(client);
     await grantMigratorDdl(client);
     await grantRuntimeSchemaUsage(client);
-    const restoreAdmin = await transferApplicationOwnership(client);
-    await revokeUnsafeDefaultPrivileges(client);
+    const restoreAdmin = await transferApplicationOwnership(client, serverVersion);
+    await revokeUnsafeApplicationBaseline(client);
     await applyRuntimeGrants(client);
     await restoreAdmin();
     await client.query("COMMIT");

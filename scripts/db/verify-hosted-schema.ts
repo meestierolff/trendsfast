@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 
-import { createDatabaseClient } from "@trendsfast/database";
+import { APPLICATION_FUNCTIONS, createDatabaseClient, DATABASE_ROLES } from "@trendsfast/database";
 
 import {
   compareHostedSchemaCatalog,
@@ -59,6 +59,7 @@ const EXPECTED_TABLES = [
   "subscriptions",
   "user_profiles",
 ] as const;
+const SUPABASE_DATA_API_ROLES = ["anon", "authenticated", "service_role"] as const;
 
 const EXPECTED_ENUMS = [
   "api_auth_outcome",
@@ -421,22 +422,30 @@ async function main() {
       unsafeSequenceGrantResult,
       unsafeFunctionGrantResult,
       unsafeDefaultGrantResult,
+      platformDefaultGrantResult,
+      applicationOwnerDriftResult,
       apiPolicyDefaultResult,
     ] = await Promise.all([
       pool.query<{ version: string }>("select version() as version"),
       pool.query<{ table_name: string }>(
-        "select table_name from information_schema.tables where table_schema = 'public' and table_type = 'BASE TABLE' order by table_name",
+        `select relation.relname as table_name
+           from pg_catalog.pg_class relation
+           join pg_catalog.pg_namespace namespace on namespace.oid = relation.relnamespace
+          where namespace.nspname = 'public'
+            and relation.relkind in ('r', 'p')
+          order by relation.relname`,
       ),
       pool.query<{ column_name: string }>(
         `
-          select columns.table_name || '.' || columns.column_name as column_name
-          from information_schema.columns columns
-          join information_schema.tables tables
-            on tables.table_schema = columns.table_schema
-           and tables.table_name = columns.table_name
-          where columns.table_schema = 'public'
-            and tables.table_type = 'BASE TABLE'
-          order by columns.table_name, columns.ordinal_position
+          select relation.relname || '.' || attribute.attname as column_name
+          from pg_catalog.pg_attribute attribute
+          join pg_catalog.pg_class relation on relation.oid = attribute.attrelid
+          join pg_catalog.pg_namespace namespace on namespace.oid = relation.relnamespace
+          where namespace.nspname = 'public'
+            and relation.relkind in ('r', 'p')
+            and attribute.attnum > 0
+            and not attribute.attisdropped
+          order by relation.relname, attribute.attnum
         `,
       ),
       pool.query<{ enum_name: string }>(
@@ -470,19 +479,23 @@ async function main() {
       pool.query<{ id: number; hash: string; created_at: string }>(
         "select id, hash, created_at::text as created_at from drizzle.__drizzle_migrations order by id",
       ),
-      pool.query<{ role_name: string }>(`
+      pool.query<{ role_name: string }>(
+        `
           select r.rolname as role_name
           from pg_roles r
-          where r.rolname in ('anon', 'authenticated')
+          where r.rolname = any($1::text[])
             and has_schema_privilege(r.oid, 'public', 'USAGE')
           order by r.rolname
-        `),
-      pool.query<{ role_name: string; table_name: string }>(`
+        `,
+        [SUPABASE_DATA_API_ROLES],
+      ),
+      pool.query<{ role_name: string; table_name: string }>(
+        `
           select r.rolname as role_name, c.relname as table_name
           from pg_roles r
           cross join pg_class c
           join pg_namespace n on n.oid = c.relnamespace
-          where r.rolname in ('anon', 'authenticated')
+          where r.rolname = any($1::text[])
             and n.nspname = 'public'
             and c.relkind in ('r', 'p', 'v', 'm', 'f')
             and (
@@ -495,13 +508,16 @@ async function main() {
               or has_table_privilege(r.rolname, format('%I.%I', n.nspname, c.relname), 'TRIGGER')
             )
           order by r.rolname, c.relname
-        `),
-      pool.query<{ role_name: string; sequence_name: string }>(`
+        `,
+        [SUPABASE_DATA_API_ROLES],
+      ),
+      pool.query<{ role_name: string; sequence_name: string }>(
+        `
           select r.rolname as role_name, c.relname as sequence_name
           from pg_roles r
           cross join pg_class c
           join pg_namespace n on n.oid = c.relnamespace
-          where r.rolname in ('anon', 'authenticated')
+          where r.rolname = any($1::text[])
             and n.nspname = 'public'
             and c.relkind = 'S'
             and (
@@ -510,48 +526,146 @@ async function main() {
               or has_sequence_privilege(r.rolname, format('%I.%I', n.nspname, c.relname), 'UPDATE')
             )
           order by r.rolname, c.relname
-        `),
-      pool.query<{ role_name: string; routine_name: string }>(`
+        `,
+        [SUPABASE_DATA_API_ROLES],
+      ),
+      pool.query<{ role_name: string; routine_name: string }>(
+        `
           select r.rolname as role_name, p.oid::regprocedure::text as routine_name
           from pg_roles r
           cross join pg_proc p
           join pg_namespace n on n.oid = p.pronamespace
-          where r.rolname in ('anon', 'authenticated')
+          where r.rolname = any($1::text[])
             and n.nspname = 'public'
+            and p.proname = any($2::text[])
             and has_function_privilege(r.oid, p.oid, 'EXECUTE')
           order by r.rolname, p.oid::regprocedure::text
-        `),
+        `,
+        [SUPABASE_DATA_API_ROLES, APPLICATION_FUNCTIONS.map((record) => record.name)],
+      ),
       pool.query<{
         owner_role: string;
         grantee: string;
         object_type: string;
         privilege_type: string;
-      }>(`
-          select
-            owner_role.rolname as owner_role,
-            case when expanded.grantee = 0 then 'PUBLIC' else grantee_role.rolname end as grantee,
-            defaults.defaclobjtype::text as object_type,
-            expanded.privilege_type
-          from pg_default_acl defaults
-          join pg_roles owner_role on owner_role.oid = defaults.defaclrole
-          left join pg_namespace namespace on namespace.oid = defaults.defaclnamespace
-          cross join lateral aclexplode(defaults.defaclacl) expanded
-          left join pg_roles grantee_role on grantee_role.oid = expanded.grantee
+      }>(
+        `with owner as (
+           select oid, rolname from pg_roles where rolname = $2
+         ), object_types(object_type) as (
+           values ('r'::"char"), ('S'::"char"), ('f'::"char")
+         ), global_defaults as (
+           select owner.rolname as owner_role,
+                  object_types.object_type::text as object_type,
+                  expanded.grantee,
+                  expanded.privilege_type
+             from owner
+             cross join object_types
+             left join pg_default_acl defaults
+               on defaults.defaclrole = owner.oid
+              and defaults.defaclnamespace = 0
+              and defaults.defaclobjtype = object_types.object_type
+             cross join lateral aclexplode(
+               coalesce(defaults.defaclacl, acldefault(object_types.object_type, owner.oid))
+             ) expanded
+         ), schema_additions as (
+           select owner.rolname as owner_role,
+                  defaults.defaclobjtype::text as object_type,
+                  expanded.grantee,
+                  expanded.privilege_type
+             from owner
+             join pg_default_acl defaults on defaults.defaclrole = owner.oid
+             join pg_namespace namespace
+               on namespace.oid = defaults.defaclnamespace
+              and namespace.nspname = 'public'
+             cross join lateral aclexplode(defaults.defaclacl) expanded
+            where defaults.defaclobjtype in ('r', 'S', 'f')
+         ), unsafe as (
+           select * from global_defaults
+           union all
+           select * from schema_additions
+         )
+         select unsafe.owner_role,
+                case when unsafe.grantee = 0 then 'PUBLIC' else grantee_role.rolname end as grantee,
+                unsafe.object_type,
+                unsafe.privilege_type
+           from unsafe
+           left join pg_roles grantee_role on grantee_role.oid = unsafe.grantee
+          where unsafe.grantee = 0 or grantee_role.rolname = any($1::text[])
+          order by owner_role, grantee, object_type, privilege_type`,
+        [SUPABASE_DATA_API_ROLES, DATABASE_ROLES.migrator],
+      ),
+      pool.query<{ owner_role: string }>(
+        `select owner_role.rolname as owner_role
+           from pg_default_acl defaults
+           join pg_roles owner_role on owner_role.oid = defaults.defaclrole
+           left join pg_namespace namespace on namespace.oid = defaults.defaclnamespace
+           cross join lateral aclexplode(defaults.defaclacl) expanded
+           left join pg_roles grantee_role on grantee_role.oid = expanded.grantee
           where (defaults.defaclnamespace = 0 or namespace.nspname = 'public')
             and defaults.defaclobjtype in ('r', 'S', 'f')
+            and owner_role.rolname <> $2
             and (
               expanded.grantee = 0
-              or grantee_role.rolname in ('anon', 'authenticated')
+              or grantee_role.rolname = any($1::text[])
             )
-          order by owner_role.rolname, grantee, object_type, expanded.privilege_type
-        `),
+          order by owner_role.rolname`,
+        [SUPABASE_DATA_API_ROLES, DATABASE_ROLES.migrator],
+      ),
+      pool.query<{ object_type: string; object_name: string; owner_role: string }>(
+        `select 'relation'::text as object_type,
+                namespace.nspname || '.' || relation.relname as object_name,
+                owner.rolname as owner_role
+           from pg_class relation
+           join pg_namespace namespace on namespace.oid = relation.relnamespace
+           join pg_roles owner on owner.oid = relation.relowner
+          where relation.relkind in ('r', 'p', 'S', 'v', 'm', 'f', 'i', 'I')
+            and namespace.nspname in ('public', 'drizzle')
+             and owner.rolname <> $1
+          union all
+         select 'type'::text,
+                namespace.nspname || '.' || type.typname,
+                owner.rolname
+           from pg_type type
+           join pg_namespace namespace on namespace.oid = type.typnamespace
+           join pg_roles owner on owner.oid = type.typowner
+          where namespace.nspname = 'public'
+            and type.typtype = 'e'
+             and type.typname = any($2::text[])
+             and owner.rolname <> $1
+          union all
+         select 'function'::text,
+                function.oid::regprocedure::text,
+                owner.rolname
+           from pg_proc function
+           join pg_namespace namespace on namespace.oid = function.pronamespace
+           join pg_roles owner on owner.oid = function.proowner
+          where namespace.nspname = 'public'
+             and function.proname = any($3::text[])
+             and owner.rolname <> $1
+          order by object_type, object_name`,
+        [
+          DATABASE_ROLES.migrator,
+          EXPECTED_ENUMS,
+          APPLICATION_FUNCTIONS.map((record) => record.name),
+        ],
+      ),
       pool.query<{ column_name: string; column_default: string | null }>(`
-          select column_name, column_default
-            from information_schema.columns
-           where table_schema = 'public'
-             and table_name = 'api_keys'
-             and column_name in ('rate_limit_per_hour', 'provider_cost_limit_usd')
-           order by column_name
+          select attribute.attname as column_name,
+                 case when default_value.oid is null then null
+                      else pg_catalog.pg_get_expr(default_value.adbin, default_value.adrelid)
+                  end as column_default
+            from pg_catalog.pg_attribute attribute
+            join pg_catalog.pg_class relation on relation.oid = attribute.attrelid
+            join pg_catalog.pg_namespace namespace on namespace.oid = relation.relnamespace
+            left join pg_catalog.pg_attrdef default_value
+              on default_value.adrelid = attribute.attrelid
+             and default_value.adnum = attribute.attnum
+           where namespace.nspname = 'public'
+             and relation.relname = 'api_keys'
+             and attribute.attname in ('rate_limit_per_hour', 'provider_cost_limit_usd')
+             and attribute.attnum > 0
+             and not attribute.attisdropped
+           order by attribute.attname
         `),
     ]);
 
@@ -590,6 +704,7 @@ async function main() {
       unsafeSequenceGrantResult.rows.length === 0 &&
       unsafeFunctionGrantResult.rows.length === 0 &&
       unsafeDefaultGrantResult.rows.length === 0 &&
+      applicationOwnerDriftResult.rows.length === 0 &&
       apiPolicyColumnsHaveNoDefault;
     console.info(
       JSON.stringify(
@@ -621,6 +736,8 @@ async function main() {
             actualPublicForeignKeyAndCheckConstraints: actualCatalog.constraints.length,
             ...schemaDrift,
             apiPolicyColumnsHaveNoDefault,
+            expectedApplicationOwner: DATABASE_ROLES.migrator,
+            applicationOwnerDrift: applicationOwnerDriftResult.rows,
           },
           privacy: {
             rowValuesInspected: false,
@@ -630,6 +747,11 @@ async function main() {
             unsafeBrowserRoleSequenceGrants: unsafeSequenceGrantResult.rows,
             unsafeBrowserRoleFunctionGrants: unsafeFunctionGrantResult.rows,
             unsafeBrowserRoleDefaultGrants: unsafeDefaultGrantResult.rows,
+            platformManagedDefaultGrants: {
+              count: platformDefaultGrantResult.rows.length,
+              owners: [...new Set(platformDefaultGrantResult.rows.map((row) => row.owner_role))],
+              affectsMigratorOwnedObjects: false,
+            },
           },
         },
         null,

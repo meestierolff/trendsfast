@@ -217,8 +217,11 @@ Validate the entire environment at process start; fail closed on partial secret
 pairs, production/test or non-production/live Stripe mismatch, insecure managed
 origin, or missing managed secrets. `pnpm db:migrate` and
 `pnpm db:verify-hosted` must receive `DIRECT_DATABASE_URL` in controlled hosted
-release work; the application runtime receives the scoped pooled
-`DATABASE_URL`. Inspect built client assets for server variables, then perform
+release work. After bootstrap and role provisioning, that URL authenticates as
+`trendsfast_migrator`; the managed operator remains only in
+`ROLE_ADMIN_DATABASE_URL` for provisioning and catalog verification. The
+application runtime receives the scoped pooled `DATABASE_URL`. Inspect built
+client assets for server variables, then perform
 provider-specific read-backs without printing values.
 
 The authenticated ops-only `/api/cron/retention` route is the code-local daily

@@ -21,6 +21,7 @@ import {
 import { loadCliEnvironment } from "../../packages/database/src/load-cli-env";
 
 const runtimeKinds = ["public", "member", "ops", "worker", "billing", "auth", "retention"] as const;
+const supabaseDataApiRoles = ["anon", "authenticated", "service_role"] as const;
 const roleUrlVariables: Readonly<Record<RuntimeDatabaseRoleKind, string>> = {
   public: "DATABASE_URL",
   member: "MEMBER_DATABASE_URL",
@@ -76,12 +77,12 @@ async function verifyBrowserFunctionDenied(pool: Pool, functionOid: string, labe
     `select role.rolname as role_name,
             pg_catalog.has_function_privilege(role.rolname, $1::oid, 'EXECUTE') as allowed
        from pg_catalog.pg_roles role
-      where role.rolname in ('anon', 'authenticated')
+      where role.rolname = any($2::text[])
       order by role.rolname`,
-    [functionOid],
+    [functionOid, supabaseDataApiRoles],
   );
   if (access.rows.some((entry) => entry.allowed)) {
-    throw new Error(`anon or authenticated has effective ${label} access`);
+    throw new Error(`A Supabase Data API role has effective ${label} access`);
   }
 }
 
@@ -255,17 +256,87 @@ async function verifyCatalog(sslCa: string | undefined) {
         throw new Error(`${role.rolname} has unsafe PostgreSQL role attributes`);
       }
     }
-    const memberships = await database.pool.query<{ member: string; granted_role: string }>(
-      `select member.rolname as member, granted.rolname as granted_role
+    type RoleMembership = {
+      member: string;
+      granted_role: string;
+      grantor: string;
+      grantor_is_superuser: boolean;
+      admin_option: boolean;
+      inherit_option: boolean;
+      set_option: boolean;
+    };
+    const version = await database.pool.query<{
+      server_version_num: string;
+      operator: string;
+      operator_is_superuser: boolean;
+    }>(
+      `select current_setting('server_version_num') as server_version_num,
+              role.rolname as operator,
+              role.rolsuper as operator_is_superuser
+         from pg_roles role
+        where role.rolname = current_user`,
+    );
+    const serverVersion = Number(version.rows[0]?.server_version_num ?? "0");
+    const operator = version.rows[0]?.operator;
+    const operatorIsSuperuser = version.rows[0]?.operator_is_superuser === true;
+    if (!Number.isSafeInteger(serverVersion) || serverVersion < 150000 || !operator) {
+      throw new Error("Runtime-role verification requires PostgreSQL 15 or newer");
+    }
+    const legacyMembershipSql = `select member.rolname as member,
+              granted.rolname as granted_role,
+              grantor.rolname as grantor,
+              grantor.rolsuper as grantor_is_superuser,
+              membership.admin_option,
+              false as inherit_option,
+              true as set_option
          from pg_auth_members membership
          join pg_roles member on member.oid = membership.member
          join pg_roles granted on granted.oid = membership.roleid
+         join pg_roles grantor on grantor.oid = membership.grantor
         where member.rolname = any($1::text[])
            or granted.rolname = any($1::text[])
-        order by member.rolname, granted.rolname`,
+        order by member.rolname, granted.rolname, grantor.rolname`;
+    const modernMembershipSql = `select member.rolname as member,
+              granted.rolname as granted_role,
+              grantor.rolname as grantor,
+              grantor.rolsuper as grantor_is_superuser,
+              membership.admin_option,
+              membership.inherit_option,
+              membership.set_option
+         from pg_auth_members membership
+         join pg_roles member on member.oid = membership.member
+         join pg_roles granted on granted.oid = membership.roleid
+         join pg_roles grantor on grantor.oid = membership.grantor
+        where member.rolname = any($1::text[])
+           or granted.rolname = any($1::text[])
+        order by member.rolname, granted.rolname, grantor.rolname`;
+    const memberships = await database.pool.query<RoleMembership>(
+      serverVersion >= 160000 ? modernMembershipSql : legacyMembershipSql,
       [Object.values(DATABASE_ROLES)],
     );
-    if (memberships.rows.length) {
+    const managedCreatorMembership = (membership: RoleMembership) =>
+      serverVersion >= 160000 &&
+      !operatorIsSuperuser &&
+      membership.member === operator &&
+      membership.grantor !== operator &&
+      membership.grantor_is_superuser &&
+      Object.values(DATABASE_ROLES).includes(membership.granted_role as never) &&
+      membership.admin_option &&
+      !membership.inherit_option &&
+      !membership.set_option;
+    const managedMemberships = memberships.rows.filter(managedCreatorMembership);
+    const managedGrantedRoles = new Set(
+      managedMemberships.map((membership) => membership.granted_role),
+    );
+    const expectedManagedGrantedRoles = new Set(Object.values(DATABASE_ROLES));
+    if (
+      memberships.rows.some((membership) => !managedCreatorMembership(membership)) ||
+      (serverVersion >= 160000 && !operatorIsSuperuser
+        ? managedMemberships.length !== expectedManagedGrantedRoles.size ||
+          managedGrantedRoles.size !== expectedManagedGrantedRoles.size ||
+          [...expectedManagedGrantedRoles].some((role) => !managedGrantedRoles.has(role))
+        : managedMemberships.length !== 0)
+    ) {
       throw new Error("A TrendsFast database role has an unexpected role membership");
     }
 
@@ -482,9 +553,13 @@ async function verifyCatalog(sslCa: string | undefined) {
     const missingTables = await database.pool.query<{ table_name: string }>(
       `select expected.table_name
          from unnest($1::text[]) expected(table_name)
-         left join information_schema.tables actual
-           on actual.table_schema = 'public' and actual.table_name = expected.table_name
-        where actual.table_name is null
+         left join pg_catalog.pg_class relation
+           on relation.relname = expected.table_name
+          and relation.relkind in ('r', 'p')
+         left join pg_catalog.pg_namespace namespace
+           on namespace.oid = relation.relnamespace
+          and namespace.nspname = 'public'
+        where namespace.oid is null
         order by expected.table_name`,
       [APPLICATION_TABLES],
     );
@@ -594,7 +669,7 @@ async function verifyCatalog(sslCa: string | undefined) {
       privilege_type: string;
     }>(
       `with browser_roles as (
-          select oid, rolname from pg_roles where rolname in ('anon', 'authenticated')
+          select oid, rolname from pg_roles where rolname = any($2::text[])
         ), unsafe as (
           select case when acl.grantee = 0 then 'PUBLIC' else role.rolname end as grantee,
                  c.relname as object_name,
@@ -607,10 +682,10 @@ async function verifyCatalog(sslCa: string | undefined) {
              and c.relname = any($1::text[])
              and (acl.grantee = 0 or acl.grantee in (select oid from browser_roles))
         ) select * from unsafe order by grantee, object_name, privilege_type`,
-      [APPLICATION_TABLES],
+      [APPLICATION_TABLES, supabaseDataApiRoles],
     );
     if (unsafeBrowser.rows.length) {
-      throw new Error("PUBLIC, anon, or authenticated retains TrendsFast table access");
+      throw new Error("PUBLIC or a Supabase Data API role retains TrendsFast table access");
     }
 
     const unsafeBrowserColumns = await database.pool.query<{
@@ -620,7 +695,7 @@ async function verifyCatalog(sslCa: string | undefined) {
       privilege_type: string;
     }>(
       `with browser_roles as (
-          select oid, rolname from pg_roles where rolname in ('anon', 'authenticated')
+          select oid, rolname from pg_roles where rolname = any($2::text[])
         )
         select case when acl.grantee = 0 then 'PUBLIC' else role.rolname end as grantee,
                relation.relname as table_name,
@@ -635,10 +710,10 @@ async function verifyCatalog(sslCa: string | undefined) {
            and relation.relname = any($1::text[])
            and (acl.grantee = 0 or acl.grantee in (select oid from browser_roles))
          order by grantee, table_name, column_name, privilege_type`,
-      [APPLICATION_TABLES],
+      [APPLICATION_TABLES, supabaseDataApiRoles],
     );
     if (unsafeBrowserColumns.rows.length) {
-      throw new Error("PUBLIC, anon, or authenticated retains an explicit column grant");
+      throw new Error("PUBLIC or a Supabase Data API role retains an explicit column grant");
     }
 
     const effectiveBrowser = await database.pool.query<{
@@ -648,7 +723,7 @@ async function verifyCatalog(sslCa: string | undefined) {
       privilege_type: string;
     }>(
       `with browser_roles as (
-          select rolname from pg_roles where rolname in ('anon', 'authenticated')
+          select rolname from pg_roles where rolname = any($2::text[])
         ), application_columns as (
           select relation.relname as table_name, attribute.attname as column_name
             from pg_attribute attribute
@@ -691,12 +766,67 @@ async function verifyCatalog(sslCa: string | undefined) {
         union all
         select * from table_only_access
         order by role_name, table_name, column_name, privilege_type`,
-      [APPLICATION_TABLES],
+      [APPLICATION_TABLES, supabaseDataApiRoles],
     );
     if (effectiveBrowser.rows.length) {
-      throw new Error("anon or authenticated has inherited/effective TrendsFast access");
+      throw new Error("A Supabase Data API role has inherited/effective TrendsFast access");
     }
-    return { roles: roles.rows.length, objectsOwnedByMigrator: true };
+    const unsafeMigratorDefaults = await database.pool.query<{
+      grantee: string;
+      object_type: string;
+      privilege_type: string;
+    }>(
+      `with owner as (
+         select oid from pg_roles where rolname = $1
+       ), object_types(object_type) as (
+         values ('r'::"char"), ('S'::"char"), ('f'::"char")
+       ), global_defaults as (
+         select object_types.object_type::text as object_type,
+                expanded.grantee,
+                expanded.privilege_type
+           from owner
+           cross join object_types
+           left join pg_default_acl defaults
+             on defaults.defaclrole = owner.oid
+            and defaults.defaclnamespace = 0
+            and defaults.defaclobjtype = object_types.object_type
+           cross join lateral aclexplode(
+             coalesce(defaults.defaclacl, acldefault(object_types.object_type, owner.oid))
+           ) expanded
+       ), schema_additions as (
+         select defaults.defaclobjtype::text as object_type,
+                expanded.grantee,
+                expanded.privilege_type
+           from owner
+           join pg_default_acl defaults on defaults.defaclrole = owner.oid
+           join pg_namespace namespace
+             on namespace.oid = defaults.defaclnamespace
+            and namespace.nspname = 'public'
+           cross join lateral aclexplode(defaults.defaclacl) expanded
+          where defaults.defaclobjtype in ('r', 'S', 'f')
+       ), unsafe as (
+         select * from global_defaults
+         union all
+         select * from schema_additions
+       )
+       select case when unsafe.grantee = 0 then 'PUBLIC' else grantee.rolname end as grantee,
+              unsafe.object_type,
+              unsafe.privilege_type
+         from unsafe
+         left join pg_roles grantee on grantee.oid = unsafe.grantee
+        where unsafe.grantee = 0 or grantee.rolname = any($2::text[])
+        order by grantee, object_type, privilege_type`,
+      [DATABASE_ROLES.migrator, supabaseDataApiRoles],
+    );
+    if (unsafeMigratorDefaults.rows.length) {
+      throw new Error("The migrator has unsafe PUBLIC or Supabase Data API default privileges");
+    }
+    return {
+      roles: roles.rows.length,
+      managedCreatorMemberships: managedMemberships.length,
+      migratorDefaultAclClean: true,
+      objectsOwnedByMigrator: true,
+    };
   } finally {
     await database.close();
   }

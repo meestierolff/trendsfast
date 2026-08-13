@@ -143,6 +143,12 @@ describe("hosted 0024 schema manifest", () => {
     expect(verifier).toContain("constraint_metadata.contype in ('f', 'c')");
     expect(verifier).toContain("compareHostedSchemaCatalog(expectedCatalog, actualCatalog");
     expect(verifier).toContain("readPinned0024HostedSchemaManifest(snapshot0024)");
+    expect(verifier).not.toContain("information_schema");
+    expect(verifier).toContain("applicationOwnerDriftResult");
+    expect(verifier).toContain("platformManagedDefaultGrants");
+    expect(verifier).toContain("select oid, rolname from pg_roles where rolname = $2");
+    expect(verifier).toContain("coalesce(defaults.defaclacl, acldefault");
+    expect(verifier).toContain("schema_additions");
     const tamperedSnapshotBytes = Buffer.from(snapshotBytes);
     tamperedSnapshotBytes[tamperedSnapshotBytes.length - 2] = 32;
     expect(() => readPinned0024HostedSchemaManifest(tamperedSnapshotBytes)).toThrow(

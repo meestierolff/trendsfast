@@ -34,7 +34,18 @@ afterEach(() => {
 describe("managed runtime policy synchronization", () => {
   it("parses every private policy input without embedding policy values in SQL", () => {
     const policy = parseManagedRuntimePolicy(validPolicyEnvironment());
-    expect(managedRuntimePolicyParameters(policy)).toHaveLength(10);
+    expect(managedRuntimePolicyParameters(policy)).toEqual([
+      policy.revision,
+      policy.publicScanDailyLimit,
+      policy.publicScanGlobalDailyLimit,
+      policy.publicScanGlobalDailyBudgetUsd,
+      policy.apiCreateRateLimitPerHour,
+      policy.apiStatusRateLimitPerHour,
+      policy.apiAuthFailureLimitPerHour,
+      policy.maxProviderCostUsdPerScan,
+      policy.apiProviderCostLimitUsdPerHour,
+      policy.scanRetentionDays,
+    ]);
     expect(MANAGED_RUNTIME_POLICY_UPSERT_SQL).toContain(
       "ELSE public.managed_runtime_policy.policy_version + 1",
     );

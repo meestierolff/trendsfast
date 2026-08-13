@@ -43,7 +43,9 @@ environment:
   worker/reconciliation, billing, API-key auth, and function-only purge runtimes
   respectively.
 - `DIRECT_DATABASE_URL`: the direct connection used only by controlled
-  migrations, verification, backup, and restore work.
+  migrations, verification, backup, and restore work. Bootstrap migration may
+  use the managed operator; after role provisioning, it must authenticate as
+  `trendsfast_migrator` so future migrations can alter migrator-owned objects.
 - `ROLE_ADMIN_DATABASE_URL`: an optional separate direct administrative
   connection for role provisioning/catalog verification; it is never deployed
   to an application runtime.
@@ -63,7 +65,9 @@ selected driver configuration against the chosen pooler before production.
    direct/admin URLs only in the controlled release environment.
 5. From the exact release SHA, run `pnpm install --frozen-lockfile` and then run
    `pnpm db:migrate` with both URLs set; migration must select
-   `DIRECT_DATABASE_URL`, never the transaction pooler.
+   `DIRECT_DATABASE_URL`, never the transaction pooler. For bootstrap, use the
+   managed operator URL; after step 6, replace the controlled migration URL with
+   the generated `trendsfast_migrator` direct/session-mode URL.
 6. After migration, create a mode-`0600` private secrets file containing the
    eight generated 32+ character role passwords (migrator plus seven runtimes), set
    `RUNTIME_ROLE_SECRETS_FILE`, and run `pnpm db:provision-roles` through the
@@ -77,13 +81,21 @@ selected driver configuration against the chosen pooler before production.
    reading row values.
 8. Never run `pnpm db:seed` against hosted preview or production.
 9. Run `STRICT_HOSTED_SCHEMA=1 pnpm db:verify-hosted` with
-   `DIRECT_DATABASE_URL` set. Save the redacted JSON result with the release
-   record.
+   `DIRECT_DATABASE_URL` set to the migrator identity. Save the redacted JSON
+   result with the release record; the admin identity intentionally cannot read
+   the migrator-owned Drizzle ledger.
 
 Configure Supabase Auth only after the database/runtime-role read-back is clean;
 the exact redirect, SMTP, Google-provider, cookie, and claim-consumption contract
-is in [SUPABASE_AUTH.md](SUPABASE_AUTH.md). Keep `anon` and `authenticated` at
-zero privileges on TrendsFast business tables.
+is in [SUPABASE_AUTH.md](SUPABASE_AUTH.md). Keep `anon`, `authenticated`, and
+`service_role` at zero privileges on TrendsFast business tables; application
+runtimes never use Supabase Data API roles.
+
+Supabase retains provider-owned `supabase_admin` defaults for platform-created
+objects. TrendsFast does not represent those as removed: hosted acceptance
+checks zero effective access on every current TrendsFast object and zero
+`PUBLIC`/Data API defaults owned by `trendsfast_migrator`, the only identity
+authorized to create future TrendsFast objects.
 
 The verifier reads catalog metadata only: PostgreSQL version, the Drizzle
 migration ledger, public table names, enum names, index names, and constraint
