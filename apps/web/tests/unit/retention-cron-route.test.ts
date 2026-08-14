@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { resolveVercelConfig } from "../../vercel";
+
 vi.mock("server-only", () => ({}));
 
 const mocks = vi.hoisted(() => ({
@@ -82,19 +84,17 @@ describe("retention cron route", () => {
     expect((await GET(request())).status).toBe(500);
   });
 
-  it("keeps the schedule in the ops template and out of the default and Hobby configs", () => {
+  it("keeps retention unscheduled on both Hobby surfaces", () => {
     const ops = JSON.parse(
       readFileSync(fileURLToPath(new URL("../../vercel.ops.json", import.meta.url)), "utf8"),
     );
-    const defaultConfig = JSON.parse(
-      readFileSync(fileURLToPath(new URL("../../vercel.json", import.meta.url)), "utf8"),
-    );
+    const defaultConfig = resolveVercelConfig(undefined);
     const hobby = JSON.parse(
       readFileSync(fileURLToPath(new URL("../../vercel.hobby.json", import.meta.url)), "utf8"),
     );
     expect(maxDuration).toBe(300);
-    expect(ops.crons).toEqual([{ path: "/api/cron/retention", schedule: "17 3 * * *" }]);
-    expect(defaultConfig.crons).toBeUndefined();
-    expect(hobby.crons).toBeUndefined();
+    expect(ops.crons).toBeUndefined();
+    expect(defaultConfig).not.toHaveProperty("crons");
+    expect(hobby.crons).toEqual([{ path: "/api/cron/monitoring", schedule: "0 7 * * *" }]);
   });
 });

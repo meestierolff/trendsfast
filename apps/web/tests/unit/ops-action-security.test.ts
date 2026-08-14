@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createCsrfToken, issueOpsSession } from "../../lib/ops-session";
 import { authorizeOpsActionRequest, authorizeOpsReadRequest } from "../../app/api/ops/_security";
@@ -6,6 +6,9 @@ import { parseOpsAction } from "../../app/api/ops/_validation";
 
 const secret = "ops-action-test-secret-that-is-at-least-32-characters";
 const origin = "https://trendsfast.example";
+
+beforeEach(() => vi.stubEnv("TRENDSFAST_SURFACE", "ops"));
+afterEach(() => vi.unstubAllEnvs());
 
 function authorizedRequest(overrides: { origin?: string; csrf?: string; cookie?: string } = {}) {
   const session = issueOpsSession({ secret, now: new Date("2026-08-11T10:00:00Z") });
@@ -23,6 +26,19 @@ function authorizedRequest(overrides: { origin?: string; csrf?: string; cookie?:
 }
 
 describe("ops action request authorization", () => {
+  it("fails closed outside the exact ops deployment surface", () => {
+    vi.stubEnv("TRENDSFAST_SURFACE", "public");
+    const { request } = authorizedRequest();
+
+    expect(
+      authorizeOpsActionRequest(request, {
+        secret,
+        expectedUrl: origin,
+        now: new Date("2026-08-11T10:05:00Z"),
+      }),
+    ).toEqual({ ok: false, status: 403, error: "Operations access is unavailable." });
+  });
+
   it("requires same-origin, a signed session, and the session-bound CSRF token", () => {
     const { request } = authorizedRequest();
     const result = authorizeOpsActionRequest(request, {

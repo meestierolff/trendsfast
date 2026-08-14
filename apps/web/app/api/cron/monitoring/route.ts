@@ -55,6 +55,9 @@ export async function GET(request: Request) {
     routeFailed = true;
     reconciliation = { ran: false, alertsQueued: 0, failed: true };
   }
+  if (reconciliation.failed === true) {
+    routeFailed = true;
+  }
   let alerts: Record<string, unknown>;
   try {
     alerts = await dispatchOperationsAlerts();

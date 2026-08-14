@@ -301,10 +301,11 @@ external source to **Connected**. See the
 
 ## Current release truth
 
-- No production deployment, provider/model read-back, legal approval, customer
-  result, dogfood outcome, or traction metric is claimed by this README. A
-  protected preview has separate dated evidence below; it is not a public or
-  production launch.
+- No accepted deployment of the `sol/hobby-launch-dogfood` release,
+  provider/model matrix, legal approval, customer result, dogfood outcome, or
+  traction metric is claimed by this README. A protected historical preview and
+  an older Current deployment are evidence only for their own SHAs; neither is
+  acceptance for the prepared Hobby release.
 - Founder review now includes evidence verification/rejection, immutable-action
   edit-and-approve, context correction, stored-evidence recomputation, delivery,
   and redacted JSON/Markdown review bundles. Stored-only recomputation makes no
@@ -315,7 +316,8 @@ external source to **Connected**. See the
   consume a research allowance.
 - Public scans, live API creation, and Checkout each have a separate default-off
   kill switch so a hosted preview can boot without enabling customer effects.
-- Protected founder operations can issue a revocable, audited, one-project
+- Application-gated founder operations can issue a revocable, audited,
+  one-project
   design-partner grant for at most 30 days. It is explicitly not a Stripe
   subscription, and normal usage/cost limits still apply.
 - Managed/provider/model prices and cost ceilings are server configuration, not
@@ -368,20 +370,41 @@ external source to **Connected**. See the
   Valid provider-reported usage settles the reservation; missing usage remains
   conservative and unsettled. Public replay attempts consume the durable daily
   admission cap.
-- Isolated Free Supabase preview project `auxienkuufejeakaczlq` now has 23/23
-  unseeded migrations, strict schema/ownership/Data API denial verification,
-  and seven TLS-verified runtime identities. Protected Hobby Vercel deployment
-  `dpl_8vpd6yDUSVxn9oNH5SobuJWXuN6q` is `READY` at the stable
-  `trendsfast-preview.vercel.app` alias with all customer-effect switches
-  disabled. Authenticated route/API probes passed for the exact release SHA.
-  This does not prove an anonymous public origin, production, provider/model
-  access, managed policy, monitoring, backup/restore, Auth journeys, or
-  dogfood. Production still requires Vercel Pro and a Supabase Pro project;
-  `trendsfast.com` is registered but not connected or verified.
-- Retention now has an authenticated ops-only route, a daily ops deployment
-  template, aggregate health/alerts, and a dedicated least-privilege database
-  role. Scheduler deployment/success, backup expiry, legal holds, and operator
-  privacy-request acceptance remain unverified.
+- xAI actual-cost settlement now supports canonical
+  `usage.cost_in_usd_ticks` at 10,000,000,000 ticks per USD. Valid ticks override
+  legacy/token-derived cost; malformed or missing ticks use the bounded
+  fallback, and an unavailable actual stays conservative and unsettled.
+- Existing Supabase ref `auxienkuufejeakaczlq` is now the sole production
+  database for the pre-revenue launch; its historical `trendsfast-preview`
+  display label is not a separate environment. It has 23/23 unseeded migrations,
+  strict 44-table schema/ownership/Data API denial verification, seven
+  TLS-verified runtime identities, and a pre-mutation encrypted backup whose
+  listing/readability check passed. No second database or hosted restore-test
+  project will be created.
+- The Hobby topology is public project `trendsfast` plus the application-gated
+  founder project `trendsfast-ops`, both rooted at `apps/web` in `fra1` with
+  Fluid Compute and a 300-second Function duration. Standard Vercel
+  Authentication does not protect Production aliases on Hobby; ops access
+  instead depends on `OPS_TOKEN` admission, signed sessions, and exact
+  ops-surface authorization. The ops project keeps only its generated alias and
+  no custom domain. Only public registers
+  `/api/cron/monitoring` at `0 7 * * *` (07:00–07:59 UTC); ops is cron-free.
+  The new ops project has no Production deployment, and the custom domains are
+  not associated or verified.
+- A historical preview source upload included private runtime-role, migrator,
+  and preview-app secret bundles plus non-secret launch/tool metadata. It did
+  not include the backup passphrase or a database dump. All eight PostgreSQL
+  role passwords, the preview-era `SESSION_SECRET` and `API_KEY_PEPPER`, and the
+  launch cron secret were rotated; the redacted hosted role verifier now
+  passes. The obsolete raw local preview-secret bundle was removed, and the
+  unaliased historical preview deployment was deleted after its path-only
+  exposure inventory was preserved. A tracked root
+  `.vercelignore` and accepted-SHA source-boundary verifier prevent those local
+  artifacts, keys, databases, and backups from entering the new upload set.
+- Retention has an authenticated ops-only route, aggregate health/alerts, and a
+  dedicated least-privilege role, but the Hobby ops deployment receives no
+  retention URL or cron secret. Retention scheduling, backup expiry, legal
+  holds, and operator privacy-request acceptance remain unverified.
 - Explicit non-fixture retry after an uncertain provider effect or charge
   requires operator reconciliation; no broad retry-safety claim is made.
 
@@ -394,6 +417,8 @@ the
 [2026-08-13 protected hosted-preview record](docs/operations/HOSTED_PREVIEW_VERIFICATION_2026-08-13.md),
 the
 [2026-08-13 blocked staged-production preparation record](docs/operations/STAGED_PRODUCTION_PREPARATION_2026-08-13.md),
+the current
+[2026-08-13 Hobby launch runbook](docs/operations/HOBBY_LAUNCH_2026-08-13.md),
 and [launch checklist](docs/operations/LAUNCH_CHECKLIST.md). Every applicable
 production, external, and founder-approval gate remains separate.
 

@@ -1,3 +1,5 @@
+import { deploymentSurface } from "@trendsfast/config";
+
 import { verifyCsrfToken, verifyOpsSession } from "../../../lib/ops-session";
 
 export type OpsActionAuthorization =
@@ -22,6 +24,8 @@ function cookieValue(header: string | null, name: string): string | null {
 }
 
 export function isOpsSameOrigin(request: Request, expectedUrl?: string): boolean {
+  if (deploymentSurface() !== "ops") return false;
+
   const origin = request.headers.get("origin");
   if (!origin) return false;
   const fetchSite = request.headers.get("sec-fetch-site");
@@ -39,6 +43,9 @@ export function authorizeOpsActionRequest(
   request: Request,
   options: { secret?: string; expectedUrl?: string; now?: Date } = {},
 ): OpsActionAuthorization {
+  if (deploymentSurface() !== "ops") {
+    return { ok: false, status: 403, error: "Operations access is unavailable." };
+  }
   if (!isOpsSameOrigin(request, options.expectedUrl)) {
     return { ok: false, status: 403, error: "Cross-site operations actions are not accepted." };
   }
@@ -73,6 +80,9 @@ export function authorizeOpsReadRequest(
   request: Request,
   options: { secret?: string; now?: Date } = {},
 ): OpsReadAuthorization {
+  if (deploymentSurface() !== "ops") {
+    return { ok: false, status: 403, error: "Operations access is unavailable." };
+  }
   const fetchSite = request.headers.get("sec-fetch-site");
   if (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none") {
     return { ok: false, status: 403, error: "Cross-site operations reads are not accepted." };

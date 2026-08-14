@@ -8,15 +8,34 @@ export const DEFAULT_DESCRIPTION =
 
 type SiteEnvironment = Readonly<Record<string, string | undefined>>;
 
+function vercelProjectProductionOrigin(environment: SiteEnvironment): string {
+  const hostname = environment.VERCEL_PROJECT_PRODUCTION_URL?.trim().toLowerCase();
+  const labels = hostname?.split(".") ?? [];
+  const validHostname =
+    Boolean(hostname) &&
+    hostname!.length <= 253 &&
+    labels.length >= 2 &&
+    labels.every(
+      (label) => label.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label),
+    ) &&
+    /[a-z]/.test(labels.at(-1)!);
+
+  if (environment.VERCEL !== "1" || !validHostname) {
+    throw new Error(
+      "APP_URL is required for hosted builds unless VERCEL_PROJECT_PRODUCTION_URL is a valid Vercel hostname",
+    );
+  }
+
+  return `https://${hostname}`;
+}
+
 export function siteOrigin(environment: SiteEnvironment = process.env): string {
   const configuredOrigin = environment.APP_URL?.trim();
   const isHostedBuild = Boolean(environment.VERCEL_ENV?.trim());
 
   if (!configuredOrigin) {
     if (isHostedBuild) {
-      throw new Error(
-        "APP_URL is required for hosted builds so canonical URLs never use localhost",
-      );
+      return vercelProjectProductionOrigin(environment);
     }
     return "http://localhost:3000";
   }

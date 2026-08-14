@@ -9,7 +9,7 @@ readonly expected_project_id="prj_nYn6zjWW4BcKd03QaVO6LTOF3CSC"
 readonly expected_org_id="team_UVAUfp4G8CmlSNPI9w5FasKj"
 readonly expected_root_directory="apps/web"
 readonly expected_production_branch="main"
-readonly deployment_config="apps/web/vercel.json"
+readonly deployment_config="apps/web/vercel.ops.json"
 
 temp_dir=""
 production_env_file=""
@@ -398,7 +398,7 @@ if ! node -e '
     config.regions[0] === "fra1";
   process.exit(validSchema && noCronProperty && mainAutoDeployDisabled && euRegionPinned ? 0 : 1);
 ' "$deployment_config" >/dev/null 2>&1; then
-  fail "apps/web/vercel.json is not the reviewed cron-free staged-production config"
+  fail "apps/web/vercel.ops.json is not the reviewed cron-free staged-production config"
 fi
 pass "pinned Vercel project, owner, root, framework, branch, domain and cron-free config"
 
@@ -552,7 +552,7 @@ PHASE_1_FLAGS
 pass "required Production variable names and exact Phase 1 effect flags"
 
 : >"$command_output_file"
-if ! deployment_output="$(vercel deploy --prod --skip-domain --yes -A apps/web/vercel.json 2>"$command_output_file")"; then
+if ! deployment_output="$(TRENDSFAST_VERCEL_CONFIG_PROFILE=staged vercel deploy --prod --skip-domain --yes -A apps/web/vercel.ops.json 2>"$command_output_file")"; then
   fail "staged Production deployment failed"
 fi
 

@@ -1,51 +1,68 @@
-# Founder deployment scripts
+# Founder Hobby deployment scripts
 
-`deploy-staged-production.sh` is the founder-only Phase 1 production guardrail.
-It verifies a clean, synchronized `main`; the pinned `trendsfast` Vercel project
-and owner IDs; its `apps/web` Next.js root, production branch, and generated
-stable domain; the cron-free config; the public allowlist; and every disabled
-customer-effect flag before creating one staged Production deployment. It then
-uses `vercel curl` to bypass Deployment Protection only for the unique staged
-URL, runs the redacted route/API smoke, and requires zero error-level runtime
-logs. After acceptance and promotion, it repeats the complete smoke with
-ordinary public `curl` and checks both error and fatal logs on the stable origin.
-Any failure before promotion preserves the former Current deployment. After a
-promotion request, a timeout or failed stable-origin proof is explicitly an
-indeterminate state that requires manual Current-deployment inspection; the
-script does not claim an automatic rollback.
-
-The project must already have an `automation-bypass` entry. The authenticated
-project response is streamed through a sanitizer: bypass keys are never written
-to disk or printed, and only the matching-entry count plus non-secret project
-metadata reaches a mode-`0600` temporary file. The script rechecks that count
-immediately before every protected smoke so `vercel curl` reuses the reviewed
-bypass. Do not change Deployment Protection while the script is running.
-
-Before running it, export `EXPECTED_RELEASE_SHA` as the exact lowercase
-40-character SHA already present at both local `HEAD` and freshly fetched
-`origin/main`. Also export `EXPECTED_STABLE_PRODUCTION_ORIGIN` as the exact clean
-generated Vercel origin previously read from the project (for this handoff,
-`https://trendsfast.vercel.app`). Run from a clean `main` checkout with the
-Vercel CLI linked to the existing `trendsfast` project. Do not use `bash -x`: the
-script deliberately pulls Production values into a mode-`0600` temporary file,
-examines only names and the non-secret launch flags,
-suppresses command output, and removes all temporary response data through its
-exit trap.
-
-The exact founder command is:
+The pre-revenue Hobby release uses two founder-only scripts from a clean
+monorepo root:
 
 ```bash
-bash scripts/deploy-staged-production.sh
+bash scripts/deploy-hobby-production.sh
+bash scripts/deploy-hobby-ops.sh
 ```
 
-The deployment command includes `--skip-domain`, so that command alone does not
-promote or change the stable alias. The script first inspects, smokes, and checks
-logs on the unique staged Production URL. Only after every check passes does it
-run a separate `vercel promote` and prove through a second Vercel inspection that
-the approved stable origin resolves to the exact accepted deployment. It never
-adds or changes a custom domain. Do not claim that `trendsfast.com` or
-`www.trendsfast.com` serves this deployment merely because this script passed.
+Do not run either script with `bash -x`. Neither script creates Stripe objects,
+adds a custom domain, changes DNS, or prints environment values.
 
-The script stops on any mismatch. Provider work, public scans, API creation,
-billing, Checkout, paid monitoring, monitoring, and cron remain disabled after
-this staged deployment.
+Both scripts require `.var/private/hobby-release.json` to be a regular ignored
+mode-`0600` file containing the exact accepted branch and SHA:
+
+```json
+{
+  "version": 1,
+  "acceptedBranch": "sol/hobby-launch-dogfood",
+  "acceptedSha": "<exact-lowercase-40-character-SHA>"
+}
+```
+
+The accepted branch may instead be `main`. Local `HEAD` and the freshly fetched
+remote branch must both equal the accepted SHA, and the worktree must be clean.
+
+`deploy-hobby-production.sh` pins the public `trendsfast` project, founder team,
+`apps/web` root, `fra1`, Fluid Compute, 300-second Function duration, the exact
+Production environment name set, and `apps/web/vercel.hobby.json`. It runs:
+
+```bash
+vercel deploy --prod --skip-domain --yes -A apps/web/vercel.hobby.json
+```
+
+It inspects the resulting immutable Production deployment and verifies the
+Git SHA before printing only its safe URL and deployment ID. Because it uses
+`--skip-domain`, it does not promote the deployment or change the stable
+generated alias. On success it atomically adds the safe public deployment host
+and ID to the private release contract for the ops provenance fence.
+
+`deploy-hobby-ops.sh` requires that public provenance, pins the
+`trendsfast-ops` project, verifies its defense-in-depth Vercel Authentication
+setting, generated-domain-only inventory, cron-free
+`apps/web/vercel.ops.json`, and exact ops-only environment set, and runs:
+
+```bash
+vercel deploy --prod --yes -A apps/web/vercel.ops.json
+```
+
+It temporarily relinks the checkout to the ops project, then restores the
+original public `.vercel/project.json` byte-for-byte on success or failure. It
+prints only the stable app-authenticated ops alias and deployment ID after
+accepted-SHA inspection of the unique deployment URL.
+Vercel Standard Authentication does not protect Production aliases on Hobby,
+so this read-back is not the founder-access proof. The application boundary is
+the high-entropy `OPS_TOKEN` admission check, signed ops session, and exact
+ops-surface authorization on private pages and handlers. The ops project keeps
+only generated Vercel hosts and receives no custom domain.
+
+Both scripts also run `pnpm vercel:verify-source`. The tracked root
+`.vercelignore` must exclude local environments, `.var`, tool state, caches,
+test artifacts, database files, keys, and backups while retaining the required
+monorepo sources. The scripts stop before upload on any boundary mismatch.
+
+The full topology, environment boundary, cron, smoke, domain, and post-deploy
+gates are in
+[the 2026-08-13 Hobby launch runbook](../docs/operations/HOBBY_LAUNCH_2026-08-13.md).

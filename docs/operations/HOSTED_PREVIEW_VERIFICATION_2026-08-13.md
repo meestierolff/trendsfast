@@ -65,6 +65,13 @@ claimed.
   Protection remains enabled, so this is not an anonymous public-origin
   acceptance result.
 
+Post-record incident status: the preview's source upload was later found to
+contain ignored private launch files. Their affected credentials were rotated;
+after a V13 read-back proved the preview had no aliases and was not Production,
+the exact deployment was deleted and confirmed absent. This section remains a
+historical verification record, not a statement that the deployment still
+exists.
+
 ## Remaining blockers
 
 No production or ops deployment, Vercel Pro plan, production Supabase project,

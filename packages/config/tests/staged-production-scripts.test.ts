@@ -18,7 +18,7 @@ import { STAGED_PRODUCTION_ALLOWLIST } from "../../../scripts/staged-production-
 const repositoryRoot = resolve(import.meta.dirname, "../../..");
 const deployScript = join(repositoryRoot, "scripts/deploy-staged-production.sh");
 const scriptsReadme = join(repositoryRoot, "scripts/README.md");
-const vercelConfig = join(repositoryRoot, "apps/web/vercel.json");
+const vercelConfig = join(repositoryRoot, "apps/web/vercel.ops.json");
 const temporaryRoots: string[] = [];
 
 const requiredEnvironment = `# fake Vercel Production environment
@@ -116,7 +116,7 @@ function runHarness(options: HarnessOptions = {}): HarnessResult {
   writeFileSync(join(repo, "scripts/deploy-staged-production.sh"), readFileSync(deployScript));
   chmodSync(join(repo, "scripts/deploy-staged-production.sh"), 0o700);
   writeFileSync(
-    join(repo, "apps/web/vercel.json"),
+    join(repo, "apps/web/vercel.ops.json"),
     options.cronConfig
       ? '{"$schema":"https://openapi.vercel.sh/vercel.json","git":{"deploymentEnabled":{"main":false}},"regions":["fra1"],"crons":[]}\n'
       : '{"$schema":"https://openapi.vercel.sh/vercel.json","git":{"deploymentEnabled":{"main":false}},"regions":["fra1"]}\n',
@@ -358,15 +358,18 @@ describe("founder staged Production deploy script", () => {
     const readme = readFileSync(scriptsReadme, "utf8");
 
     expect(script).toContain("set -euo pipefail");
-    expect(script).toContain("vercel deploy --prod --skip-domain --yes -A apps/web/vercel.json");
+    expect(script).toContain(
+      "TRENDSFAST_VERCEL_CONFIG_PROFILE=staged vercel deploy --prod --skip-domain --yes -A apps/web/vercel.ops.json",
+    );
     expect(script).toContain("trap cleanup EXIT");
     expect(script).not.toMatch(/\bsource\s+[^\n]*production\.env/);
     expect(script).not.toMatch(/\beval\s+[^\n]*production_env_file/);
     expect(script).not.toContain("automation_bypass_secret");
     const shellAllowlist = script.match(/split\("([A-Z0-9_ ]+)", names, " "\)/)?.[1]?.split(" ");
     expect(shellAllowlist).toEqual([...STAGED_PRODUCTION_ALLOWLIST]);
-    expect(readme).toContain("bash scripts/deploy-staged-production.sh");
-    expect(readme).toContain("command alone does not\npromote or change the stable alias");
+    expect(readme).toContain("bash scripts/deploy-hobby-production.sh");
+    expect(readme).toContain("bash scripts/deploy-hobby-ops.sh");
+    expect(readme).toContain("does not promote the deployment or change the stable");
   });
 
   it("runs the guarded flow against fake binaries without leaking pulled or response values", () => {
@@ -381,7 +384,7 @@ describe("founder staged Production deploy script", () => {
       "PASS: stable Production origin resolves to the accepted deployment",
     );
     expect(combinedOutput).not.toContain("TOP_SECRET_SENTINEL");
-    expect(vercelLog).toContain("deploy --prod --skip-domain --yes -A apps/web/vercel.json\n");
+    expect(vercelLog).toContain("deploy --prod --skip-domain --yes -A apps/web/vercel.ops.json\n");
     expect(vercelLog.match(/^deploy /gm)).toHaveLength(1);
     expect(vercelLog).toContain(
       "inspect https://trendsfast-abcdef.vercel.app --wait --timeout 5m --format=json",

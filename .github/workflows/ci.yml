@@ -165,7 +165,7 @@ jobs:
             echo "The role verifier accepted an unsafe implicit PUBLIC function default." >&2
             exit 1
           fi
-          if ! grep -Fq "The migrator has unsafe PUBLIC or Supabase Data API default privileges" /tmp/trendsfast-default-acl-probe.log; then
+          if ! grep -Fxq '{"ok":false,"error":"RUNTIME_ROLE_UNSAFE_DEFAULT_ACL"}' /tmp/trendsfast-default-acl-probe.log; then
             cat /tmp/trendsfast-default-acl-probe.log
             echo "The role verifier failed for an unexpected reason." >&2
             exit 1

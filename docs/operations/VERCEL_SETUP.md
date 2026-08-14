@@ -1,190 +1,197 @@
 # Reproducible Vercel setup
 
-This procedure is executable only after the release SHA, remote CI, database,
-and secret inventory are approved. It does not make an unaudited deployment a
-public launch.
+This procedure implements the free, pre-revenue Hobby topology. It does not
+make an unaudited deployment a launch and does not authorize paid customers.
+The canonical current contract is the
+[2026-08-13 Hobby launch runbook](HOBBY_LAUNCH_2026-08-13.md).
 
-Observed project configuration on 2026-08-13: the founder-owned team `Finnie`
-(`team_UVAUfp4G8CmlSNPI9w5FasKj`) is on Hobby. Linked public project
-`trendsfast` (`prj_nYn6zjWW4BcKd03QaVO6LTOF3CSC`) uses Root Directory `apps/web`
-and production branch `main`. Protected preview deployment
-`dpl_8vpd6yDUSVxn9oNH5SobuJWXuN6q` reached `READY` at exact SHA
-`91374fcb357f576de7a35bbbac4f684c1e9a5317` and has the stable alias
-`trendsfast-preview.vercel.app`. Authenticated route/API and zero-error-log
-read-backs passed with every customer-effect gate disabled; Deployment
-Protection remains enabled. See the
-[hosted preview record](HOSTED_PREVIEW_VERIFICATION_2026-08-13.md).
+## Pinned projects and current state
 
-This is protected-preview evidence, not public-origin or production acceptance.
-The public project's generated production domain is
-`https://trendsfast.vercel.app`, but it currently has no accepted Current
-deployment. There is no accepted custom domain or active cron. Upgrade the team
-to Pro before commercial production. No separate
-`trendsfast-ops` project exists; creating it on an approved plan, protecting it,
-and reading back its private deployment/cron are founder blockers.
+The founder-owned `Finnie` team (`team_UVAUfp4G8CmlSNPI9w5FasKj`) is on Hobby.
 
-## Preflight and existing-project check
+| Surface     | Project          | Project ID                         | Root       | Region |
+| ----------- | ---------------- | ---------------------------------- | ---------- | ------ |
+| Public      | `trendsfast`     | `prj_nYn6zjWW4BcKd03QaVO6LTOF3CSC` | `apps/web` | `fra1` |
+| Founder ops | `trendsfast-ops` | `prj_EYAjX2Nyd1jUXSjfWVTVoI320nnU` | `apps/web` | `fra1` |
 
-```bash
-vercel --version
-vercel whoami
-vercel project ls
-```
+Both projects use Next.js, production branch `main`, Fluid Compute, and a
+300-second default Function duration. The public generated origin is
+`https://trendsfast.vercel.app`. The ops project keeps only the generated
+`https://trendsfast-ops.vercel.app` alias and receives no custom domain.
 
-Do not create a duplicate with a similar name. From the repository root, verify
-the existing link before any deployment:
+Vercel Standard Authentication does not protect Production domains or aliases
+on Hobby. The ops alias is therefore network-public even though the project
+retains its Vercel Authentication setting. Founder access is enforced by the
+application: session issuance requires the high-entropy `OPS_TOKEN`, a bounded
+constant-time check, and durable admission control; every private ops page and
+handler requires a signed session and the exact ops deployment surface. The
+unauthenticated login/session-entry routes expose no private ops data. Treat the
+Vercel setting only as defense in depth for targets it covers.
 
-```bash
-vercel link --yes --project trendsfast
-vercel git connect --yes
-vercel project inspect trendsfast
-```
+The new `sol/hobby-launch-dogfood` release has not yet been deployed. The ops
+project has no Production deployment, and neither custom domain has been added
+or moved. A historical protected preview remains evidence for its own SHA only;
+it is not acceptance for this release.
 
-The verified remote configuration uses `apps/web` as its Root Directory, so
-automatic Git deployments discover `apps/web/vercel.json`. It uses Next.js,
-Node 22, production branch `main`, a frozen pnpm install, and the web workspace
-build. Preserve monorepo workspace-package access and do not run migrations in
-the build.
+## Deployment configurations
 
-`apps/web/vercel.json` is deliberately the no-cron default. Its branch-scoped
-Git configuration disables automatic deployments from `main`, so merging a
-release-preparation PR cannot replace production before the founder's explicit
-CLI release; PR previews remain available. It pins the single Function region
-to `fra1`, colocated with the intended `eu-central-1` production database.
-`apps/web/vercel.pro.json` is the
-explicit Pro-only public configuration containing the ten-minute monitoring
-cron. `apps/web/vercel.hobby.json` remains a no-cron compatibility config, but
-the default is preferred. For reviewed CLI deployments from the repository
-root, select `-A apps/web/vercel.json` on Hobby and only after Pro and monitoring
-approval select `-A apps/web/vercel.pro.json`. A deployment is not accepted
-until its inspect/read-back proves the intended config was applied.
+The root `.vercelignore` is part of the release boundary. It excludes `.env*`,
+`.var`, local tool state, caches, test artifacts, database files, key material,
+and backups from both public and ops uploads. Before either founder script can
+run, `pnpm vercel:verify-source` must prove that the file is tracked in the
+accepted SHA, contains no negated rule, excludes every protected sentinel, and
+still includes the required application/workspace sources. A Vercel CLI dry run
+is supporting evidence, not a substitute for that accepted-SHA check.
 
-The founder control plane must be a separate Vercel project, not another domain
-on the public deployment. After Pro/Deployment Protection approval, create or
-link the exact `trendsfast-ops` project from the repository root, set its Root
-Directory to `apps/web`, and verify it before deployment:
+This closes a real historical gap: preview deployment
+`dpl_8vpd6yDUSVxn9oNH5SobuJWXuN6q` uploaded `.var/private` migrator URL,
+runtime-role password/URL, preview-app-secret, policy, and provider-price
+bundles, plus local release/tool metadata. It did not upload the backup
+passphrase or an encrypted/plaintext database dump. All eight database-role
+passwords, the preview-era `SESSION_SECRET` and `API_KEY_PEPPER`, and the launch
+cron secret were rotated; the current redacted hosted role verifier passes. The
+retired raw local preview-secret bundle was removed. A V13 read-back proved the
+historical deployment had no aliases and was not Production, after which that
+exact deployment was deleted and confirmed absent. The separate legacy
+Supabase-key shutdown remains a release gate.
 
-```bash
-vercel link --yes --project trendsfast-ops
-vercel project inspect trendsfast-ops
-```
+- `apps/web/vercel.ts` remains the automatic Git/default no-cron config and
+  selects a reviewed founder profile only from the local deploy-script selector.
+- A later Pro deploy using `apps/web/vercel.pro.json` must set
+  `TRENDSFAST_VERCEL_CONFIG_PROFILE=pro`; the Hobby scripts set only `public`
+  or `ops`.
+- `apps/web/vercel.hobby.json` disables Git deployment from `main`, pins `fra1`,
+  and registers the sole Hobby cron: `/api/cron/monitoring` at `0 7 * * *`.
+- `apps/web/vercel.ops.json` disables Git deployment from `main`, pins `fra1`,
+  and is deliberately cron-free.
+- `apps/web/vercel.pro.json` remains unchanged for the later Pro upgrade and
+  must not be selected during this Hobby phase.
 
-Set `TRENDSFAST_SURFACE=ops`, its private `APP_URL`, the exact public project's
-canonical origin as `PUBLIC_APP_URL`, `OPS_TOKEN`,
-`SESSION_SECRET`, `API_KEY_PEPPER`, `CRON_SECRET`, `DATABASE_SSL_CA`, and only
-the scoped URLs it executes (`OPS_DATABASE_URL` and `RETENTION_DATABASE_URL`,
-plus `WORKER_DATABASE_URL`/other role URLs only when an enabled route actually
-requires them). Configure Vercel Deployment Protection/account access and
-verify unauthenticated requests are blocked before founder route authentication.
-Do not copy the public project's domain or public traffic configuration.
-The ops `APP_URL` must remain the protected ops origin; delivery responses use
-`PUBLIC_APP_URL` so private founder links open only on the public deployment.
+Hobby may invoke the daily public cron at any time from 07:00 through 07:59
+UTC. Retaining the 300-second route budget depends on the verified Fluid
+Compute project setting; do not infer it from the plan name alone.
 
-Never set `OPS_TOKEN` on the public project. Generate a different
-`SESSION_SECRET` for the public and ops projects and verify their environment
-fingerprints differ without printing either value. The shared `API_KEY_PEPPER`
-is the deliberate exception: ops issues keys whose hashes the public API must
-verify, so rotate it only through the documented cross-surface key-rotation
-procedure.
+## Strict environments
 
-## Secret-safe environment setup
-
-Set every server variable separately for preview and production. Pipe values
-from the founder's secret manager so they do not appear in shell history:
+Prepare and validate the ignored mode-`0600` inventory, then import each exact
+Production allowlist through standard input:
 
 ```bash
-printf '%s' "$VALUE" | vercel env add VARIABLE preview --sensitive
-printf '%s' "$VALUE" | vercel env add VARIABLE production --sensitive
-```
-
-Review names/scopes with `vercel env ls`; never print values. Keep billing,
-trials, promotions/coupons, and paid monitoring disabled until their gates pass.
-Preview and production must use different databases, salts, sessions, provider
-credentials where available, and Stripe webhook secrets.
-
-For the inert Phase 1 public surface, `APP_URL` and `PUBLIC_APP_URL` both equal
-the exact generated public origin. This is intentionally different from the
-ops contract above: on ops, `APP_URL` remains the protected ops origin while
-`PUBLIC_APP_URL` points across the boundary to public.
-
-Use the allowlisted importer only after the unseeded production database, three
-public-side runtime roles, Auth publishable pair, TLS CA, and private policy have
-all passed their own read-backs:
-
-```bash
+pnpm env:prepare-hobby
 pnpm env:import-production --check
 pnpm env:import-production --apply
+pnpm env:import-ops --check
+pnpm env:import-ops --apply
 ```
 
-The importer parses `.env.production.local` as data, requires mode `0600`,
-passes values only on standard input, and never prints them. It must remain
-blocked rather than install partial or preview database configuration. Vercel
-updates variables sequentially, so an interrupted apply can leave a mixed
-environment; no deploy may proceed until the operator fixes the cause, reruns
-`--apply`, and receives the exact name/type read-back.
+The importers reject an unpinned project, wrong root/scope, wrong protection or
+Fluid setting, unknown remote variable, missing allowlisted value, forbidden
+role URL, weak secret, wrong Supabase project, and wrong launch effect. They
+never print values and require an exact name/type read-back before deployment.
 
-## Preview-first deployment
+The public surface receives only public/member/auth/worker pooled database
+roles, the verified CA, its own session secret, the shared API-key pepper,
+Supabase publishable Auth values, Turnstile, the public cron secret,
+provider/model policy, and the exact launch flags. It never receives ops,
+billing, retention, direct/admin/owner, or Supabase `service_role` credentials.
+
+The ops surface receives only its ops database role, the verified CA, a unique
+session secret, `OPS_TOKEN`, the shared API-key pepper, bounded provider
+verification inputs, public deployment provenance, and exact launch flags. It
+never receives the public/member/auth/worker/billing/retention roles,
+`CRON_SECRET`, Supabase browser values, Turnstile, direct/admin URLs, or alert
+secrets. The shared pepper is necessary because ops issues hashed project keys
+that the public API verifies; all other session/control credentials remain
+surface-specific.
+
+Keep these values closed on both surfaces:
+
+```env
+PUBLIC_SCANS_ENABLED=false
+BILLING_ENABLED=false
+BILLING_CHECKOUT_ENABLED=false
+PAID_MONITORING_ENABLED=false
+MONITORING_ENABLED=false
+STRIPE_MODE=test
+```
+
+Managed provider calls and internal API creation are enabled only for bounded
+dogfood. No live Stripe runtime key belongs in either Vercel project.
+
+## Accepted release fence
+
+The founder scripts require a clean local/remote accepted SHA and a regular
+mode-`0600` `.var/private/hobby-release.json`:
+
+```json
+{
+  "version": 1,
+  "acceptedBranch": "sol/hobby-launch-dogfood",
+  "acceptedSha": "<exact-lowercase-40-character-SHA>"
+}
+```
+
+Run from the monorepo root, without `bash -x`, in this order:
 
 ```bash
-vercel deploy -A apps/web/vercel.json
-vercel curl / --deployment <preview-url>
-vercel logs --deployment <deployment-id> --level error
-DEPLOYMENT_URL=<preview-url> pnpm verify:deployment
+bash scripts/deploy-hobby-production.sh
+bash scripts/deploy-hobby-ops.sh
 ```
 
-Run the URL-first scan, status, ops review/delivery, evidence, feedback, API
-idempotency/limits, source status, mobile, accessibility, and security-header
-checks against the preview. Run provider read-backs separately and record them;
-a successful deploy does not mark sources Connected.
-
-For the founder-controlled Phase 1 release, merge the reviewed preparation PR,
-check out the exact accepted `main` SHA, and run:
+The public script executes:
 
 ```bash
-bash scripts/deploy-staged-production.sh
+vercel deploy --prod --skip-domain --yes -A apps/web/vercel.hobby.json
 ```
 
-The script uses `vercel deploy --prod --skip-domain --yes -A
-apps/web/vercel.json`. `--skip-domain` creates a staged Production deployment;
-it deliberately does not make `trendsfast.vercel.app` Current. The script first
-inspects and smokes that immutable deployment through `vercel curl`, including
-the expected public `/ops` denial and disabled scan-create response, and checks
-error-level logs. Only after every staged check passes does it explicitly
-promote the accepted deployment and recheck the stable origin. A failed staged
-check leaves the former Current deployment unchanged; a failed post-promotion
-check is a release incident and requires the documented rollback procedure.
+It verifies the immutable deployment's project, target, region, config, READY
+state, and Git SHA, then stores only the safe host and deployment ID in the
+private release contract. `--skip-domain` means this does not change
+`trendsfast.vercel.app` or a custom domain.
 
-This is Vercel's documented
-[staged-production workflow](https://vercel.com/docs/cli/deploying-from-cli#deploying-a-staged-production-build),
-not an alias shortcut. Do not add `trendsfast.com` or `www.trendsfast.com` until
-promotion and the stable-origin smoke pass. A technically inert Hobby build is
-not commercial-production approval; upgrade the team before public/commercial
-use.
-
-Only after the team is on Pro and every paid-monitoring gate passes, opt in to
-the monitoring schedule with the same accepted release SHA:
+The ops script consumes that public provenance, safely relinks to the exact ops
+project, executes:
 
 ```bash
-vercel deploy --prod -A apps/web/vercel.pro.json
+vercel deploy --prod --yes -A apps/web/vercel.ops.json
 ```
 
-Deploy the separately linked private control plane only after its gates pass:
+It verifies the accepted SHA/config, generated-domain-only inventory, and
+defense-in-depth project setting, then restores the public Vercel link
+byte-for-byte. It does not claim that Vercel Authentication protects the
+Production alias. Each successful script prints only a safe deployment URL and
+`dpl_...` ID. Neither script mutates Stripe or domain configuration.
 
-```bash
-vercel deploy --prod -A apps/web/vercel.ops.json
-vercel inspect <ops-deployment-url>
-```
+## Post-deploy acceptance
 
-The inspect/read-back must show project `trendsfast-ops`, Root Directory
-`apps/web`, Deployment Protection, `TRENDSFAST_SURFACE=ops`, and the daily
-`/api/cron/retention` schedule. Exercise the exact cron bearer and verify the
-aggregate health result without logging secret values or deleted rows.
+After the founder returns both URLs, smoke the immutable public deployment
+before promotion:
+
+- `/` and `/login` return `200`;
+- `/dashboard` redirects same-origin to `/login`;
+- `/ops` returns `404`;
+- `/v1/openapi.json` and `/api/sources` return `200`;
+- `POST /api/scan-requests` returns `503` while public scans are disabled;
+- the monitoring cron returns `401` without or with the wrong Bearer and `200`
+  with the correct secret, while claiming no monitoring scan;
+- error/fatal logs have no unexpected entries.
+
+Only then make that exact deployment Current at the generated public origin and
+repeat the smoke. Separately verify that the ops Production alias exposes no
+private data without an application session, rejects an invalid `OPS_TOKEN`,
+establishes a signed founder session after valid admission, and enforces the ops
+surface on review/edit-and-approve, grants, API-key issuance, and private bundle
+export. Verify no indexing and no public cross-origin access. Vercel
+Authentication is not the Production access proof on Hobby.
 
 ## Domain and rollback
 
-Follow [DOMAIN_CHECKLIST.md](DOMAIN_CHECKLIST.md). A domain command can add a
-project association; the registrar may still require manual DNS changes.
+Follow [DOMAIN_CHECKLIST.md](DOMAIN_CHECKLIST.md) only after the generated
+origin passes. Vercel association is not DNS proof: return the exact assigned
+records for founder application at Spaceship, then verify public DNS, TLS,
+canonical metadata, Turnstile hostname, and the `www` → apex redirect.
 
-To roll back, first disable new scans, monitoring, and checkout. Promote or
-redeploy only a schema-compatible known-good SHA. Preserve database and Stripe
-audit state.
+To roll back, first disable public scan creation, monitoring, and Checkout.
+Promote or redeploy only a schema-compatible known-good SHA, preserve database
+and Stripe audit state, and record the incident. A deployment timeout after an
+external effect is indeterminate until Vercel Current state is read back.

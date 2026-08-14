@@ -18,14 +18,20 @@ requires a new revision, so a stale deployment fails closed instead of silently
 adopting different limits. Deploy only the matching opaque revision to the ops
 runtime; never deploy the private policy file or its values.
 
-Two entrypoints share the same repository contract:
+Two code-local entrypoints share the same repository contract:
 
 - `pnpm db:purge` is a controlled operator command using `RETENTION_DATABASE_URL`,
   verified `DATABASE_SSL_CA`, and `MANAGED_POLICY_REVISION` for recovery/manual runs.
 - `GET /api/cron/retention` is hidden on the public surface, accepted only on
-  `TRENDSFAST_SURFACE=ops`, and requires the exact `CRON_SECRET` bearer. The
-  `apps/web/vercel.ops.json` template schedules it daily at `03:17 UTC`; the
-  default and Hobby compatibility templates contain no cron.
+  `TRENDSFAST_SURFACE=ops`, and requires the exact `CRON_SECRET` bearer when a
+  scheduler is explicitly configured.
+
+The pre-revenue Hobby ops deployment is deliberately cron-free and receives
+neither `RETENTION_DATABASE_URL` nor `CRON_SECRET`. Retention therefore remains
+a controlled manual/recovery operation for this launch. The only registered
+Hobby cron is the public `/api/cron/monitoring` route at `0 7 * * *`, with a
+07:00–07:59 UTC invocation window; it does not run retention. Do not add a
+second Hobby cron or infer retention scheduling from the route's existence.
 
 The retention login is distinct from public, worker, billing, and founder ops.
 It has no direct table or column grants and no health/alert DML. Its sole
@@ -44,10 +50,10 @@ retention success. Retention state is written only by the purge function itself.
 
 The route returns bounded aggregate counts and fails if the expired-interest
 batch backlog remains. Daily operations reconciliation alerts when the latest
-retention health success becomes stale. Deployment still must prove the ops
-template was selected, scheduler ownership, request authentication, successful
-execution, alert delivery, and acceptable duration in a production-shaped
-database. Code or a Vercel template alone is not deployed evidence.
+retention health success becomes stale. Before any future scheduler is enabled,
+prove scheduler ownership, request authentication, successful execution, alert
+delivery, and acceptable duration in a production-shaped database. Code or a
+route alone is not deployed evidence.
 
 Before live traffic, approve and test legal-hold exclusion, provider-side
 deletion, backup/PITR expiry and restore behavior, statutory billing/security

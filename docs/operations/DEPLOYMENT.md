@@ -1,173 +1,212 @@
 # Production deployment procedure
 
-This is an unexecuted runbook for the intended Vercel + hosted PostgreSQL
-deployment. It does not prove that accounts, DNS, credentials, migrations,
-providers, or `trendsfast.com` are configured.
+The current production target is a deliberately limited, pre-revenue Vercel
+Hobby release. Follow the exact dated contract in
+[HOBBY_LAUNCH_2026-08-13.md](HOBBY_LAUNCH_2026-08-13.md). This runbook does not
+authorize paid Checkout, a customer charge, paid monitoring, or a public scan
+until their independent gates pass.
 
-Observed external state on 2026-08-12: an isolated Free Supabase preview project
-(`auxienkuufejeakaczlq`) and one protected-dogfood Vercel project
-(`prj_nYn6zjWW4BcKd03QaVO6LTOF3CSC`) exist. The Vercel team remains Hobby; no
-hosted migration, deployment, alias, custom domain, cron, production Supabase
-project, backup restore, DNS assignment, or TLS proof exists. `trendsfast.com`
-is founder-owned at Spaceship, but exact Vercel-assigned records have not been
-applied or verified. The founder must upgrade Vercel and create/upgrade a
-Supabase Pro production organization. These are launch blockers, not permission
-to infer readiness.
+Current pre-deploy truth: the sole Supabase production project is
+`auxienkuufejeakaczlq`; the public Vercel project is `trendsfast`; the cron-free
+founder project is `trendsfast-ops`. The new release has not been deployed, the
+ops project has no Production deployment, and the custom domains have not been
+associated or moved. The ops project has only its generated Vercel alias; on
+Hobby that Production alias is not protected by Standard Vercel Authentication.
 
-Do not execute this as a public launch while the current known gates remain
-open: live website/provider/model read-backs, scheduled retention and an
-authenticated privacy-request workflow, a reviewed policy for explicit retry
-after an uncertain provider effect or charge, model actual-usage reconciliation
-and operator price verification, release browser/accessibility/security
-acceptance, deployed public-capability lookup throttling, and approved legal
-documents. Manual evidence and API-key founder operations exist, but require
-release-SHA acceptance. Billing, usage, monitoring, and expanded analytics work
-is in progress and must remain disabled/unclaimed until its separate matrix
-passes.
+## 1. Release preflight
 
-## 1. Preflight
+1. Start from the accepted branch/SHA with a clean worktree and matching remote
+   SHA. Keep protected GitHub checks active.
+2. Verify Vercel, Supabase, Stripe CLI, and GitHub identities without printing
+   tokens. Confirm `.env.production.local` is ignored, regular, and mode `0600`.
+3. Confirm both Vercel projects are in the founder team, use `apps/web`, `fra1`,
+   Fluid Compute, and a 300-second default Function duration. Confirm the ops
+   project has only its generated alias and no custom domain. Retain the Vercel
+   Authentication setting as defense in depth, but do not count it as
+   Production access control on Hobby.
+4. Keep the effect state exact: managed providers and internal API creation on;
+   public scans, Checkout, billing, monitoring, and paid monitoring off;
+   `STRIPE_MODE=test`.
+5. Do not reopen the topology: use one Supabase project, two Vercel surfaces,
+   and one public daily cron.
+6. Run `pnpm vercel:verify-source` against the accepted SHA. It must prove the
+   tracked root `.vercelignore` excludes local environments, `.var`, tool state,
+   caches, test output, database files, keys, and backups while preserving
+   required application/workspace sources.
 
-1. Choose and record the exact release SHA; require green CI and all applicable
-   unchecked items in [LAUNCH_CHECKLIST.md](LAUNCH_CHECKLIST.md).
-2. Founder owns the GitHub repository and existing preview Vercel/Supabase
-   projects, provisions suitable Pro production projects/plans, and owns the
-   provider and monitoring/error-reporting accounts.
-3. Create separate preview and production databases/secrets. Restrict team
-   access, enable MFA, backups, point-in-time recovery if available, and alerts.
-4. Confirm a direct PostgreSQL connection for controlled migrations and a
-   runtime connection appropriate for serverless pooling. Use the URL format
-   the application/driver actually supports; never expose it to the browser.
-5. Verify the platform overwrites untrusted forwarding headers and document the
-   trusted-proxy boundary. Public admission and auth-abuse fingerprints use
-   request network metadata; application-level controls do not make a spoofable
-   proxy chain trustworthy.
-6. Put public scan/status/result capability lookups behind an independently
-   verified edge throttle. The 256-bit tokens make guessing impractical but do
-   not supply request-volume control by themselves.
+## 2. Database acceptance
 
-## 2. Environment
+The single project ref `auxienkuufejeakaczlq` is production regardless of its
+historical display label. Do not create a production clone, preview database,
+branch, or second restore-test project.
 
-Set every variable in `.env.example` explicitly in Vercel's correct environment.
-For the first deployment keep:
-
-```env
-APP_URL=https://trendsfast.com
-PROVIDER_CREDENTIAL_MODE=managed
-PUBLIC_SCAN_PROCESSING=inline
-BILLING_ENABLED=false
-PAID_MONITORING_ENABLED=false
-FOUNDING_100_ENABLED=false
-CLOUD_TRIAL_ENABLED=false
-STRIPE_MODE=test
-DATAFAST_ENABLED=false
-```
-
-Fixture mode is for local deterministic verification and must not be made
-available on a hosted origin. Configure only the reviewed managed providers,
-their explicit prices, and all cost ceilings before a hosted real scan; missing
-configuration must fail closed.
-
-Generate production `OPS_TOKEN`, `SESSION_SECRET`, and `API_KEY_PEPPER` with at
-least 32 random characters in a secret manager. Set pooled `DATABASE_URL` only
-in the runtime and keep `DIRECT_DATABASE_URL` in the controlled migration and
-verification environment. Leave unverified provider credentials empty. Do not place secrets in
-`NEXT_PUBLIC_*`, build arguments, CI output, or shell history.
-
-Before enabling a non-fixture synthesis provider, set both
-`LLM_INPUT_PRICE_USD_PER_MILLION_TOKENS` and
-`LLM_OUTPUT_PRICE_USD_PER_MILLION_TOKENS` from a dated, operator-reviewed price
-schedule. These values drive conservative pre-call reservations; they are not
-provider-verified usage or invoice reconciliation.
-
-## 3. Database
-
-From a controlled release environment with the production direct and pooled
-connections set separately:
+Before mutation, create and list/read an encrypted logical backup:
 
 ```bash
-pnpm install --frozen-lockfile
-pnpm db:migrate
-STRICT_HOSTED_SCHEMA=1 pnpm db:verify-hosted
+pnpm db:backup
 ```
 
-Load both URLs from the secret manager before these commands without echoing
-them. Controlled migrate/verify work must resolve `DIRECT_DATABASE_URL`; do not
-substitute the transaction pooler.
+Then run the unseeded idempotent sequence:
 
-Do not seed synthetic demo/customer data into production unless the seed command
-has an explicit production-safe fixture contract and has been reviewed. Record
-migration version and output with credentials redacted. Verify the new schema
-using read-only checks and application health before traffic.
+```bash
+pnpm db:migrate
+pnpm db:verify-hosted
+pnpm db:provision-runtime-roles
+pnpm db:verify-runtime-roles
+```
 
-The earlier immutable baseline at
-`73297a6cfdc99b025990b001b39cef399f4d235e` replayed 18 migrations through
-`0019` and matched 37/37 tables. That result is historical. The current tree
-contains 23 migration files through `0024` (with intentional `0009`/`0010`
-gaps) and expects 44 application tables. A fresh isolated local PostgreSQL
-16.14 database applied 23/23 files and the initial strict verifier matched
-44/44 tables; 710 database-enabled tests and 5/5 runtime-role tests passed. The
-seven scoped runtime connections also passed catalog-only verification with no
-row values read. These results are not attached to an immutable release SHA;
-the expanded snapshot-manifest verifier remains pending, and no hosted
-migration/runtime-role read-back has run. Freeze the release, repeat the replay
-and both schema/role verifiers using a direct-capable runner, record the exact
-ledger/version, and verify every pooled runtime before traffic.
-Never seed preview or production. The private ops route and
-`apps/web/vercel.ops.json` provide code-local daily retention scheduling with
-aggregate health/alerts through `RETENTION_DATABASE_URL`; deployment and a
-successful production-shaped purge remain explicit gates.
+Acceptance requires the exact migration ledger and current 44-table manifest;
+pinned CA verification; migrator ownership; clean default ACLs; isolated
+public, member, auth, worker, ops, billing, and retention runtime roles; and zero
+application-object access for `anon`, `authenticated`, and `service_role`.
+Every runtime URL is pooled and role-scoped. Direct migrator and restricted
+operator URLs remain in the controlled release environment and never reach
+Vercel.
 
-## 4. Vercel deployment
+A historical preview source upload nevertheless included private migrator,
+runtime-role URL/password, and preview-application-secret bundles plus policy,
+provider-price, release, and local-tool metadata. It did not include the backup
+passphrase or any encrypted/plaintext dump. Treating that boundary crossing as
+exposure, all eight PostgreSQL role passwords, the preview-era application
+secrets (`SESSION_SECRET` and `API_KEY_PEPPER`), and the launch cron secret were
+rotated. The current redacted hosted runtime-role verifier passes after
+rotation. The retired raw local preview-secret bundle was removed, and the
+unaliased non-Production historical deployment was deleted after the sanitized
+path inventory was retained. This is credential-remediation evidence, not
+deployment acceptance; legacy Supabase-key shutdown remains open.
 
-Use the already linked founder-owned public `trendsfast` project. Its verified
-remote Root Directory is `apps/web`, so automatic Git previews discover the
-no-cron `apps/web/vercel.json` default. Preserve access to the monorepo workspace
-packages. Reviewed CLI deployments from the repository root must select
-`-A apps/web/vercel.json` while the team remains on Hobby. Only after Pro and
-paid-monitoring approval may they select `-A apps/web/vercel.pro.json` for the
-public ten-minute monitoring cron. `apps/web/vercel.hobby.json` remains a
-no-cron compatibility config, not the automatic-deployment contract. Separately
-create/link a founder-owned `trendsfast-ops` project rooted at `apps/web`, set
-`TRENDSFAST_SURFACE=ops`, give it
-its protected ops origin as `APP_URL`, the public canonical origin as
-`PUBLIC_APP_URL`, only ops/retention-scoped runtime URLs and private secrets, enable Deployment
-Protection, and deploy with `-A apps/web/vercel.ops.json`. No such ops project
-or deployment exists yet. Accept either deployment only after `vercel inspect`
-proves the intended project/config/cron. Never run migrations from a Vercel build.
+Treat the previously surfaced legacy Supabase `service_role` key as exposed.
+Prove it is absent from Git and both Vercel environments, never use it, and
+disable/rotate it through the supported Supabase legacy-key migration path
+without resetting the project. Vercel may receive only the modern Auth
+publishable key.
 
-Deploy the release SHA to preview first. Run fixture smoke, security headers,
-private-token, durable API/ops admission, processing-fence/unknown-provider
-recovery, concurrent API cost-admission/idempotency races, public lookup edge
-throttling, model-budget, and mobile checks. Promote/deploy the same SHA to
-production; do not rebuild from a different commit.
+## 3. Environment import
 
-## 5. Domain and post-deploy
+Use the strict allowlisted importers; do not manually copy a broad environment:
 
-Founder configures `trendsfast.com`/`www` DNS using the exact Vercel instructions
-shown for the project, waits for TLS, chooses one canonical host, and verifies
-redirects and secure cookies. From an independent network/session:
+```bash
+pnpm env:prepare-hobby
+pnpm env:import-production --check
+pnpm env:import-production --apply
+pnpm env:import-ops --check
+pnpm env:import-ops --apply
+```
 
-- open homepage, sources, open metrics, docs, and open-source pages;
-- run a fixture scan through review/delivery/feedback;
-- verify no provider call, secret, fake metric, checkout, or public result;
-- verify logs, cost ledger, audit events, rate limiting, and alerts;
-- verify public count/duplicate/insert admission and auth fingerprints behind
-  the deployed proxy, including cross-instance limits;
-- verify concurrent API creations cannot each consume the same per-key
-  rolling-hour budget, exact boundary comparisons behave as documented, and a
-  crashed request reservation remains effective for the full hour;
-- exercise retention in a disposable production-shaped database and verify the
-  privacy-request operating procedure without exposing row data;
-- run the production read-back checklist separately for each provider intended
-  for launch, including the pinned website transport and abort behavior, then
-  update source status;
-- confirm non-fixture model reservations use the approved dated input/output
-  prices and remain labeled unknown until actual usage can be reconciled.
+The public surface receives only the public/member/auth/worker roles, CA,
+public session, shared API-key pepper, Supabase publishable pair, Turnstile,
+public cron secret, provider/model policy, and launch flags. Ops receives only
+the ops role, CA, its unique session, ops token, shared pepper, provider
+verification inputs, public deployment provenance, and launch flags. Direct,
+admin, owner, billing, retention, and `service_role` credentials are forbidden
+from both current Vercel allowlists. `OPS_TOKEN` is forbidden from public and
+`CRON_SECRET` is forbidden from ops.
 
-## 6. Rollback
+## 4. Founder-controlled deployment
 
-Disable new scans/provider adapters first when integrity or spend is at risk.
-Redeploy the prior known-good SHA only if its schema is compatible. Prefer a
-forward migration repair; never automatically reverse or delete production
-schema/data. Keep result access and audit history where safe. Record rollback
-reason, owner, time, data impact, and follow-up.
+Create the ignored mode-`0600` accepted-release contract documented in
+[VERCEL_SETUP.md](VERCEL_SETUP.md). After every code/config/env gate is green,
+stop for the founder with `FOUNDER_HOBBY_DEPLOY_REQUIRED` and exactly:
+
+```bash
+bash scripts/deploy-hobby-production.sh
+bash scripts/deploy-hobby-ops.sh
+```
+
+Do not run `vercel deploy --prod` on the founder's behalf. The public script
+creates an immutable Production deployment with `--skip-domain`; it does not
+promote or attach a domain. The ops script deploys the cron-free,
+application-protected surface to generated Vercel hosts only and restores the
+repository's public Vercel link. Both verify the exact accepted SHA and print
+only a safe URL and deployment ID.
+
+## 5. Immutable and stable-origin verification
+
+On resume, verify the immutable public URL before making it Current. Required
+results are `/` and `/login` `200`; same-origin `/dashboard` redirect to
+`/login`; `/ops` `404`; `/v1/openapi.json` and `/api/sources` `200`; public scan
+creation `503`; monitoring cron no/wrong bearer `401`; correct bearer `200` with
+no project scan claimed; and no unexpected error/fatal logs.
+
+Verify ops independently at its edge-public Production alias: no private data
+without an application session, invalid `OPS_TOKEN` rejection, valid founder
+admission and signed session, exact ops-surface guards, review queue,
+edit-and-approve, grants, show-once project API-key issuance, private bundle
+export, no indexing, and no public cross-origin access. Do not use the Vercel
+Authentication setting as this Production access proof.
+
+Only after those checks should the exact immutable public deployment become
+Current at `https://trendsfast.vercel.app`. Repeat the public checks against the
+stable generated origin.
+
+## 6. Providers, Stripe catalog, and API dogfood
+
+Exercise providers in the fixed order: website, Hacker News, Google Trends via
+DataForSEO, Tavily, X via xAI, GitHub, YouTube, and manual evidence. Each source
+needs a bounded deployed read-back with release/deployment provenance,
+canonical source URL, latency, quota, private cost, timeout/no-result behavior,
+and secret-redaction proof. Credential health alone does not mark a source
+Connected.
+
+xAI actual-cost settlement accepts canonical `usage.cost_in_usd_ticks` at
+10,000,000,000 ticks per USD. Missing or malformed ticks use the bounded legacy
+or token-price fallback; cost remains conservative and unsettled when no valid
+actual exists.
+
+The Stripe CLI may idempotently create/reuse only Product `TrendsFast Founder`
+and the exclusive-tax recurring EUR 39/month Price with lookup key
+`trendsfast_founder_monthly_eur`. Verify it created no customer, subscription,
+Checkout Session, PaymentIntent, or charge. Record only safe `prod_...` and
+`price_...` IDs. Do not install a live Stripe key, webhook, Checkout button, or
+paid entitlement on Hobby.
+
+For internal API acceptance, issue one show-once project-scoped key under a
+founder grant, storing only its hash. Prove create → poll →
+`REVIEW_REQUIRED` → founder review/edit-and-approve → delivery → `READY`, with
+project isolation, idempotency, canonical evidence, a valid action enum,
+`founder_reviewed=true`, and `auto_publish=false`.
+
+## 7. Domain and public-scan gate
+
+After the generated origin passes, associate `trendsfast.com` and
+`www.trendsfast.com`, inspect both, and return the exact Vercel-assigned records
+under `DNS_ACTION_REQUIRED`. The founder applies them at Spaceship. After
+`DNS_APPLIED=YES`, verify DNS, trusted TLS, apex canonical metadata, one
+permanent `www` → apex redirect, no mixed content, and the dedicated Turnstile
+widget on all three allowed hostnames.
+
+The redirect is application-owned in `apps/web/next.config.ts`: an exact
+`www.trendsfast.com` host condition permanently redirects the shared
+`/:path*` to `https://trendsfast.com/:path*`. Next.js preserves the incoming
+query because the destination does not replace it. The exact host condition
+keeps the generated public and ops aliases outside this rule.
+
+Update public `APP_URL`/`PUBLIC_APP_URL` and ops `PUBLIC_APP_URL` to
+`https://trendsfast.com` by setting the local inventory marker
+`SOL_HOBBY_ENVIRONMENT_PHASE=canonical-origin-scans-off`. Run
+`pnpm env:prepare-hobby`, repeat both strict check/apply imports, founder-deploy
+both accepted surfaces, smoke the new immutable public deployment, make that
+exact deployment Current, and repeat the stable-origin and ops acceptance.
+Keep this phase until Halio and ShipToUsers recommendation-quality dogfood and
+the complete Turnstile valid/missing/forged/replayed/expired/wrong-host matrix
+pass. Only then set
+`SOL_HOBBY_ENVIRONMENT_PHASE=canonical-origin-scans-on` and repeat the same
+prepare/import/deploy/smoke/Current sequence. Never edit the derived
+`APP_URL`, `PUBLIC_APP_URL`, or `PUBLIC_SCANS_ENABLED` values independently;
+the preparation command replaces them from the marker.
+
+Before selecting scans-on, record the results in ignored regular mode-`0600`
+`.var/private/hobby-scan-enablement.json`. Its exact schema and required
+deployment/SHA, site-key hash, `public_scan`, three-hostname, seven-outcome,
+Halio, ShipToUsers, and founder-approval fields are defined in the Hobby launch
+runbook. Both prepare and the strict public importer validate this private
+contract against `.var/private/hobby-release.json`; the phase marker by itself
+is never sufficient.
+
+## 8. Rollback
+
+Disable public scan creation, monitoring, and Checkout first when integrity or
+spend is at risk. Promote or redeploy only a schema-compatible known-good SHA.
+Prefer forward repair over a destructive reverse migration. Preserve result,
+cost, access, review, and Stripe audit history, and record the owner, time,
+reason, data impact, and follow-up.

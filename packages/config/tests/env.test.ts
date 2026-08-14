@@ -403,6 +403,30 @@ describe("environment validation", () => {
     ).toBe(false);
   });
 
+  it("allows the hosted ops surface to omit public and worker database credentials", () => {
+    const result = tryParseEnv({
+      NODE_ENV: "production",
+      VERCEL_ENV: "production",
+      APP_URL: "https://trendsfast-ops.vercel.app",
+      PUBLIC_APP_URL: "https://trendsfast.vercel.app",
+      OPS_DATABASE_URL: "postgresql://ops:password@db.example.com:5432/trendsfast",
+      DATABASE_SSL_CA: "production-test-ca",
+      TRENDSFAST_SURFACE: "ops",
+      PROVIDER_CREDENTIAL_MODE: "managed",
+      PROVIDER_CALLS_ENABLED: "false",
+      OPS_TOKEN: "o".repeat(64),
+      SESSION_SECRET: "s".repeat(64),
+      API_KEY_PEPPER: "p".repeat(64),
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.DATABASE_URL).toContain("localhost");
+      expect(result.data.OPS_DATABASE_URL).toContain("db.example.com");
+      expect(result.data.WORKER_DATABASE_URL).toBeUndefined();
+    }
+  });
+
   it("rejects zero prices for live paid providers and model tokens", () => {
     const configured = {
       PROVIDER_CREDENTIAL_MODE: "byok",

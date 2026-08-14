@@ -33,6 +33,17 @@ export function finiteMetric(value: unknown): number | undefined {
   return typeof number === "number" && Number.isFinite(number) && number >= 0 ? number : undefined;
 }
 
+/** xAI reports billed cost in integer ticks, where 10^10 ticks equal one USD. */
+export const USD_TICKS_PER_USD = 10_000_000_000;
+
+export function usdTicksToUsd(value: unknown): number | undefined {
+  const ticks =
+    typeof value === "string" && /^\d+$/.test(value.trim()) ? Number(value.trim()) : value;
+  return typeof ticks === "number" && Number.isSafeInteger(ticks) && ticks >= 0
+    ? ticks / USD_TICKS_PER_USD
+    : undefined;
+}
+
 export function compactMetrics(
   metrics: Partial<Record<keyof SignalMetrics, number | undefined>>,
 ): SignalMetrics {

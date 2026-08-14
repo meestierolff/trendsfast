@@ -1,9 +1,15 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Script from "next/script";
 import { sendFirstPartyAnalytics } from "../lib/analytics-client";
+import {
+  getBrowserTurnstile,
+  removeTurnstileWidget,
+  resetTurnstileWidget,
+} from "../lib/turnstile-client";
+import { PUBLIC_SCAN_TURNSTILE_ACTION } from "../lib/turnstile-contract";
 import { FounderLaunchInterestForm } from "./founder-launch-interest-form";
 
 export function ScanForm({
@@ -27,6 +33,37 @@ export function ScanForm({
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [capacityReached, setCapacityReached] = useState(false);
+  const [turnstileReady, setTurnstileReady] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const turnstileContainer = useRef<HTMLDivElement>(null);
+  const turnstileWidgetId = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (
+      !turnstileSiteKey ||
+      !turnstileReady ||
+      !turnstileContainer.current ||
+      turnstileWidgetId.current
+    ) {
+      return;
+    }
+    const client = getBrowserTurnstile();
+    if (!client) return;
+    const widgetId = client.render(turnstileContainer.current, {
+      sitekey: turnstileSiteKey,
+      action: PUBLIC_SCAN_TURNSTILE_ACTION,
+      theme: "dark",
+      callback: (token) => setTurnstileToken(token),
+      "expired-callback": () => setTurnstileToken(null),
+      "error-callback": () => setTurnstileToken(null),
+    });
+    turnstileWidgetId.current = widgetId;
+
+    return () => {
+      removeTurnstileWidget(client, widgetId);
+      if (turnstileWidgetId.current === widgetId) turnstileWidgetId.current = null;
+    };
+  }, [turnstileReady, turnstileSiteKey]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -45,7 +82,7 @@ export function ScanForm({
         body: JSON.stringify({
           product_url: form.get("product_url"),
           website: form.get("website"),
-          turnstile_token: form.get("turnstile_token") ?? form.get("cf-turnstile-response"),
+          turnstile_token: turnstileToken,
         }),
       });
       const payload = (await response.json()) as {
@@ -61,6 +98,8 @@ export function ScanForm({
       }
       router.push(`/scan/requested/${payload.token}`);
     } catch (submissionError) {
+      resetTurnstileWidget(getBrowserTurnstile(), turnstileWidgetId.current);
+      setTurnstileToken(null);
       setError(
         submissionError instanceof Error ? submissionError.message : "Something went wrong.",
       );
@@ -72,8 +111,9 @@ export function ScanForm({
     <>
       {turnstileSiteKey ? (
         <Script
-          src="https://challenges.cloudflare.com/turnstile/v0/api.js"
+          src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
           strategy="afterInteractive"
+          onReady={() => setTurnstileReady(true)}
         />
       ) : null}
       <form className={compact ? "scan-form compact" : "scan-form"} onSubmit={submit} id={formId}>
@@ -106,14 +146,7 @@ export function ScanForm({
             <span aria-hidden="true">→</span>
           </button>
         </div>
-        {turnstileSiteKey ? (
-          <div
-            className="cf-turnstile"
-            data-sitekey={turnstileSiteKey}
-            data-theme="dark"
-            data-response-field-name="turnstile_token"
-          />
-        ) : null}
+        {turnstileSiteKey ? <div className="turnstile-widget" ref={turnstileContainer} /> : null}
         {!compact ? (
           <p className="form-privacy">
             Private by default. Public sharing is a separate opt-in after delivery.

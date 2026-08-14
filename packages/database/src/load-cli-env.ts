@@ -21,5 +21,10 @@ export function loadCliEnvironmentFile(path: string): void {
 
 /** Parse a private CLI env file without mutating ambient process state. */
 export function parseCliEnvironmentFile(path: string): Record<string, string> {
-  return parse(readFileSync(path, "utf8"));
+  return parseCliEnvironmentSource(readFileSync(path, "utf8"));
+}
+
+/** Parse already-read CLI env source without reopening its path. */
+export function parseCliEnvironmentSource(source: string): Record<string, string> {
+  return parse(source);
 }

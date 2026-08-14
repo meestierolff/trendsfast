@@ -157,11 +157,13 @@ function redactString(value: string): string {
     const url = trailing ? candidate.slice(0, -trailing.length) : candidate;
     return `${redactUrl(url)}${trailing}`;
   });
-  return redactSecrets(urlRedacted.replace(DATABASE_URL, "[REDACTED_DATABASE_URL]"))
+  const specificCredentialsRedacted = urlRedacted
+    .replace(DATABASE_URL, "[REDACTED_DATABASE_URL]")
     .replace(DELIVERY_CAPABILITY, "[REDACTED_DELIVERY_CAPABILITY]")
     .replace(PUBLIC_SCAN_CAPABILITY, "[REDACTED_SCAN_CAPABILITY]")
     .replace(STRIPE_SECRET, "[REDACTED_STRIPE_SECRET]")
-    .replace(PROVIDER_CREDENTIAL, "[REDACTED_PROVIDER_CREDENTIAL]")
+    .replace(PROVIDER_CREDENTIAL, "[REDACTED_PROVIDER_CREDENTIAL]");
+  return redactSecrets(specificCredentialsRedacted)
     .replace(EMAIL, "[REDACTED_EMAIL]")
     .replace(IPV4, (candidate) => (isIP(candidate) ? "[REDACTED_IP]" : candidate))
     .replace(IPV6_CANDIDATE, (candidate) => (isIP(candidate) === 6 ? "[REDACTED_IP]" : candidate));

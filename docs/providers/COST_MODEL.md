@@ -48,6 +48,15 @@ settles the reservation. Missing or invalid usage remains labeled
 actual field alongside that status is not verified free/actual usage. The
 operator-supplied price schedule is also not independently trusted.
 
+For xAI responses, the canonical billed-cost field is
+`usage.cost_in_usd_ticks`, with exactly 10,000,000,000 ticks per USD. The
+conversion accepts only a non-negative safe integer or digit-only integer
+string. Valid ticks take precedence over legacy USD fields for X Search and
+over token-price reconstruction for xAI synthesis. Malformed or missing ticks
+fall back to the bounded legacy/token-price calculation; if no valid actual is
+available, the conservative reservation stays unsettled. Do not expose ticks or
+converted cost in public responses or analytics.
+
 ## Admission control
 
 Before each external step:

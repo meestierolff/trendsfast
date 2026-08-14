@@ -21,6 +21,9 @@
       "@trendsfast/config": ["packages/config/src/index.ts"],
       "@trendsfast/core": ["packages/core/src/index.ts"],
       "@trendsfast/database": ["packages/database/src/index.ts"],
+      "@trendsfast/database/production-cli-environment": [
+        "packages/database/src/production-cli-environment.ts"
+      ],
       "@trendsfast/evidence": ["packages/evidence/src/index.ts"],
       "@trendsfast/observability": ["packages/observability/src/index.ts"],
       "@trendsfast/orchestration": ["packages/orchestration/src/index.ts"],

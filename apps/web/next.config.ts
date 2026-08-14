@@ -57,7 +57,18 @@ const securityHeaders = [
     : []),
 ];
 
-const nextConfig: NextConfig = {
+export const canonicalHostRedirects = [
+  {
+    source: "/:path*",
+    // `has.value` is a regular expression; escape dots to make this an exact
+    // hostname condition rather than accepting lookalike hosts.
+    has: [{ type: "host", value: "www\\.trendsfast\\.com" }],
+    destination: "https://trendsfast.com/:path*",
+    permanent: true,
+  },
+] satisfies Awaited<ReturnType<NonNullable<NextConfig["redirects"]>>>;
+
+export const nextConfig: NextConfig = {
   distDir,
   pageExtensions: ["js", "jsx", "mdx", "ts", "tsx"],
   allowedDevOrigins: ["127.0.0.1"],
@@ -76,6 +87,9 @@ const nextConfig: NextConfig = {
     "@trendsfast/schemas",
     "@trendsfast/scoring",
   ],
+  async redirects() {
+    return canonicalHostRedirects;
+  },
   async headers() {
     return [
       {

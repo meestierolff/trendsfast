@@ -7,6 +7,7 @@ import {
   createLiveProviderRegistry,
   createProviderContext,
   executeProvider,
+  usdTicksToUsd,
   validateProviderRunResult,
   type FetchLike,
   type ProductQueryContext,
@@ -38,6 +39,27 @@ function json(value: unknown, headers: HeadersInit = {}): Response {
 }
 
 describe("bounded live REST adapters", () => {
+  it("converts only non-negative safe-integer USD ticks", () => {
+    expect(usdTicksToUsd(10_000_000_000)).toBe(1);
+    expect(usdTicksToUsd("35550000")).toBe(0.003555);
+    expect(usdTicksToUsd(" 0 ")).toBe(0);
+
+    for (const invalid of [
+      -1,
+      0.5,
+      Number.MAX_SAFE_INTEGER + 1,
+      "-1",
+      "0.5",
+      "1e10",
+      String(Number.MAX_SAFE_INTEGER + 1),
+      "",
+      null,
+      true,
+    ]) {
+      expect(usdTicksToUsd(invalid)).toBeUndefined();
+    }
+  });
+
   it("aborts a stalled paid fetch before returning at the scan deadline", async () => {
     let activeRequests = 0;
     const aborted = vi.fn();
@@ -250,7 +272,12 @@ describe("bounded live REST adapters", () => {
           `https://x.com/founder/status/190000000000000000${sequence}`,
           "https://example.com/not-x",
         ],
-        usage: { input_tokens: 80, output_tokens: 20, cost_usd: 3.555 },
+        usage: {
+          input_tokens: 80,
+          output_tokens: 20,
+          cost_in_usd_ticks: sequence === 1 ? 35_550_000 : "35550000",
+          cost_usd: 3.555,
+        },
       });
     });
     const registry = createLiveProviderRegistry();
@@ -276,7 +303,84 @@ describe("bounded live REST adapters", () => {
     expect(result.calls).toBe(2);
     expect(result.signals).toHaveLength(2);
     expect(result.signals.every((signal) => signal.textExcerpt === undefined)).toBe(true);
-    expect(result.cost.actualUsd).toBe(7.11);
+    expect(result.cost.actualUsd).toBe(0.00711);
+    expect(validateProviderRunResult(adapter, result)).toEqual([]);
+  });
+
+  it("falls through malformed xAI ticks to a valid legacy cost field", async () => {
+    const fetch = vi.fn<FetchLike>(async () =>
+      json({
+        id: "resp-invalid-ticks",
+        citations: ["https://x.com/founder/status/1900000000000000099"],
+        usage: {
+          input_tokens: 80,
+          output_tokens: 20,
+          cost_in_usd_ticks: "35550000.5",
+          cost_usd: 0.002,
+        },
+      }),
+    );
+    const adapter = createLiveProviderRegistry().get("x")!;
+    const result = await adapter.collect(
+      {
+        scanId: "scan_x_legacy_cost",
+        queries: plan.entries.filter((query) => query.provider === "x"),
+      },
+      createProviderContext({
+        credentialMode: "managed",
+        env: {
+          XAI_API_KEY: "test-key",
+          XAI_MODEL: "grok-test",
+          XAI_MAX_TOOL_CALLS_PER_SCAN: "1",
+          XAI_ESTIMATED_COST_USD_PER_SEARCH: "9.333",
+        },
+        fetch,
+        now: () => now,
+      }),
+    );
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(result.cost.actualUsd).toBe(0.002);
+    expect(validateProviderRunResult(adapter, result)).toEqual([]);
+  });
+
+  it("retains the bounded xAI estimate when every actual-cost field is unknown", async () => {
+    const fetch = vi.fn<FetchLike>(async () =>
+      json({
+        id: "resp-unknown-cost",
+        citations: ["https://x.com/founder/status/1900000000000000100"],
+        usage: {
+          input_tokens: 80,
+          output_tokens: 20,
+          cost_in_usd_ticks: Number.MAX_SAFE_INTEGER + 1,
+          cost_usd: "not-a-cost",
+          cost: -1,
+        },
+      }),
+    );
+    const adapter = createLiveProviderRegistry().get("x")!;
+    const result = await adapter.collect(
+      {
+        scanId: "scan_x_unknown_cost",
+        queries: plan.entries.filter((query) => query.provider === "x"),
+      },
+      createProviderContext({
+        credentialMode: "managed",
+        env: {
+          XAI_API_KEY: "test-key",
+          XAI_MODEL: "grok-test",
+          XAI_MAX_TOOL_CALLS_PER_SCAN: "1",
+          XAI_ESTIMATED_COST_USD_PER_SEARCH: "9.333",
+        },
+        fetch,
+        now: () => now,
+      }),
+    );
+
+    expect(result.cost).toEqual({ estimatedUsd: 9.333 });
+    expect(result.limitations).toContain(
+      "xAI did not return an actual USD cost; the bounded estimate is retained.",
+    );
     expect(validateProviderRunResult(adapter, result)).toEqual([]);
   });
 
