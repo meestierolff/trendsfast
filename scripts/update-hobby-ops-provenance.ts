@@ -133,11 +133,17 @@ export function updateHobbyOpsProvenanceInventory(
   assertPrivateInventory(path, isIgnored);
 }
 
-function main(): void {
-  const [publicDeploymentHost, publicDeploymentId] = process.argv.slice(2);
-  if (!publicDeploymentHost || !publicDeploymentId || process.argv.length !== 4) {
-    fail("Usage: pnpm env:update-ops-provenance -- <vercel-host> <deployment-id>");
+export function parseHobbyOpsProvenanceArguments(
+  argv: readonly string[],
+): readonly [string, string] {
+  if (argv.length !== 4 || !argv[2] || !argv[3]) {
+    fail("Usage: pnpm env:update-ops-provenance <vercel-host> <deployment-id>");
   }
+  return [argv[2], argv[3]];
+}
+
+function main(): void {
+  const [publicDeploymentHost, publicDeploymentId] = parseHobbyOpsProvenanceArguments(process.argv);
   updateHobbyOpsProvenanceInventory(publicDeploymentHost, publicDeploymentId);
   console.info("Updated private ops deployment provenance atomically; values withheld.");
 }

@@ -385,7 +385,7 @@ fi
 
 assert_environment_names || fail "the ops Production environment name set is not the exact allowlisted set"
 
-if ! pnpm --silent env:update-ops-provenance -- "$public_deployment_host" "$public_deployment_id" >"$command_log" 2>&1; then
+if ! pnpm --silent env:update-ops-provenance "$public_deployment_host" "$public_deployment_id" >"$command_log" 2>&1; then
   fail "the private ops deployment provenance could not be updated"
 fi
 if ! pnpm --silent env:import-ops --apply >"$command_log" 2>&1; then

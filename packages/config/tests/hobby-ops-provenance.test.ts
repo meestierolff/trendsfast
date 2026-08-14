@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   closeSync,
@@ -6,6 +7,7 @@ import {
   mkdtempSync,
   openSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,6 +18,7 @@ import { describe, expect, it } from "vitest";
 import { parseProductionInventory } from "../../../scripts/staged-production-env";
 import {
   HobbyOpsProvenanceError,
+  parseHobbyOpsProvenanceArguments,
   renderHobbyOpsProvenanceInventory,
   updateHobbyOpsProvenanceInventory,
 } from "../../../scripts/update-hobby-ops-provenance";
@@ -37,6 +40,84 @@ function inventory(): string {
 }
 
 describe("Hobby ops deployment provenance inventory update", () => {
+  it("proves pnpm forwards only tokens placed after the package script name", () => {
+    const rootPackage = JSON.parse(
+      readFileSync(new URL("../../../package.json", import.meta.url), "utf8"),
+    ) as { scripts?: Record<string, string> };
+    expect(rootPackage.scripts?.["env:update-ops-provenance"]).toBe(
+      "tsx scripts/update-hobby-ops-provenance.ts",
+    );
+
+    const directory = mkdtempSync(join(tmpdir(), "tf-pnpm-arguments-"));
+    try {
+      writeFileSync(
+        join(directory, "package.json"),
+        JSON.stringify({
+          private: true,
+          scripts: {
+            "env:update-ops-provenance": "node argv-recorder.cjs",
+          },
+        }),
+      );
+      writeFileSync(
+        join(directory, "argv-recorder.cjs"),
+        "process.stdout.write(JSON.stringify(process.argv.slice(2)));\n",
+      );
+
+      const forwarded = spawnSync(
+        "pnpm",
+        ["--silent", "env:update-ops-provenance", NEW_HOST, NEW_ID],
+        { cwd: directory, encoding: "utf8" },
+      );
+      expect(forwarded.status).toBe(0);
+      expect(forwarded.stderr).toBe("");
+      expect(JSON.parse(forwarded.stdout)).toEqual([NEW_HOST, NEW_ID]);
+
+      const withStandaloneSeparator = spawnSync(
+        "pnpm",
+        ["--silent", "env:update-ops-provenance", "--", NEW_HOST, NEW_ID],
+        { cwd: directory, encoding: "utf8" },
+      );
+      expect(withStandaloneSeparator.status).toBe(0);
+      expect(withStandaloneSeparator.stderr).toBe("");
+      expect(JSON.parse(withStandaloneSeparator.stdout)).toEqual(["--", NEW_HOST, NEW_ID]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts exactly two user arguments and rejects missing, duplicate, or extra tokens", () => {
+    const executable = ["node", "scripts/update-hobby-ops-provenance.ts"];
+    const usage = "Usage: pnpm env:update-ops-provenance <vercel-host> <deployment-id>";
+
+    expect(parseHobbyOpsProvenanceArguments([...executable, NEW_HOST, NEW_ID])).toEqual([
+      NEW_HOST,
+      NEW_ID,
+    ]);
+
+    for (const userArguments of [
+      [],
+      [NEW_HOST],
+      ["--", NEW_HOST, NEW_ID],
+      [NEW_HOST, NEW_ID, NEW_ID],
+      [NEW_HOST, NEW_HOST, NEW_ID],
+    ]) {
+      expect(() => parseHobbyOpsProvenanceArguments([...executable, ...userArguments])).toThrow(
+        usage,
+      );
+    }
+
+    let caught: unknown;
+    try {
+      parseHobbyOpsProvenanceArguments([...executable, NEW_HOST, NEW_ID, PRIVATE_VALUE]);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(HobbyOpsProvenanceError);
+    expect((caught as Error).message).toBe(usage);
+    expect((caught as Error).message).not.toContain(PRIVATE_VALUE);
+  });
+
   it("replaces exactly the two safe provenance assignments and preserves private data", () => {
     const updated = renderHobbyOpsProvenanceInventory(inventory(), NEW_HOST, NEW_ID);
     const parsed = parseProductionInventory(updated);
