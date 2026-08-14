@@ -1,4 +1,13 @@
-import { chmodSync, lstatSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  closeSync,
+  constants,
+  fstatSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -69,12 +78,17 @@ describe("Hobby ops deployment provenance inventory update", () => {
     writeFileSync(path, inventory(), { mode: 0o600 });
 
     updateHobbyOpsProvenanceInventory(NEW_HOST, NEW_ID, path, () => true);
-    expect(lstatSync(path).mode & 0o777).toBe(0o600);
-    expect(parseProductionInventory(readFileSync(path, "utf8")).values).toMatchObject({
-      SOL_HOBBY_PUBLIC_DEPLOYMENT_HOST: NEW_HOST,
-      SOL_HOBBY_PUBLIC_DEPLOYMENT_ID: NEW_ID,
-      PRIVATE_VALUE,
-    });
+    const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      expect(fstatSync(descriptor).mode & 0o777).toBe(0o600);
+      expect(parseProductionInventory(readFileSync(descriptor, "utf8")).values).toMatchObject({
+        SOL_HOBBY_PUBLIC_DEPLOYMENT_HOST: NEW_HOST,
+        SOL_HOBBY_PUBLIC_DEPLOYMENT_ID: NEW_ID,
+        PRIVATE_VALUE,
+      });
+    } finally {
+      closeSync(descriptor);
+    }
 
     expect(() => updateHobbyOpsProvenanceInventory(NEW_HOST, NEW_ID, path, () => false)).toThrow(
       "remain ignored",

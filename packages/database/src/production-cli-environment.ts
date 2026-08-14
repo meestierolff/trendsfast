@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, openSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -74,20 +74,29 @@ function readPrivateInventory(input: {
     fail("Every production database inventory must remain ignored");
   }
   const absolutePath = resolve(input.repositoryRoot, input.relativePath);
-  const metadata = lstatSync(absolutePath);
-  const currentUid = process.getuid?.();
-  if (
-    metadata.isSymbolicLink() ||
-    !metadata.isFile() ||
-    (metadata.mode & 0o777) !== 0o600 ||
-    metadata.size < 1 ||
-    metadata.size > MAX_PRIVATE_INVENTORY_BYTES ||
-    (currentUid !== undefined && metadata.uid !== currentUid)
-  ) {
+  let descriptor: number | undefined;
+  let source: string;
+  try {
+    descriptor = openSync(absolutePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const metadata = fstatSync(descriptor);
+    const currentUid = process.getuid?.();
+    if (
+      metadata.isSymbolicLink() ||
+      !metadata.isFile() ||
+      (metadata.mode & 0o777) !== 0o600 ||
+      metadata.size < 1 ||
+      metadata.size > MAX_PRIVATE_INVENTORY_BYTES ||
+      (currentUid !== undefined && metadata.uid !== currentUid)
+    ) {
+      throw new Error("unsafe private inventory");
+    }
+    source = readFileSync(descriptor, "utf8");
+  } catch {
     fail("Every production database inventory must be a bounded owner-only mode-0600 file");
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
   }
 
-  const source = readFileSync(absolutePath, "utf8");
   const names = assignmentNames(source);
   const expectedNames = input.exactNames ? [...input.exactNames].sort() : undefined;
   if (expectedNames && JSON.stringify([...names].sort()) !== JSON.stringify(expectedNames)) {

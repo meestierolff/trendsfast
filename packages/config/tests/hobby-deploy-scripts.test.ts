@@ -23,6 +23,15 @@ const opsScriptPath = join(repositoryRoot, "scripts/deploy-hobby-ops.sh");
 const publicScript = readFileSync(publicScriptPath, "utf8");
 const opsScript = readFileSync(opsScriptPath, "utf8");
 
+function readOptionalHarnessFile(path: string): string {
+  try {
+    return readFileSync(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+    throw error;
+  }
+}
+
 const publicEnvironmentNames = [
   "NODE_ENV",
   "APP_URL",
@@ -440,15 +449,9 @@ if (args[0] === "--version") {
       status: result.status,
       stdout: result.stdout,
       stderr: result.stderr,
-      cronReadCount: statSync(counterPath, { throwIfNoEntry: false })
-        ? Number(readFileSync(counterPath, "utf8"))
-        : 0,
-      sleepLog: statSync(join(state, "sleep.log"), { throwIfNoEntry: false })
-        ? readFileSync(join(state, "sleep.log"), "utf8")
-        : "",
-      vercelLog: statSync(join(state, "vercel.log"), { throwIfNoEntry: false })
-        ? readFileSync(join(state, "vercel.log"), "utf8")
-        : "",
+      cronReadCount: Number(readOptionalHarnessFile(counterPath) || "0"),
+      sleepLog: readOptionalHarnessFile(join(state, "sleep.log")),
+      vercelLog: readOptionalHarnessFile(join(state, "vercel.log")),
       restoredLink: readFileSync(join(vercelDirectory, "project.json"), "utf8"),
       restoredReadme: readFileSync(join(vercelDirectory, "README.txt"), "utf8"),
       originalLink,

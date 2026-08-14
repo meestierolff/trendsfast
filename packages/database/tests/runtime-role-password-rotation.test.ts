@@ -1,4 +1,13 @@
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -150,6 +159,23 @@ describe("runtime-role password rotation", () => {
       expect(() =>
         readFileSync(join(root, ".var/private/runtime-role-rotation.pending.json")),
       ).toThrow();
+
+      const linkedPath = join(root, "supabase/.temp/project-ref");
+      const linkedTarget = join(root, "supabase/.temp/project-ref-target");
+      writeFileSync(linkedTarget, projectRef, "utf8");
+      unlinkSync(linkedPath);
+      symlinkSync(linkedTarget, linkedPath);
+      expect(() =>
+        rotateRuntimeRolePasswords({
+          root,
+          isIgnored: () => true,
+          runLinkedSql: () => {
+            calls += 1;
+            return true;
+          },
+        }),
+      ).toThrow("exact Supabase production project");
+      expect(calls).toBe(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -2,12 +2,16 @@ import { randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
+  closeSync,
+  constants,
   existsSync,
-  lstatSync,
+  fstatSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   renameSync,
   rmSync,
+  type Stats,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -98,16 +102,49 @@ function fail(message: string): never {
   throw new Error(message);
 }
 
+function openCheckedRegularFile(
+  path: string,
+  isSafe: (metadata: Stats) => boolean,
+  message: string,
+): number {
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const metadata = fstatSync(descriptor);
+    if (metadata.isSymbolicLink() || !metadata.isFile() || !isSafe(metadata)) {
+      throw new Error("unsafe file");
+    }
+    return descriptor;
+  } catch {
+    if (descriptor !== undefined) closeSync(descriptor);
+    fail(message);
+  }
+}
+
 function assertPrivateFile(path: string): void {
-  const metadata = lstatSync(path);
-  if (metadata.isSymbolicLink() || !metadata.isFile() || (metadata.mode & 0o777) !== 0o600) {
-    fail("Every runtime-role rotation input must be a regular mode-0600 file");
+  const descriptor = openCheckedRegularFile(
+    path,
+    (metadata) => (metadata.mode & 0o777) === 0o600,
+    "Every runtime-role rotation input must be a regular mode-0600 file",
+  );
+  closeSync(descriptor);
+}
+
+function readPrivateFile(path: string): string {
+  const descriptor = openCheckedRegularFile(
+    path,
+    (metadata) => (metadata.mode & 0o777) === 0o600,
+    "Every runtime-role rotation input must be a regular mode-0600 file",
+  );
+  try {
+    return readFileSync(descriptor, "utf8");
+  } finally {
+    closeSync(descriptor);
   }
 }
 
 function parsePrivateInventory(path: string): Record<string, string> {
-  assertPrivateFile(path);
-  return { ...parseProductionInventory(readFileSync(path, "utf8")).values };
+  return { ...parseProductionInventory(readPrivateFile(path)).values };
 }
 
 function serializeEnvironment(values: Readonly<Record<string, string>>): string {
@@ -133,10 +170,10 @@ function generatedPasswords(): Passwords {
 }
 
 function parsePending(path: string): PendingRotation {
-  assertPrivateFile(path);
+  const source = readPrivateFile(path);
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(path, "utf8"));
+    parsed = JSON.parse(source);
   } catch {
     fail("The pending runtime-role rotation record is malformed");
   }
@@ -266,18 +303,16 @@ function updateUrl(
 
 export function assertLinkedProductionProject(root: string): void {
   const path = resolve(root, LINKED_PROJECT_REF_PATH);
-  let metadata: ReturnType<typeof lstatSync>;
+  const message = "The exact Supabase production project must be linked before role rotation";
+  const descriptor = openCheckedRegularFile(path, (metadata) => metadata.size <= 128, message);
+  let linkedRef: string;
   try {
-    metadata = lstatSync(path);
-  } catch {
-    fail("The exact Supabase production project must be linked before role rotation");
+    linkedRef = readFileSync(descriptor, "utf8");
+  } finally {
+    closeSync(descriptor);
   }
-  if (metadata.isSymbolicLink() || !metadata.isFile() || metadata.size > 128) {
-    fail("The exact Supabase production project must be linked before role rotation");
-  }
-  const linkedRef = readFileSync(path, "utf8");
   if (linkedRef !== PROJECT_REF && linkedRef !== `${PROJECT_REF}\n`) {
-    fail("The exact Supabase production project must be linked before role rotation");
+    fail(message);
   }
 }
 

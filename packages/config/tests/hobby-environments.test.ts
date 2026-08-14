@@ -7,6 +7,8 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -459,6 +461,13 @@ describe("Hobby Production environment contracts", () => {
         "must remain ignored by Git",
       );
       chmodSync(evidencePath, 0o644);
+      expect(() => readPrivateHobbyScanEnablementContext(temporaryRoot, () => true)).toThrow(
+        "must be a regular mode-0600 file",
+      );
+      const evidenceTarget = `${evidencePath}.target`;
+      writeFileSync(evidenceTarget, context.evidenceSource, { mode: 0o600 });
+      unlinkSync(evidencePath);
+      symlinkSync(evidenceTarget, evidencePath);
       expect(() => readPrivateHobbyScanEnablementContext(temporaryRoot, () => true)).toThrow(
         "must be a regular mode-0600 file",
       );

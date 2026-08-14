@@ -157,6 +157,8 @@ describe("encrypted logical database backup", () => {
       'spawn(process.env.PG_RESTORE_BIN?.trim() || "pg_restore", ["--list"]',
     );
     expect(script).toContain("await verifyEncryptedDump(partialPath");
+    expect(script).toContain("constants.O_RDONLY | constants.O_NOFOLLOW");
+    expect(script).toContain("openPrivateRegularFile(PASSPHRASE_FILE, 64)");
     expect(script).toContain("validateBackupArchiveListing(listingText)");
     expect(script).toContain("await rename(partialPath, finalPath)");
     expect(script).toContain('mode: "0600"');

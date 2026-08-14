@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -117,6 +117,11 @@ describe("production Turnstile credential preflight", () => {
     expect(readProductionTurnstileSecret(path, () => true)).toBe(SECRET);
     expect(() => readProductionTurnstileSecret(path, () => false)).toThrow("remain ignored");
     expect(() => readProductionTurnstileSecret(privateInventory(0o640), () => true)).toThrow(
+      "regular mode-0600 file",
+    );
+    const symlinkPath = join(mkdtempSync(join(tmpdir(), "tf-turnstile-link-")), "inventory.env");
+    symlinkSync(path, symlinkPath);
+    expect(() => readProductionTurnstileSecret(symlinkPath, () => true)).toThrow(
       "regular mode-0600 file",
     );
   });

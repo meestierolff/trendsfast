@@ -1,11 +1,23 @@
 import { createHash, randomBytes } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmod, lstat, mkdir, mkdtemp, open, rename, rm, stat, unlink } from "node:fs/promises";
+import { constants } from "node:fs";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  open,
+  rename,
+  rm,
+  stat,
+  type FileHandle,
+  unlink,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { parseCliEnvironmentFile } from "../../packages/database/src/load-cli-env";
+import { parseCliEnvironmentSource } from "../../packages/database/src/load-cli-env";
 import { APPLICATION_TABLES } from "../../packages/database/src/runtime-roles";
 
 const REPOSITORY_ROOT = fileURLToPath(new URL("../..", import.meta.url));
@@ -211,22 +223,39 @@ async function ensurePrivateDirectory(path: string): Promise<void> {
 }
 
 async function assertPrivateRegularFile(path: string, minimumBytes = 1): Promise<void> {
-  const metadata = await lstat(path);
-  const currentUid = process.getuid?.();
-  if (
-    metadata.isSymbolicLink() ||
-    !metadata.isFile() ||
-    mode(metadata) !== PRIVATE_FILE_MODE ||
-    metadata.size < minimumBytes ||
-    (currentUid !== undefined && metadata.uid !== currentUid)
-  ) {
+  const handle = await openPrivateRegularFile(path, minimumBytes);
+  await handle.close();
+}
+
+async function openPrivateRegularFile(path: string, minimumBytes = 1): Promise<FileHandle> {
+  let handle: FileHandle | undefined;
+  try {
+    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const metadata = await handle.stat();
+    const currentUid = process.getuid?.();
+    if (
+      metadata.isSymbolicLink() ||
+      !metadata.isFile() ||
+      mode(metadata) !== PRIVATE_FILE_MODE ||
+      metadata.size < minimumBytes ||
+      (currentUid !== undefined && metadata.uid !== currentUid)
+    ) {
+      throw new Error("unsafe private input");
+    }
+    return handle;
+  } catch {
+    await handle?.close().catch(() => undefined);
     throw new Error("A required private backup input is unsafe");
   }
 }
 
 async function parsePrivateEnvironmentFile(path: string): Promise<Record<string, string>> {
-  await assertPrivateRegularFile(path);
-  return parseCliEnvironmentFile(path);
+  const handle = await openPrivateRegularFile(path);
+  try {
+    return parseCliEnvironmentSource(await handle.readFile({ encoding: "utf8" }));
+  } finally {
+    await handle.close();
+  }
 }
 
 function requirePrivateValue(
@@ -446,7 +475,7 @@ async function main(): Promise<void> {
     const finalPath = join(BACKUP_DIRECTORY, basename);
     const partialPath = `${finalPath}.partial`;
     cleanupPath = partialPath;
-    const encryptionPassphrase = await open(PASSPHRASE_FILE, "r");
+    const encryptionPassphrase = await openPrivateRegularFile(PASSPHRASE_FILE, 64);
     try {
       await createEncryptedDump(
         partialPath,
@@ -463,7 +492,7 @@ async function main(): Promise<void> {
       throw new Error("The encrypted backup artifact is unsafe or empty");
     }
     await syncFile(partialPath);
-    const verificationPassphrase = await open(PASSPHRASE_FILE, "r");
+    const verificationPassphrase = await openPrivateRegularFile(PASSPHRASE_FILE, 64);
     try {
       await verifyEncryptedDump(partialPath, verificationPassphrase.fd, gnupgHome);
     } finally {

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, openSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -232,20 +232,33 @@ export function verifyVercelSourceBoundary(
   const vercelIgnorePath = resolve(repositoryRoot, ".vercelignore");
   const nowIgnorePath = resolve(repositoryRoot, ".nowignore");
 
-  let metadata;
+  let descriptor: number;
   try {
-    metadata = lstatSync(vercelIgnorePath);
-  } catch {
+    descriptor = openSync(vercelIgnorePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      fail("The root .vercelignore must be a regular non-symlink file");
+    }
     fail("The tracked root .vercelignore is missing");
   }
-  if (metadata.isSymbolicLink() || !metadata.isFile()) {
-    fail("The root .vercelignore must be a regular non-symlink file");
-  }
   if (existsSync(nowIgnorePath)) {
+    closeSync(descriptor);
     fail("A conflicting root .nowignore is not allowed");
   }
 
-  const source = readFileSync(vercelIgnorePath, "utf8");
+  let source: string;
+  try {
+    const metadata = fstatSync(descriptor);
+    if (metadata.isSymbolicLink() || !metadata.isFile()) {
+      fail("The root .vercelignore must be a regular non-symlink file");
+    }
+    source = readFileSync(descriptor, "utf8");
+  } catch (error) {
+    if (error instanceof VercelSourceBoundaryError) throw error;
+    fail("The root .vercelignore could not be read safely");
+  } finally {
+    closeSync(descriptor);
+  }
   const rules = activeRules(source);
   if (rules.some((rule) => rule.startsWith("!"))) {
     fail("Negated .vercelignore rules are not allowed at the deploy boundary");

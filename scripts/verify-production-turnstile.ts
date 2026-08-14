@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { lstatSync, readFileSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -202,20 +202,34 @@ export function readProductionTurnstileSecret(
   path = defaultInventoryPath,
   isIgnored: (candidate: string) => boolean = defaultIgnoredCheck,
 ): string {
-  let metadata;
+  let descriptor: number;
   try {
-    metadata = lstatSync(path);
-  } catch {
+    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      fail("The production inventory must be a regular mode-0600 file");
+    }
     fail("The production inventory is unavailable");
   }
-  if (metadata.isSymbolicLink() || !metadata.isFile() || (metadata.mode & 0o777) !== 0o600) {
-    fail("The production inventory must be a regular mode-0600 file");
+
+  let source: string;
+  try {
+    const metadata = fstatSync(descriptor);
+    if (metadata.isSymbolicLink() || !metadata.isFile() || (metadata.mode & 0o777) !== 0o600) {
+      fail("The production inventory must be a regular mode-0600 file");
+    }
+    if (!isIgnored(path)) fail("The production inventory must remain ignored by Git");
+    source = readFileSync(descriptor, "utf8");
+  } catch (error) {
+    if (error instanceof TurnstileProductionPreflightError) throw error;
+    fail("The production inventory could not be parsed safely");
+  } finally {
+    closeSync(descriptor);
   }
-  if (!isIgnored(path)) fail("The production inventory must remain ignored by Git");
 
   let inventory: ReturnType<typeof parseProductionInventory>;
   try {
-    inventory = parseProductionInventory(readFileSync(path, "utf8"));
+    inventory = parseProductionInventory(source);
   } catch {
     fail("The production inventory could not be parsed safely");
   }
