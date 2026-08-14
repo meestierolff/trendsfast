@@ -5,6 +5,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -156,17 +157,36 @@ const opsEnvironmentNames = [
 ] as const;
 
 const acceptedSha = "a".repeat(40);
+const acceptedBranch = "sol/hobby-launch-dogfood";
 const redactionCanary = "harness-secret-must-not-leak";
+
+type GitMetadataMode = "accepted" | "missing" | "mismatched";
+const gitMetadataFields = [
+  "githubDeployment",
+  "githubCommitSha",
+  "githubCommitRef",
+  "githubCommitRepo",
+  "githubCommitOrg",
+] as const;
+type GitMetadataField = (typeof gitMetadataFields)[number];
 
 type DeployHarnessOptions = {
   target: "public" | "ops";
   staleCronReads?: number;
   opsAliasMode?: "accepted" | "rejected";
+  publicAliasMode?: "accepted" | "rejected";
+  publicStableOriginMode?: "accepted" | "reassigned";
+  effectiveConfigMode?: "accepted" | "missing" | "mismatched" | "malformed" | "oversized";
+  preexistingEffectiveConfig?: "matching" | "leaf-symlink" | "parent-symlink";
   failOpsAttestation?: boolean;
   ambientProjectOverride?: boolean;
   ambientTeamOverride?: boolean;
   vercelVersion?: string;
   gitIgnoredPath?: string;
+  acceptedPublicGitMetadataMode?: GitMetadataMode;
+  acceptedPublicGitMetadataField?: GitMetadataField;
+  newDeploymentGitMetadataMode?: GitMetadataMode;
+  newDeploymentGitMetadataField?: GitMetadataField;
 };
 
 function writeExecutable(path: string, contents: string): void {
@@ -213,7 +233,7 @@ function runDeployHarness(options: DeployHarnessOptions) {
       `${JSON.stringify(
         {
           version: 1,
-          acceptedBranch: "sol/hobby-launch-dogfood",
+          acceptedBranch,
           acceptedSha,
           ...(options.target === "ops"
             ? {
@@ -236,6 +256,26 @@ function runDeployHarness(options: DeployHarnessOptions) {
       join(webDirectory, "vercel.ops.json"),
       '{"$schema":"https://openapi.vercel.sh/vercel.json","git":{"deploymentEnabled":{"main":false}},"regions":["fra1"]}\n',
     );
+    const selectedProfile = readFileSync(
+      join(webDirectory, options.target === "public" ? "vercel.hobby.json" : "vercel.ops.json"),
+      "utf8",
+    );
+    const effectiveConfigDirectory = join(webDirectory, ".vercel");
+    const effectiveConfigPath = join(effectiveConfigDirectory, "vercel.json");
+    if (options.preexistingEffectiveConfig === "parent-symlink") {
+      const symlinkTarget = join(state, "effective-config-directory");
+      mkdirSync(symlinkTarget);
+      symlinkSync(symlinkTarget, effectiveConfigDirectory);
+    } else if (options.preexistingEffectiveConfig) {
+      mkdirSync(effectiveConfigDirectory);
+      if (options.preexistingEffectiveConfig === "leaf-symlink") {
+        const symlinkTarget = join(state, "effective-vercel.json");
+        writeFileSync(symlinkTarget, selectedProfile);
+        symlinkSync(symlinkTarget, effectiveConfigPath);
+      } else {
+        writeFileSync(effectiveConfigPath, selectedProfile);
+      }
+    }
     writeFileSync(join(state, "public-environment.json"), JSON.stringify(publicEnvironmentNames));
     writeFileSync(join(state, "ops-environment.json"), JSON.stringify(opsEnvironmentNames));
 
@@ -247,7 +287,7 @@ const root = process.env.HARNESS_ROOT;
 const sha = process.env.HARNESS_SHA;
 if (args[0] === "rev-parse" && args[1] === "--show-toplevel") process.stdout.write(root + "\\n");
 else if (args[0] === "status") process.exit(0);
-else if (args[0] === "symbolic-ref") process.stdout.write("sol/hobby-launch-dogfood\\n");
+else if (args[0] === "symbolic-ref") process.stdout.write(process.env.HARNESS_BRANCH + "\\n");
 else if (args[0] === "fetch") process.exit(0);
 else if (args[0] === "ls-files" && args.includes("--others") && args.includes("--ignored") && args.includes("--exclude-standard")) {
   if (process.env.HARNESS_GIT_IGNORED_PATH) process.stdout.write(process.env.HARNESS_GIT_IGNORED_PATH + "\\0");
@@ -287,6 +327,7 @@ const root = process.env.HARNESS_ROOT;
 const state = path.join(root, ".harness");
 const target = process.env.HARNESS_TARGET;
 const sha = process.env.HARNESS_SHA;
+const branch = process.env.HARNESS_BRANCH;
 const teamId = "team_UVAUfp4G8CmlSNPI9w5FasKj";
 const publicProjectId = "prj_nYn6zjWW4BcKd03QaVO6LTOF3CSC";
 const opsProjectId = "prj_EYAjX2Nyd1jUXSjfWVTVoI320nnU";
@@ -294,6 +335,23 @@ const deployedMarker = path.join(state, "deployed");
 fs.appendFileSync(path.join(state, "vercel.log"), JSON.stringify(args) + "\\n");
 process.stderr.write(process.env.HARNESS_SECRET + "\\n");
 const send = (value) => process.stdout.write(typeof value === "string" ? value : JSON.stringify(value));
+const gitMetadata = (mode, field) => {
+  const accepted = {
+    githubDeployment: "1",
+    githubCommitSha: sha,
+    githubCommitRef: branch,
+    githubCommitRepo: "trendsfast",
+    githubCommitOrg: "meestierolff",
+  };
+  if (mode === "missing") {
+    delete accepted[field];
+    return accepted;
+  }
+  if (mode === "mismatched") {
+    accepted[field] = "mismatched";
+  }
+  return accepted;
+};
 const publicProject = () => ({
   id: publicProjectId,
   name: "trendsfast",
@@ -332,10 +390,28 @@ if (args[0] === "--version") {
   fs.writeFileSync(path.join(root, ".vercel", "README.txt"), "mutated ops link\\n");
   send("linked\\n");
 } else if (args[0] === "deploy") {
+  if (process.env.HARNESS_EFFECTIVE_CONFIG_MODE !== "missing") {
+    const compiledDirectory = path.join(root, "apps", "web", ".vercel");
+    fs.mkdirSync(compiledDirectory, { recursive: true });
+    const compiledPath = path.join(compiledDirectory, "vercel.json");
+    if (process.env.HARNESS_EFFECTIVE_CONFIG_MODE === "malformed") {
+      fs.writeFileSync(compiledPath, "{");
+    } else if (process.env.HARNESS_EFFECTIVE_CONFIG_MODE === "oversized") {
+      fs.writeFileSync(compiledPath, "x".repeat(65 * 1024));
+    } else {
+      const profile = target === "public" ? "vercel.hobby.json" : "vercel.ops.json";
+      const compiled = JSON.parse(fs.readFileSync(path.join(root, "apps", "web", profile), "utf8"));
+      if (process.env.HARNESS_EFFECTIVE_CONFIG_MODE === "mismatched") compiled.regions = ["iad1"];
+      fs.writeFileSync(compiledPath, JSON.stringify(compiled));
+    }
+  }
   fs.writeFileSync(deployedMarker, target);
   send(target === "public" ? "https://trendsfast-public-new.vercel.app\\n" : "https://trendsfast-ops-new.vercel.app\\n");
 } else if (args[0] === "inspect") {
-  if (target === "public") {
+  if (args[1] === "https://trendsfast.vercel.app") {
+    const reassigned = fs.existsSync(deployedMarker) && process.env.HARNESS_PUBLIC_STABLE_ORIGIN_MODE === "reassigned";
+    send({ id: reassigned ? "dpl_PublicNew" : "dpl_PublicCurrent", name: "trendsfast", readyState: "READY", target: "production", url: "trendsfast-current.vercel.app" });
+  } else if (target === "public") {
     send({ id: "dpl_PublicNew", name: "trendsfast", readyState: "READY", target: "production", url: "trendsfast-public-new.vercel.app" });
   } else {
     send({ id: "dpl_OpsNew", name: "trendsfast-ops", readyState: "READY", target: "production", url: "trendsfast-ops-new.vercel.app" });
@@ -350,7 +426,9 @@ if (args[0] === "--version") {
     project.crons = {
       deploymentId: stale ? "dpl_Stale" : "dpl_PublicNew",
       disabledAt: null,
-      definitions: [{ path: "/api/cron/monitoring", schedule: "0 7 * * *" }],
+      definitions: stale
+        ? [{ path: "/api/cron/monitoring", schedule: "0 7 * * *" }]
+        : [],
     };
   }
   send(project);
@@ -367,23 +445,26 @@ if (args[0] === "--version") {
 } else if (args[0] === "api" && args[1] === "/v9/projects/" + opsProjectId + "/domains?limit=100&teamId=" + teamId) {
   send({ pagination: { count: 1, next: null }, domains: [{ name: "trendsfast-ops.vercel.app", projectId: opsProjectId, verified: true, gitBranch: null, customEnvironmentId: null }] });
 } else if (args[0] === "api" && args[1] === "/v13/deployments/dpl_PublicAccepted") {
-  send({ id: "dpl_PublicAccepted", projectId: publicProjectId, name: "trendsfast", meta: { githubCommitSha: sha }, url: "trendsfast-public-accepted.vercel.app", plan: "hobby", target: "production", readyState: "READY" });
+  send({ id: "dpl_PublicAccepted", projectId: publicProjectId, name: "trendsfast", meta: gitMetadata(process.env.HARNESS_ACCEPTED_PUBLIC_GIT_METADATA_MODE, process.env.HARNESS_ACCEPTED_PUBLIC_GIT_METADATA_FIELD), url: "trendsfast-public-accepted.vercel.app", plan: "hobby", target: "production", readyState: "READY" });
 } else if (args[0] === "api" && args[1] === "/v13/deployments/dpl_PublicNew") {
+  const aliases = process.env.HARNESS_PUBLIC_ALIAS_MODE === "rejected"
+    ? ["trendsfast-clarios-projects-05f6a57e.vercel.app", "trendsfast-ops.vercel.app"]
+    : ["trendsfast-clarios-projects-05f6a57e.vercel.app", "trendsfast-git-main-clarios-projects-05f6a57e.vercel.app"];
   send({
     id: "dpl_PublicNew",
     projectId: publicProjectId,
     name: "trendsfast",
-    meta: { githubCommitSha: sha },
+    meta: gitMetadata(process.env.HARNESS_NEW_DEPLOYMENT_GIT_METADATA_MODE, process.env.HARNESS_NEW_DEPLOYMENT_GIT_METADATA_FIELD),
     plan: "hobby",
     target: "production",
     readyState: "READY",
     url: "trendsfast-public-new.vercel.app",
     regions: ["fra1"],
-    crons: [{ path: "/api/cron/monitoring", schedule: "0 7 * * *" }],
+    crons: [],
     config: { functionType: "fluid", functionTimeout: 300 },
     autoAssignCustomDomains: false,
-    alias: [],
-    automaticAliases: [],
+    alias: [aliases[0]],
+    automaticAliases: [aliases[1]],
   });
 } else if (args[0] === "api" && args[1] === "/v13/deployments/dpl_OpsNew") {
   const aliases = process.env.HARNESS_OPS_ALIAS_MODE === "rejected"
@@ -393,7 +474,7 @@ if (args[0] === "--version") {
     id: "dpl_OpsNew",
     projectId: opsProjectId,
     name: "trendsfast-ops",
-    meta: { githubCommitSha: sha },
+    meta: gitMetadata(process.env.HARNESS_NEW_DEPLOYMENT_GIT_METADATA_MODE, process.env.HARNESS_NEW_DEPLOYMENT_GIT_METADATA_FIELD),
     plan: "hobby",
     target: "production",
     readyState: "READY",
@@ -417,13 +498,24 @@ if (args[0] === "--version") {
       TMPDIR: temporaryDirectory,
       HARNESS_ROOT: root,
       HARNESS_SHA: acceptedSha,
+      HARNESS_BRANCH: acceptedBranch,
       HARNESS_SECRET: redactionCanary,
       HARNESS_TARGET: options.target,
       HARNESS_STALE_CRON_READS: String(options.staleCronReads ?? 1),
       HARNESS_OPS_ALIAS_MODE: options.opsAliasMode ?? "accepted",
+      HARNESS_PUBLIC_ALIAS_MODE: options.publicAliasMode ?? "accepted",
+      HARNESS_PUBLIC_STABLE_ORIGIN_MODE: options.publicStableOriginMode ?? "accepted",
+      HARNESS_EFFECTIVE_CONFIG_MODE: options.effectiveConfigMode ?? "accepted",
       HARNESS_FAIL_OPS_ATTESTATION: String(options.failOpsAttestation ?? false),
       HARNESS_VERCEL_VERSION: options.vercelVersion ?? "58.0.0",
       HARNESS_GIT_IGNORED_PATH: options.gitIgnoredPath ?? "",
+      HARNESS_ACCEPTED_PUBLIC_GIT_METADATA_MODE:
+        options.acceptedPublicGitMetadataMode ?? "accepted",
+      HARNESS_ACCEPTED_PUBLIC_GIT_METADATA_FIELD:
+        options.acceptedPublicGitMetadataField ?? "githubDeployment",
+      HARNESS_NEW_DEPLOYMENT_GIT_METADATA_MODE: options.newDeploymentGitMetadataMode ?? "accepted",
+      HARNESS_NEW_DEPLOYMENT_GIT_METADATA_FIELD:
+        options.newDeploymentGitMetadataField ?? "githubDeployment",
     };
     delete harnessEnvironment.VERCEL_ORG_ID;
     delete harnessEnvironment.VERCEL_PROJECT_ID;
@@ -460,6 +552,8 @@ if (args[0] === "--version") {
         publicDeploymentHost?: string;
         publicDeploymentId?: string;
       },
+      effectiveConfig: readOptionalHarnessFile(join(webDirectory, ".vercel", "vercel.json")),
+      selectedProfile,
     };
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -471,6 +565,33 @@ function embeddedEnvironmentNames(script: string): string[] {
   if (!match?.[1]) throw new Error("missing embedded environment allowlist");
   return match[1].split("\n");
 }
+
+function harnessVercelCalls(log: string): string[][] {
+  return log
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as string[]);
+}
+
+function harnessMetaValues(calls: string[][]): string[] {
+  return calls.flatMap((args) =>
+    args.filter((_, index, currentArgs) => currentArgs[index - 1] === "--meta"),
+  );
+}
+
+const expectedGitMetadataArguments = [
+  "--meta",
+  "githubDeployment=1",
+  "--meta",
+  `githubCommitSha=${acceptedSha}`,
+  "--meta",
+  `githubCommitRef=${acceptedBranch}`,
+  "--meta",
+  "githubCommitRepo=trendsfast",
+  "--meta",
+  "githubCommitOrg=meestierolff",
+] as const;
 
 describe("founder-only Hobby deployment scripts", () => {
   it("pins the exact public Hobby cron contract and leaves Pro at its paid cadence", () => {
@@ -632,9 +753,14 @@ describe("founder-only Hobby deployment scripts", () => {
     );
     expect(opsScript).toContain("aliases.every(expectedOpsAlias)");
     expect(opsScript).toContain("aliases.includes(expectedAlias)");
-    expect(publicScript).toContain("report.autoAssignCustomDomains !== true");
-    expect(publicScript).toContain("report.alias.length === 0");
-    expect(publicScript).toContain("report.automaticAliases.length === 0");
+    expect(publicScript).toContain("report.autoAssignCustomDomains === false");
+    expect(publicScript).toContain("report.alias.length === 1");
+    expect(publicScript).toContain("report.automaticAliases.length === 1");
+    expect(publicScript).toContain("aliases.every(expectedStagedAlias)");
+    expect(publicScript).toContain('value !== "trendsfast.vercel.app"');
+    expect(publicScript).toContain(
+      "^trendsfast(?:-[a-z0-9]+)*-clarios-projects-05f6a57e\\.vercel\\.app$",
+    );
   });
 
   it("uses only the two reviewed deploy commands and never promotes or mutates domains", () => {
@@ -649,20 +775,195 @@ describe("founder-only Hobby deployment scripts", () => {
     }
   });
 
-  it("reads back the exact project-level cron state after each new deployment", () => {
+  it("passes only the validated Git attestation through safely quoted Bash arrays", () => {
+    const expectedArray = `deployment_git_metadata=(
+  --meta "githubDeployment=1"
+  --meta "githubCommitSha=\${accepted_sha}"
+  --meta "githubCommitRef=\${accepted_branch}"
+  --meta "githubCommitRepo=trendsfast"
+  --meta "githubCommitOrg=meestierolff"
+)`;
+    for (const script of [publicScript, opsScript]) {
+      expect(script).toContain(expectedArray);
+      expect(script).toContain('"${deployment_git_metadata[@]}"');
+      expect(script).not.toContain("${deployment_git_metadata[*]}");
+      expect(script).not.toMatch(/(?<!["'])\$\{deployment_git_metadata\[@\]\}(?!["'])/u);
+      expect(script).toContain('report.meta?.githubDeployment === "1"');
+      expect(script).toContain("report.meta?.githubCommitSha === process.argv[5]");
+      expect(script).toContain("report.meta?.githubCommitRef === process.argv[");
+      expect(script).toContain('report.meta?.githubCommitRepo === "trendsfast"');
+      expect(script).toContain('report.meta?.githubCommitOrg === "meestierolff"');
+    }
+    expect(opsScript).toContain('deployment.meta?.githubDeployment === "1"');
+    expect(opsScript).toContain("deployment.meta?.githubCommitSha === process.argv[5]");
+    expect(opsScript).toContain("deployment.meta?.githubCommitRef === process.argv[7]");
+    expect(opsScript).toContain('deployment.meta?.githubCommitRepo === "trendsfast"');
+    expect(opsScript).toContain('deployment.meta?.githubCommitOrg === "meestierolff"');
+
+    const publicResult = runDeployHarness({ target: "public", staleCronReads: 0 });
+    const opsResult = runDeployHarness({ target: "ops", staleCronReads: 0 });
+    expect(publicResult.status).toBe(0);
+    expect(opsResult.status).toBe(0);
+
+    const publicCalls = harnessVercelCalls(publicResult.vercelLog);
+    const opsCalls = harnessVercelCalls(opsResult.vercelLog);
+    const publicDeploys = publicCalls.filter((args) => args[0] === "deploy");
+    const opsDeploys = opsCalls.filter((args) => args[0] === "deploy");
+    expect(publicDeploys).toHaveLength(1);
+    expect(opsDeploys).toHaveLength(1);
+    const [publicDeploy] = publicDeploys;
+    const [opsDeploy] = opsDeploys;
+    expect(publicDeploy).toEqual([
+      "deploy",
+      "--prod",
+      "--skip-domain",
+      "--yes",
+      "-A",
+      "apps/web/vercel.hobby.json",
+      ...expectedGitMetadataArguments,
+    ]);
+    expect(opsDeploy).toEqual([
+      "deploy",
+      "--prod",
+      "--yes",
+      "-A",
+      "apps/web/vercel.ops.json",
+      ...expectedGitMetadataArguments,
+    ]);
+    expect(JSON.stringify([publicCalls, opsCalls])).not.toContain(redactionCanary);
+    const expectedMetaValues = expectedGitMetadataArguments.filter((value) => value !== "--meta");
+    const publicMetaValues = harnessMetaValues(publicCalls);
+    const opsMetaValues = harnessMetaValues(opsCalls);
+    expect(publicMetaValues).toEqual(expectedMetaValues);
+    expect(opsMetaValues).toEqual(expectedMetaValues);
+    for (const forbiddenName of [...publicEnvironmentNames, ...opsEnvironmentNames]) {
+      expect(publicMetaValues.some((value) => value.startsWith(`${forbiddenName}=`))).toBe(false);
+      expect(opsMetaValues.some((value) => value.startsWith(`${forbiddenName}=`))).toBe(false);
+    }
+  }, 30_000);
+
+  it("rejects every missing or mismatched Git attestation field on both new deployments", () => {
+    for (const target of ["public", "ops"] as const) {
+      for (const newDeploymentGitMetadataMode of ["missing", "mismatched"] as const) {
+        for (const newDeploymentGitMetadataField of gitMetadataFields) {
+          const result = runDeployHarness({
+            target,
+            staleCronReads: 0,
+            newDeploymentGitMetadataMode,
+            newDeploymentGitMetadataField,
+          });
+          expect(result.status).not.toBe(0);
+          expect(result.stdout).toBe("");
+          expect(result.stderr).toBe(
+            `FAIL: the ${target} deployment provenance does not match the accepted SHA and pinned project\n`,
+          );
+          expect(`${result.stdout}${result.stderr}`).not.toContain(redactionCanary);
+        }
+      }
+    }
+  }, 120_000);
+
+  it("rejects every missing or mismatched Git attestation field in the accepted public ops chain", () => {
+    for (const acceptedPublicGitMetadataMode of ["missing", "mismatched"] as const) {
+      for (const acceptedPublicGitMetadataField of gitMetadataFields) {
+        const result = runDeployHarness({
+          target: "ops",
+          acceptedPublicGitMetadataMode,
+          acceptedPublicGitMetadataField,
+        });
+        expect(result.status).not.toBe(0);
+        expect(result.stdout).toBe("");
+        expect(result.stderr).toBe(
+          "FAIL: the accepted public deployment does not match its project, host, SHA, and Hobby provenance\n",
+        );
+        expect(result.vercelLog).not.toContain('["deploy"');
+        expect(`${result.stdout}${result.stderr}`).not.toContain(redactionCanary);
+      }
+    }
+  }, 120_000);
+
+  it("rejects missing or mismatched effective deployment profiles after CLI compilation", () => {
+    for (const target of ["public", "ops"] as const) {
+      for (const effectiveConfigMode of [
+        "missing",
+        "mismatched",
+        "malformed",
+        "oversized",
+      ] as const) {
+        const result = runDeployHarness({ target, effectiveConfigMode });
+        expect(result.status).not.toBe(0);
+        expect(result.stdout).toBe("");
+        expect(result.stderr).toBe(
+          target === "public"
+            ? "FAIL: the effective public deployment config did not match the reviewed Hobby profile\n"
+            : "FAIL: the effective ops deployment config did not match the reviewed cron-free profile\n",
+        );
+        expect(`${result.stdout}${result.stderr}`).not.toContain(redactionCanary);
+      }
+    }
+  }, 60_000);
+
+  it("cannot reuse a matching stale effective profile and restores the ignored file", () => {
+    for (const target of ["public", "ops"] as const) {
+      const result = runDeployHarness({
+        target,
+        effectiveConfigMode: "missing",
+        preexistingEffectiveConfig: "matching",
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe(
+        target === "public"
+          ? "FAIL: the effective public deployment config did not match the reviewed Hobby profile\n"
+          : "FAIL: the effective ops deployment config did not match the reviewed cron-free profile\n",
+      );
+      expect(result.effectiveConfig).toBe(result.selectedProfile);
+      expect(`${result.stdout}${result.stderr}`).not.toContain(redactionCanary);
+    }
+  }, 30_000);
+
+  it("rejects symlinked effective-config parents and leaves before deployment", () => {
+    for (const target of ["public", "ops"] as const) {
+      for (const preexistingEffectiveConfig of ["parent-symlink", "leaf-symlink"] as const) {
+        const result = runDeployHarness({ target, preexistingEffectiveConfig });
+        expect(result.status).not.toBe(0);
+        expect(result.stdout).toBe("");
+        expect(result.stderr).toBe(
+          preexistingEffectiveConfig === "parent-symlink"
+            ? "FAIL: the ignored effective deployment config directory is unsafe\n"
+            : "FAIL: the ignored effective deployment config is unsafe\n",
+        );
+        expect(
+          harnessVercelCalls(result.vercelLog).filter((args) => args[0] === "deploy"),
+        ).toHaveLength(0);
+        expect(`${result.stdout}${result.stderr}`).not.toContain(redactionCanary);
+      }
+    }
+  }, 30_000);
+
+  it("reads back the exact staged public and cron-free ops state after each deployment", () => {
     expect(
       publicScript.match(/vercel api "\/v9\/projects\/\$\{public_project_id\}" --raw/gu),
     ).toHaveLength(2);
+    expect(publicScript).toContain("report.crons.length === 0");
+    expect(publicScript).toContain(
+      'readonly effective_deployment_config="apps/web/.vercel/vercel.json"',
+    );
+    expect(publicScript).toContain("isDeepStrictEqual(actual, expected)");
+    expect(publicScript).toContain('rm -f -- "$effective_deployment_config"');
     expect(publicScript).toContain("crons.deploymentId === process.argv[3]");
     expect(publicScript).toContain("crons.disabledAt === null");
-    expect(publicScript).toContain("definitions.length === 1");
-    expect(publicScript).toContain('definitions[0]?.path === "/api/cron/monitoring"');
-    expect(publicScript).toContain('definitions[0]?.schedule === "0 7 * * *"');
+    expect(publicScript).toContain("definitions.length === 0");
 
     expect(
       opsScript.match(/vercel api "\/v9\/projects\/\$\{ops_project_id\}" --raw/gu),
     ).toHaveLength(2);
     expect(opsScript).toContain("const noRegistration = crons === undefined");
+    expect(opsScript).toContain(
+      'readonly effective_deployment_config="apps/web/.vercel/vercel.json"',
+    );
+    expect(opsScript).toContain("isDeepStrictEqual(actual, expected)");
+    expect(opsScript).toContain('rm -f -- "$effective_deployment_config"');
     expect(opsScript).toContain("const emptyCronDefinitionSet =");
     expect(opsScript).toContain("crons.definitions.length === 0");
     expect(opsScript).toContain("crons.deploymentId === process.argv[3]");
@@ -679,7 +980,7 @@ describe("founder-only Hobby deployment scripts", () => {
     }
   });
 
-  it("tolerates stale public V9 cron state and accepts only the new deployment registration", () => {
+  it("tolerates stale public V9 cron state and accepts only the new staged deployment state", () => {
     const result = runDeployHarness({
       target: "public",
       staleCronReads: 1,
@@ -705,9 +1006,50 @@ describe("founder-only Hobby deployment scripts", () => {
     expect(result.sleepLog).toBe("2\n".repeat(5));
     expect(result.stdout).toBe("");
     expect(result.stderr).toBe(
-      "FAIL: the public project did not register the exact active Hobby cron for the new deployment\n",
+      "FAIL: the public project did not retain the exact inactive staged Hobby cron state for the new deployment\n",
     );
     expect(`${result.stdout}${result.stderr}`).not.toContain(redactionCanary);
+  }, 30_000);
+
+  it("rejects an unrelated staged public alias without leaking the response", () => {
+    const result = runDeployHarness({
+      target: "public",
+      staleCronReads: 0,
+      publicAliasMode: "rejected",
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(
+      "FAIL: the public deployment provenance does not match the accepted SHA and pinned project\n",
+    );
+    expect(`${result.stdout}${result.stderr}`).not.toContain(redactionCanary);
+  }, 30_000);
+
+  it("proves that --skip-domain leaves the stable public origin on its prior deployment", () => {
+    expect(publicScript).toContain('readonly public_generated_domain="trendsfast.vercel.app"');
+    expect(publicScript).toContain(
+      'vercel inspect "https://${public_generated_domain}" --format=json',
+    );
+    expect(publicScript).toContain("report.id === process.argv[2]");
+
+    const accepted = runDeployHarness({ target: "public", staleCronReads: 0 });
+    const stableReads = harnessVercelCalls(accepted.vercelLog).filter(
+      (args) => args[0] === "inspect" && args[1] === "https://trendsfast.vercel.app",
+    );
+    expect(accepted.status).toBe(0);
+    expect(stableReads).toHaveLength(2);
+
+    const reassigned = runDeployHarness({
+      target: "public",
+      staleCronReads: 0,
+      publicStableOriginMode: "reassigned",
+    });
+    expect(reassigned.status).not.toBe(0);
+    expect(reassigned.stdout).toBe("");
+    expect(reassigned.stderr).toBe(
+      "FAIL: the staged deployment changed the stable public Vercel origin\n",
+    );
+    expect(`${reassigned.stdout}${reassigned.stderr}`).not.toContain(redactionCanary);
   }, 30_000);
 
   it("accepts only pinned ops aliases, polls away stale cron state, and restores the public link", () => {

@@ -9,10 +9,12 @@ set -euo pipefail
 
 readonly public_project="trendsfast"
 readonly public_project_id="prj_nYn6zjWW4BcKd03QaVO6LTOF3CSC"
+readonly public_generated_domain="trendsfast.vercel.app"
 readonly team_id="team_UVAUfp4G8CmlSNPI9w5FasKj"
 readonly root_directory="apps/web"
 readonly release_contract=".var/private/hobby-release.json"
 readonly deployment_config="apps/web/vercel.hobby.json"
+readonly effective_deployment_config="apps/web/.vercel/vercel.json"
 readonly cron_readback_attempts=6
 readonly cron_readback_delay_seconds=2
 readonly expected_environment_names='NODE_ENV
@@ -81,9 +83,35 @@ DATAFAST_ENABLED'
 
 temp_dir=""
 command_log=""
+effective_config_backup=""
+effective_config_existed="false"
+effective_config_prepared="false"
+
+restore_effective_deployment_config() {
+  if [[ "$effective_config_prepared" != "true" ]]; then
+    return 0
+  fi
+  local effective_config_directory="${effective_deployment_config%/*}"
+  if [[ "$effective_config_existed" == "true" ]]; then
+    [[ -d "$effective_config_directory" && ! -L "$effective_config_directory" && ! -L "$effective_deployment_config" ]] || return 1
+    cp -p -- "$effective_config_backup" "$effective_deployment_config" || return 1
+  else
+    if [[ ! -e "$effective_config_directory" && ! -L "$effective_config_directory" ]]; then
+      effective_config_prepared="false"
+      return 0
+    fi
+    [[ -d "$effective_config_directory" && ! -L "$effective_config_directory" && ! -L "$effective_deployment_config" ]] || return 1
+    rm -f -- "$effective_deployment_config" || return 1
+  fi
+  effective_config_prepared="false"
+}
 
 cleanup() {
   local status=$?
+  if ! restore_effective_deployment_config; then
+    status=1
+    printf 'FAIL: the prior ignored effective deployment config could not be restored\n' >&2
+  fi
   if [[ -n "${temp_dir:-}" && -d "$temp_dir" ]]; then
     rm -f -- "$temp_dir"/* 2>/dev/null || true
     rmdir -- "$temp_dir" 2>/dev/null || true
@@ -137,7 +165,7 @@ assert_git_ignored_upload_boundary() {
   ' "$ignored_path_report" .vercelignore
 }
 
-for required_command in git vercel node pnpm mktemp chmod stat rm rmdir sleep; do
+for required_command in git vercel node pnpm mktemp chmod stat cp rm rmdir sleep; do
   require_command "$required_command"
 done
 
@@ -147,6 +175,7 @@ repository_root="$(git rev-parse --show-toplevel 2>/dev/null)" || fail "run from
 
 [[ -f "$release_contract" && ! -L "$release_contract" ]] || fail "the private accepted-release contract is missing"
 [[ "$(file_mode "$release_contract")" == "600" ]] || fail "the private accepted-release contract must be mode 0600"
+# shellcheck disable=SC2016
 if ! release_identity="$(node -e '
   const fs = require("node:fs");
   const release = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
@@ -187,7 +216,10 @@ deployment_api_report="$temp_dir/deployment-api.json"
 postdeploy_project_report="$temp_dir/postdeploy-project.json"
 safe_deployment="$temp_dir/deployment-safe.json"
 git_ignored_report="$temp_dir/git-ignored-paths.bin"
-for private_file in "$command_log" "$team_report" "$project_report" "$environment_report" "$expected_environment_file" "$deployment_output" "$deployment_report" "$deployment_api_report" "$postdeploy_project_report" "$safe_deployment" "$git_ignored_report"; do
+stable_origin_before_report="$temp_dir/stable-origin-before.json"
+stable_origin_after_report="$temp_dir/stable-origin-after.json"
+effective_config_backup="$temp_dir/effective-vercel.json"
+for private_file in "$command_log" "$team_report" "$project_report" "$environment_report" "$expected_environment_file" "$deployment_output" "$deployment_report" "$deployment_api_report" "$postdeploy_project_report" "$safe_deployment" "$git_ignored_report" "$stable_origin_before_report" "$stable_origin_after_report" "$effective_config_backup"; do
   : >"$private_file"
   chmod 0600 "$private_file"
 done
@@ -296,8 +328,52 @@ fi
 # reviewed public profile without changing the accepted worktree.
 [[ -z "$(git status --porcelain --untracked-files=normal)" ]] || fail "the accepted worktree changed before deploy"
 [[ "$(git rev-parse HEAD 2>/dev/null)" == "$accepted_sha" ]] || fail "HEAD changed before deploy"
-if ! TRENDSFAST_VERCEL_CONFIG_PROFILE=public vercel deploy --prod --skip-domain --yes -A apps/web/vercel.hobby.json >"$deployment_output" 2>"$command_log"; then
+effective_config_directory="${effective_deployment_config%/*}"
+if [[ -e "$effective_config_directory" || -L "$effective_config_directory" ]]; then
+  [[ -d "$effective_config_directory" && ! -L "$effective_config_directory" ]] || fail "the ignored effective deployment config directory is unsafe"
+fi
+[[ ! -L "$effective_deployment_config" ]] || fail "the ignored effective deployment config is unsafe"
+if [[ -e "$effective_deployment_config" ]]; then
+  [[ -f "$effective_deployment_config" ]] || fail "the ignored effective deployment config is unsafe"
+  cp -p -- "$effective_deployment_config" "$effective_config_backup" || fail "the prior ignored effective deployment config could not be preserved"
+  effective_config_existed="true"
+fi
+effective_config_prepared="true"
+rm -f -- "$effective_deployment_config" || fail "the ignored effective deployment config could not be prepared"
+if ! vercel inspect "https://${public_generated_domain}" --format=json >"$stable_origin_before_report" 2>"$command_log"; then
+  fail "the stable public Vercel origin could not be inspected before deployment"
+fi
+if ! stable_origin_deployment_id="$(node -e '
+  const fs = require("node:fs");
+  const report = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+  const valid = /^dpl_[A-Za-z0-9]+$/.test(report.id ?? "") && report.name === process.argv[2] && report.target === "production" && report.readyState === "READY";
+  if (!valid) process.exit(1);
+  process.stdout.write(report.id);
+' "$stable_origin_before_report" "$public_project" 2>/dev/null)"; then
+  fail "the stable public Vercel origin did not resolve to a READY Production deployment"
+fi
+deployment_git_metadata=(
+  --meta "githubDeployment=1"
+  --meta "githubCommitSha=${accepted_sha}"
+  --meta "githubCommitRef=${accepted_branch}"
+  --meta "githubCommitRepo=trendsfast"
+  --meta "githubCommitOrg=meestierolff"
+)
+if ! TRENDSFAST_VERCEL_CONFIG_PROFILE=public vercel deploy --prod --skip-domain --yes -A apps/web/vercel.hobby.json "${deployment_git_metadata[@]}" >"$deployment_output" 2>"$command_log"; then
   fail "the public Hobby Production deployment failed"
+fi
+if ! node -e '
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const { isDeepStrictEqual } = require("node:util");
+  const parentMetadata = fs.lstatSync(path.dirname(process.argv[1]));
+  const actualMetadata = fs.lstatSync(process.argv[1]);
+  if (!parentMetadata.isDirectory() || parentMetadata.isSymbolicLink() || !actualMetadata.isFile() || actualMetadata.isSymbolicLink() || actualMetadata.size > 64 * 1024) process.exit(1);
+  const actual = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+  const expected = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+  process.exit(isDeepStrictEqual(actual, expected) ? 0 : 1);
+' "$effective_deployment_config" "$deployment_config" >/dev/null 2>&1; then
+  fail "the effective public deployment config did not match the reviewed Hobby profile"
 fi
 if ! deployment_url="$(node -e '
   const fs = require("node:fs");
@@ -338,11 +414,23 @@ if ! node -e '
   const fs = require("node:fs");
   const report = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
   const expectedHost = new URL(process.argv[6]).hostname;
+  const aliases = [
+    ...(Array.isArray(report.alias) ? report.alias : []),
+    ...(Array.isArray(report.automaticAliases) ? report.automaticAliases : []),
+  ];
+  const expectedStagedAlias = (value) =>
+    typeof value === "string" &&
+    value !== "trendsfast.vercel.app" &&
+    /^trendsfast(?:-[a-z0-9]+)*-clarios-projects-05f6a57e\.vercel\.app$/.test(value);
   const valid =
     report.id === process.argv[2] &&
     report.projectId === process.argv[3] &&
     report.name === process.argv[4] &&
+    report.meta?.githubDeployment === "1" &&
     report.meta?.githubCommitSha === process.argv[5] &&
+    report.meta?.githubCommitRef === process.argv[7] &&
+    report.meta?.githubCommitRepo === "trendsfast" &&
+    report.meta?.githubCommitOrg === "meestierolff" &&
     report.plan === "hobby" &&
     report.target === "production" &&
     report.readyState === "READY" &&
@@ -351,18 +439,17 @@ if ! node -e '
     report.regions.length === 1 &&
     report.regions[0] === "fra1" &&
     Array.isArray(report.crons) &&
-    report.crons.length === 1 &&
-    report.crons[0]?.path === "/api/cron/monitoring" &&
-    report.crons[0]?.schedule === "0 7 * * *" &&
+    report.crons.length === 0 &&
     report.config?.functionType === "fluid" &&
     report.config?.functionTimeout === 300 &&
-    report.autoAssignCustomDomains !== true &&
+    report.autoAssignCustomDomains === false &&
     Array.isArray(report.alias) &&
-    report.alias.length === 0 &&
+    report.alias.length === 1 &&
     Array.isArray(report.automaticAliases) &&
-    report.automaticAliases.length === 0;
+    report.automaticAliases.length === 1 &&
+    aliases.every(expectedStagedAlias);
   process.exit(valid ? 0 : 1);
-' "$deployment_api_report" "$deployment_id" "$public_project_id" "$public_project" "$accepted_sha" "$deployment_url" >/dev/null 2>&1; then
+' "$deployment_api_report" "$deployment_id" "$public_project_id" "$public_project" "$accepted_sha" "$deployment_url" "$accepted_branch" >/dev/null 2>&1; then
   fail "the public deployment provenance does not match the accepted SHA and pinned project"
 fi
 cron_state_verified="false"
@@ -381,9 +468,7 @@ for ((cron_readback_attempt = 1; cron_readback_attempt <= cron_readback_attempts
         crons.deploymentId === process.argv[3] &&
         crons.disabledAt === null &&
         Array.isArray(definitions) &&
-        definitions.length === 1 &&
-        definitions[0]?.path === "/api/cron/monitoring" &&
-        definitions[0]?.schedule === "0 7 * * *";
+        definitions.length === 0;
       process.exit(valid ? 0 : 1);
     ' "$postdeploy_project_report" "$public_project_id" "$deployment_id" >/dev/null 2>&1; then
     cron_state_verified="true"
@@ -394,8 +479,21 @@ for ((cron_readback_attempt = 1; cron_readback_attempt <= cron_readback_attempts
   fi
 done
 if [[ "$cron_state_verified" != "true" ]]; then
-  fail "the public project did not register the exact active Hobby cron for the new deployment"
+  fail "the public project did not retain the exact inactive staged Hobby cron state for the new deployment"
 fi
+if ! vercel inspect "https://${public_generated_domain}" --format=json >"$stable_origin_after_report" 2>"$command_log"; then
+  fail "the stable public Vercel origin could not be inspected after deployment"
+fi
+if ! node -e '
+  const fs = require("node:fs");
+  const report = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+  const valid = report.id === process.argv[2] && report.name === process.argv[3] && report.target === "production" && report.readyState === "READY";
+  process.exit(valid ? 0 : 1);
+' "$stable_origin_after_report" "$stable_origin_deployment_id" "$public_project" >/dev/null 2>&1; then
+  fail "the staged deployment changed the stable public Vercel origin"
+fi
+restore_effective_deployment_config || fail "the prior ignored effective deployment config could not be restored"
+# shellcheck disable=SC2016
 if ! node -e '
   const fs = require("node:fs");
   const path = require("node:path");

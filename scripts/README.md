@@ -34,9 +34,21 @@ vercel deploy --prod --skip-domain --yes -A apps/web/vercel.hobby.json
 ```
 
 It inspects the resulting immutable Production deployment and verifies the
-Git SHA before printing only its safe URL and deployment ID. Because it uses
+five-field Git attestation (`githubDeployment`, accepted SHA and branch, pinned
+repository and owner) before printing only its safe URL and deployment ID. The
+attestation is passed through a quoted Bash array and is derived only from Git
+state the script already verified independently. Because the command uses
 `--skip-domain`, it does not promote the deployment or change the stable
-generated alias. On success it atomically adds the safe public deployment host
+generated alias; the script proves that boundary by requiring the stable origin
+to resolve to the same READY Production deployment before and after the staged
+deploy. Vercel keeps this as a staged Production deployment: domain
+auto-assignment stays off and the project cron record remains bound to the new
+deployment with no active definitions until it becomes Current. The script
+temporarily preserves any prior ignored CLI-compiled config, requires CLI 58 to
+recreate an exact semantic copy of the tracked public profile for this deploy,
+and restores the prior ignored state. The tracked public config still pins the
+sole daily Hobby cron, whose active registration must be verified after
+promotion. On success the script atomically adds the safe public deployment host
 and ID to the private release contract for the ops provenance fence.
 
 `deploy-hobby-ops.sh` requires that public provenance, pins the
@@ -48,10 +60,13 @@ setting, generated-domain-only inventory, cron-free
 vercel deploy --prod --yes -A apps/web/vercel.ops.json
 ```
 
+It applies the same fresh CLI-compiled-config proof against the tracked
+cron-free ops profile and restores any prior ignored compiled file.
+
 It temporarily relinks the checkout to the ops project, then restores the
 original public `.vercel/project.json` byte-for-byte on success or failure. It
 prints only the stable app-authenticated ops alias and deployment ID after
-accepted-SHA inspection of the unique deployment URL.
+all five Git attestation fields are read back from the unique deployment URL.
 Vercel Standard Authentication does not protect Production aliases on Hobby,
 so this read-back is not the founder-access proof. The application boundary is
 the high-entropy `OPS_TOKEN` admission check, signed ops session, and exact
