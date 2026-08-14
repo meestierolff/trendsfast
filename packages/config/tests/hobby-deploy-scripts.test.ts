@@ -544,6 +544,7 @@ if (args[0] === "--version") {
       cronReadCount: Number(readOptionalHarnessFile(counterPath) || "0"),
       sleepLog: readOptionalHarnessFile(join(state, "sleep.log")),
       vercelLog: readOptionalHarnessFile(join(state, "vercel.log")),
+      pnpmLog: readOptionalHarnessFile(join(state, "pnpm.log")),
       restoredLink: readFileSync(join(vercelDirectory, "project.json"), "utf8"),
       restoredReadme: readFileSync(join(vercelDirectory, "README.txt"), "utf8"),
       originalLink,
@@ -566,7 +567,7 @@ function embeddedEnvironmentNames(script: string): string[] {
   return match[1].split("\n");
 }
 
-function harnessVercelCalls(log: string): string[][] {
+function harnessCommandCalls(log: string): string[][] {
   return log
     .trim()
     .split("\n")
@@ -805,8 +806,8 @@ describe("founder-only Hobby deployment scripts", () => {
     expect(publicResult.status).toBe(0);
     expect(opsResult.status).toBe(0);
 
-    const publicCalls = harnessVercelCalls(publicResult.vercelLog);
-    const opsCalls = harnessVercelCalls(opsResult.vercelLog);
+    const publicCalls = harnessCommandCalls(publicResult.vercelLog);
+    const opsCalls = harnessCommandCalls(opsResult.vercelLog);
     const publicDeploys = publicCalls.filter((args) => args[0] === "deploy");
     const opsDeploys = opsCalls.filter((args) => args[0] === "deploy");
     expect(publicDeploys).toHaveLength(1);
@@ -934,7 +935,7 @@ describe("founder-only Hobby deployment scripts", () => {
             : "FAIL: the ignored effective deployment config is unsafe\n",
         );
         expect(
-          harnessVercelCalls(result.vercelLog).filter((args) => args[0] === "deploy"),
+          harnessCommandCalls(result.vercelLog).filter((args) => args[0] === "deploy"),
         ).toHaveLength(0);
         expect(`${result.stdout}${result.stderr}`).not.toContain(redactionCanary);
       }
@@ -1033,7 +1034,7 @@ describe("founder-only Hobby deployment scripts", () => {
     expect(publicScript).toContain("report.id === process.argv[2]");
 
     const accepted = runDeployHarness({ target: "public", staleCronReads: 0 });
-    const stableReads = harnessVercelCalls(accepted.vercelLog).filter(
+    const stableReads = harnessCommandCalls(accepted.vercelLog).filter(
       (args) => args[0] === "inspect" && args[1] === "https://trendsfast.vercel.app",
     );
     expect(accepted.status).toBe(0);
@@ -1052,7 +1053,7 @@ describe("founder-only Hobby deployment scripts", () => {
     expect(`${reassigned.stdout}${reassigned.stderr}`).not.toContain(redactionCanary);
   }, 30_000);
 
-  it("accepts only pinned ops aliases, polls away stale cron state, and restores the public link", () => {
+  it("forwards exact ops provenance arguments, accepts only pinned aliases, and restores the public link", () => {
     const result = runDeployHarness({ target: "ops", staleCronReads: 1 });
     expect(result.status).toBe(0);
     expect(result.cronReadCount).toBe(2);
@@ -1063,6 +1064,16 @@ describe("founder-only Hobby deployment scripts", () => {
       "Deployment URL: https://trendsfast-ops.vercel.app\nDeployment ID: dpl_OpsNew\n",
     );
     expect(result.stdout).not.toContain("trendsfast-ops-new.vercel.app");
+    expect(
+      harnessCommandCalls(result.pnpmLog).filter((args) => args[1] === "env:update-ops-provenance"),
+    ).toEqual([
+      [
+        "--silent",
+        "env:update-ops-provenance",
+        "trendsfast-public-accepted.vercel.app",
+        "dpl_PublicAccepted",
+      ],
+    ]);
     expect(`${result.stdout}${result.stderr}`).not.toContain(redactionCanary);
   }, 30_000);
 
@@ -1114,8 +1125,9 @@ describe("founder-only Hobby deployment scripts", () => {
     expect(publicScript).toContain("publicDeploymentId");
     expect(publicScript).toContain("fs.renameSync(temporary, target)");
     expect(opsScript).toContain(
-      'pnpm --silent env:update-ops-provenance -- "$public_deployment_host" "$public_deployment_id"',
+      'pnpm --silent env:update-ops-provenance "$public_deployment_host" "$public_deployment_id"',
     );
+    expect(opsScript).not.toMatch(/env:update-ops-provenance[ \t]+--(?:[ \t]|$)/u);
     expect(opsScript).toContain('vercel api "/v13/deployments/${public_deployment_id}" --raw');
     expect(opsScript).toContain("deployment.meta?.githubCommitSha === process.argv[5]");
     expect(opsScript).not.toMatch(/vercel env add PUBLIC_DEPLOYMENT_(?:HOST|ID)/u);
