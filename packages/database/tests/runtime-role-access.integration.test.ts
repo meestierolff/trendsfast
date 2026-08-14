@@ -2,14 +2,31 @@ import { randomUUID } from "node:crypto";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createDatabaseClient, createRepositories } from "../src/index";
+import { createDatabaseClient, createRepositories, DATABASE_ROLES } from "../src/index";
+import {
+  assertLiveDatabaseCliIdentity,
+  databaseCliTarget,
+  resolveRuntimeRoleIntegrationEnvironment,
+  type DatabaseCliTarget,
+} from "../src/production-cli-environment";
 
 const roleDescribe = process.env.RUN_DATABASE_ROLE_INTEGRATION === "1" ? describe : describe.skip;
-const required = (name: string) => {
-  const value = process.env[name]?.trim();
-  if (!value) throw new Error(`${name} is required for runtime-role integration tests`);
-  return value;
-};
+
+async function assertExactLocalIdentity(
+  client: ReturnType<typeof createDatabaseClient>,
+  target: DatabaseCliTarget,
+) {
+  const identity = await client.pool.query<{
+    current_database: string;
+    current_user: string;
+    ssl: boolean;
+  }>(`select current_user,
+             current_database() as current_database,
+             coalesce((select ssl from pg_stat_ssl where pid = pg_backend_pid()), false) as ssl`);
+  const record = identity.rows[0];
+  assertLiveDatabaseCliIdentity(record, target);
+  if (record.ssl) throw new Error("Runtime-role integration unexpectedly negotiated TLS");
+}
 
 roleDescribe("real PostgreSQL runtime-role behavior", () => {
   let client: ReturnType<typeof createDatabaseClient>;
@@ -29,9 +46,30 @@ roleDescribe("real PostgreSQL runtime-role behavior", () => {
   };
 
   beforeAll(async () => {
+    const execution = resolveRuntimeRoleIntegrationEnvironment();
+    const publicTarget = databaseCliTarget({
+      execution,
+      variable: "DATABASE_URL",
+      productionEndpoint: "transaction-pooler",
+      productionRole: DATABASE_ROLES.public,
+      ciRole: DATABASE_ROLES.public,
+    });
+    const retentionTarget = databaseCliTarget({
+      execution,
+      variable: "RETENTION_DATABASE_URL",
+      productionEndpoint: "transaction-pooler",
+      productionRole: DATABASE_ROLES.retention,
+      ciRole: DATABASE_ROLES.retention,
+    });
+    const adminTarget = databaseCliTarget({
+      execution,
+      variable: "DIRECT_DATABASE_URL",
+      productionEndpoint: "direct-or-session",
+      productionRole: DATABASE_ROLES.migrator,
+      ciRole: DATABASE_ROLES.migrator,
+    });
     client = createDatabaseClient({
-      connectionString: required("DATABASE_URL"),
-      ...(process.env.DATABASE_SSL_CA?.trim() ? { sslCa: process.env.DATABASE_SSL_CA.trim() } : {}),
+      connectionString: publicTarget.connectionString,
       maxConnections: 1,
       applicationName: "trendsfast-public-role-integration",
     });
@@ -39,21 +77,20 @@ roleDescribe("real PostgreSQL runtime-role behavior", () => {
       apiKeyPepper: "runtime-role-integration-pepper-at-least-32-characters",
     });
     retentionClient = createDatabaseClient({
-      connectionString: required("RETENTION_DATABASE_URL"),
-      ...(process.env.DATABASE_SSL_CA?.trim() ? { sslCa: process.env.DATABASE_SSL_CA.trim() } : {}),
+      connectionString: retentionTarget.connectionString,
       maxConnections: 1,
       applicationName: "trendsfast-retention-role-integration",
     });
     adminClient = createDatabaseClient({
-      connectionString: required(
-        process.env.ROLE_ADMIN_DATABASE_URL?.trim()
-          ? "ROLE_ADMIN_DATABASE_URL"
-          : "DIRECT_DATABASE_URL",
-      ),
-      ...(process.env.DATABASE_SSL_CA?.trim() ? { sslCa: process.env.DATABASE_SSL_CA.trim() } : {}),
+      connectionString: adminTarget.connectionString,
       maxConnections: 1,
       applicationName: "trendsfast-runtime-role-integration-setup",
     });
+    await Promise.all([
+      assertExactLocalIdentity(client, publicTarget),
+      assertExactLocalIdentity(retentionClient, retentionTarget),
+      assertExactLocalIdentity(adminClient, adminTarget),
+    ]);
     await adminClient.pool.query(
       `insert into public.provider_verification_records(
          id, source, provider, state, credential_mode, deployment_environment,

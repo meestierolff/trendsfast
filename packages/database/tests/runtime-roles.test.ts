@@ -283,8 +283,10 @@ describe("hosted least-privilege database roles", () => {
       fileURLToPath(new URL("../../../scripts/db/provision-runtime-roles.ts", import.meta.url)),
       "utf8",
     );
+    expect(provisioner).toContain('resolveDatabaseCliEnvironment("provision-runtime-roles")');
+    expect(provisioner).toContain('ciRole: "trendsfast_managed_operator"');
     expect(provisioner).toContain(
-      'loadPinnedProductionDatabaseEnvironment("provision-runtime-roles")',
+      'target.mode === "ci-integration" && (operatorIsSuperuser || !operatorCanCreateRoles)',
     );
     expect(provisioner).toContain("passwordsPrinted: false");
     expect(provisioner).toContain('operatorIsSuperuser ? "NOSUPERUSER " : ""');
@@ -311,12 +313,29 @@ describe("hosted least-privilege database roles", () => {
     expect(verifier).toContain("!managedCreatorMembership(membership)");
     expect(verifier).toContain('membership.member === "postgres"');
     expect(verifier).toContain('membership.grantor === "supabase_admin"');
+    expect(verifier).toContain('membership.member === "trendsfast_managed_operator"');
+    expect(verifier).toContain('membership.grantor === "trendsfast"');
+    expect(verifier).toContain("role.rolcreaterole as operator_can_create_roles");
+    expect(verifier).toContain("role.rolsuper as operator_is_superuser");
     expect(verifier).not.toContain("information_schema");
     expect(verifier).toContain('["anon", "authenticated", "service_role"]');
     expect(verifier).toContain("unsafeMigratorDefaults");
     expect(verifier).toContain("coalesce(defaults.defaclacl, acldefault");
     expect(verifier).toContain("schema_additions");
     expect(verifier).toContain("migratorDefaultAclClean: true");
+    expect(verifier).toContain("throw new RuntimeRoleUnsafeDefaultAclError()");
+    expect(verifier).toContain("runtimeRoleVerificationFailureCategory(error)");
+
+    const workflow = readFileSync(
+      fileURLToPath(new URL("../../../.github/workflows/ci.yml", import.meta.url)),
+      "utf8",
+    );
+    expect(workflow).toContain(
+      `grep -Fxq '{"ok":false,"error":"RUNTIME_ROLE_UNSAFE_DEFAULT_ACL"}'`,
+    );
+    expect(workflow).not.toContain(
+      "The migrator has unsafe PUBLIC or Supabase Data API default privileges",
+    );
   });
 
   it("looks up named PostgreSQL functions by their type-only argument signature", () => {

@@ -5,6 +5,15 @@ import { fileURLToPath } from "node:url";
 
 import { parse } from "dotenv";
 
+import {
+  assertLiveProductionDatabaseIdentity,
+  assertProductionDatabaseTarget,
+  type ProductionDatabaseEndpoint,
+  type ProductionDatabaseIdentity,
+  type ProductionDatabaseTarget,
+} from "./production-target";
+import { DATABASE_ROLES } from "./runtime-roles";
+
 const DEFAULT_REPOSITORY_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const MAX_PRIVATE_INVENTORY_BYTES = 512 * 1024;
 
@@ -35,6 +44,45 @@ const RUNTIME_SECRET_NAMES = [
   "TRENDSFAST_RETENTION_RUNTIME_PASSWORD",
 ] as const;
 
+const CI_INTEGRATION_DATABASE_HOST = "127.0.0.1" as const;
+const CI_INTEGRATION_DATABASE_PORT = "5432" as const;
+const CI_INTEGRATION_DATABASE_NAME = "trendsfast" as const;
+const CI_INTEGRATION_ROLE_ADMIN = "trendsfast_managed_operator" as const;
+const CI_INTEGRATION_URL_SHAPE =
+  /^postgresql:\/\/[a-z_]+:[^\s@/?#]+@127\.0\.0\.1:5432\/trendsfast$/u;
+const CI_SIGNAL_NAMES = [
+  "CI",
+  "RUN_DATABASE_INTEGRATION",
+  "RUN_DATABASE_ROLE_INTEGRATION",
+  "ALLOW_LOCAL_ROLE_VERIFICATION",
+] as const;
+
+type CiIntegrationDatabaseIdentity =
+  typeof CI_INTEGRATION_ROLE_ADMIN | (typeof DATABASE_ROLES)[keyof typeof DATABASE_ROLES];
+
+type CiIntegrationDatabaseTarget = {
+  readonly mode: "ci-integration";
+  readonly connectionString: string;
+  readonly expectedDatabase: typeof CI_INTEGRATION_DATABASE_NAME;
+  readonly expectedRole: CiIntegrationDatabaseIdentity;
+  readonly sslCa: undefined;
+};
+
+export type DatabaseCliTarget =
+  ({ readonly mode: "production" } & ProductionDatabaseTarget) | CiIntegrationDatabaseTarget;
+
+export type ResolvedDatabaseCliEnvironment = {
+  readonly mode: "production" | "ci-integration";
+  readonly environment: Readonly<Record<string, string | undefined>>;
+};
+
+export interface ResolveDatabaseCliEnvironmentOptions {
+  readonly ambient?: Readonly<Record<string, string | undefined>>;
+  readonly loadProduction?: (
+    profile: ProductionDatabaseCliProfile,
+  ) => Readonly<Record<string, string>>;
+}
+
 export type ProductionDatabaseCliProfile =
   "migrate" | "provision-runtime-roles" | "verify-hosted" | "verify-runtime-roles";
 
@@ -44,8 +92,247 @@ export interface PinnedProductionEnvironmentOptions {
   readonly repositoryRoot?: string;
 }
 
+export class RuntimeRoleUnsafeDefaultAclError extends Error {
+  constructor() {
+    super("The migrator default ACL is unsafe");
+    this.name = "RuntimeRoleUnsafeDefaultAclError";
+  }
+}
+
+export function runtimeRoleVerificationFailureCategory(
+  error: unknown,
+): "RUNTIME_ROLE_UNSAFE_DEFAULT_ACL" | "RUNTIME_ROLE_VERIFICATION_FAILED" {
+  return error instanceof RuntimeRoleUnsafeDefaultAclError
+    ? "RUNTIME_ROLE_UNSAFE_DEFAULT_ACL"
+    : "RUNTIME_ROLE_VERIFICATION_FAILED";
+}
+
 function fail(message: string): never {
   throw new Error(message);
+}
+
+function ciIntegrationConnection(
+  environment: Readonly<Record<string, string | undefined>>,
+  variable: string,
+  expectedRole: string,
+): string {
+  const connectionString = environment[variable];
+  if (
+    !connectionString ||
+    connectionString !== connectionString.trim() ||
+    !CI_INTEGRATION_URL_SHAPE.test(connectionString)
+  ) {
+    fail(`${variable} must be an exact local CI PostgreSQL URL`);
+  }
+
+  let url: URL;
+  try {
+    url = new URL(connectionString);
+  } catch {
+    return fail(`${variable} must be an exact local CI PostgreSQL URL`);
+  }
+  if (
+    url.protocol !== "postgresql:" ||
+    url.hostname !== CI_INTEGRATION_DATABASE_HOST ||
+    url.port !== CI_INTEGRATION_DATABASE_PORT ||
+    url.pathname !== `/${CI_INTEGRATION_DATABASE_NAME}` ||
+    url.search ||
+    url.hash ||
+    url.username !== expectedRole ||
+    !url.password
+  ) {
+    fail(`${variable} must identify the exact local CI database and role`);
+  }
+  return connectionString;
+}
+
+function localProfileEnvironment(
+  profile: ProductionDatabaseCliProfile,
+  ambient: Readonly<Record<string, string | undefined>>,
+): Readonly<Record<string, string | undefined>> {
+  if (ambient.CI !== "true" || ambient.RUN_DATABASE_INTEGRATION !== "1") {
+    fail("Local database tooling requires the exact CI integration gates");
+  }
+  if (ambient.RUN_DATABASE_ROLE_INTEGRATION !== undefined) {
+    fail("Database CLI verification cannot reuse the write-capable integration-test gate");
+  }
+  const roleProfile = profile === "provision-runtime-roles" || profile === "verify-runtime-roles";
+  if (
+    (roleProfile && ambient.ALLOW_LOCAL_ROLE_VERIFICATION !== "YES") ||
+    (!roleProfile && ambient.ALLOW_LOCAL_ROLE_VERIFICATION !== undefined)
+  ) {
+    fail("Local role tooling requires its exact explicit verification gate");
+  }
+  if (ambient.DATABASE_SSL_CA !== undefined || ambient.RUNTIME_ROLE_SECRETS_FILE !== undefined) {
+    fail("Local CI database tooling must not carry production database overrides");
+  }
+
+  const selected: Record<string, string> = {
+    CI: "true",
+    RUN_DATABASE_INTEGRATION: "1",
+  };
+  if (roleProfile) selected.ALLOW_LOCAL_ROLE_VERIFICATION = "YES";
+
+  const selectConnection = (variable: string, expectedRole: string) => {
+    selected[variable] = ciIntegrationConnection(ambient, variable, expectedRole);
+  };
+
+  if (profile === "migrate") {
+    fail("Migration CI environment resolution is owned by the migration entrypoint");
+  }
+  if (profile === "verify-hosted") {
+    const forbidden = [
+      "ROLE_ADMIN_DATABASE_URL",
+      ...RUNTIME_URL_NAMES.filter((name) => name !== "DATABASE_URL"),
+      ...RUNTIME_SECRET_NAMES,
+    ] as const;
+    if (forbidden.some((name) => ambient[name] !== undefined)) {
+      fail("Local hosted-schema verification has ambiguous database role values");
+    }
+    selectConnection("DATABASE_URL", CI_INTEGRATION_ROLE_ADMIN);
+    selectConnection("DIRECT_DATABASE_URL", DATABASE_ROLES.migrator);
+    return Object.freeze(selected);
+  }
+
+  selectConnection("ROLE_ADMIN_DATABASE_URL", CI_INTEGRATION_ROLE_ADMIN);
+  selectConnection("DIRECT_DATABASE_URL", CI_INTEGRATION_ROLE_ADMIN);
+  if (selected.ROLE_ADMIN_DATABASE_URL !== selected.DIRECT_DATABASE_URL) {
+    fail("The local CI role administrator must identify one exact connection");
+  }
+  selectConnection("DATABASE_URL", DATABASE_ROLES.public);
+  selectConnection("MEMBER_DATABASE_URL", DATABASE_ROLES.member);
+  selectConnection("OPS_DATABASE_URL", DATABASE_ROLES.ops);
+  selectConnection("WORKER_DATABASE_URL", DATABASE_ROLES.worker);
+  selectConnection("BILLING_DATABASE_URL", DATABASE_ROLES.billing);
+  selectConnection("AUTH_DATABASE_URL", DATABASE_ROLES.auth);
+  selectConnection("RETENTION_DATABASE_URL", DATABASE_ROLES.retention);
+
+  if (profile === "provision-runtime-roles") {
+    for (const name of RUNTIME_SECRET_NAMES) {
+      const value = ambient[name];
+      if (!value) fail("Local CI role provisioning requires every explicit role secret");
+      selected[name] = value;
+    }
+  }
+  return Object.freeze(selected);
+}
+
+export function resolveDatabaseCliEnvironment(
+  profile: ProductionDatabaseCliProfile,
+  options: ResolveDatabaseCliEnvironmentOptions = {},
+): ResolvedDatabaseCliEnvironment {
+  const ambient = options.ambient ?? process.env;
+  const hasCiSignal = CI_SIGNAL_NAMES.some((name) => ambient[name] !== undefined);
+  if (hasCiSignal) {
+    return Object.freeze({
+      mode: "ci-integration" as const,
+      environment: localProfileEnvironment(profile, ambient),
+    });
+  }
+  const loadProduction =
+    options.loadProduction ??
+    ((selectedProfile) => loadPinnedProductionDatabaseEnvironment(selectedProfile));
+  return Object.freeze({
+    mode: "production" as const,
+    environment: loadProduction(profile),
+  });
+}
+
+export function resolveRuntimeRoleIntegrationEnvironment(
+  ambient: Readonly<Record<string, string | undefined>> = process.env,
+): ResolvedDatabaseCliEnvironment {
+  if (
+    ambient.CI !== "true" ||
+    ambient.RUN_DATABASE_INTEGRATION !== "1" ||
+    ambient.RUN_DATABASE_ROLE_INTEGRATION !== "1"
+  ) {
+    fail("Runtime-role integration requires all three exact CI gates");
+  }
+  if (
+    ambient.ALLOW_LOCAL_ROLE_VERIFICATION !== undefined ||
+    ambient.DATABASE_SSL_CA !== undefined ||
+    ambient.RUNTIME_ROLE_SECRETS_FILE !== undefined ||
+    (ambient.ROLE_ADMIN_DATABASE_URL !== undefined && ambient.ROLE_ADMIN_DATABASE_URL !== "")
+  ) {
+    fail("Runtime-role integration must not carry hosted database controls");
+  }
+  if (RUNTIME_SECRET_NAMES.some((name) => ambient[name] !== undefined)) {
+    fail("Runtime-role integration must not carry role-provisioning secrets");
+  }
+
+  const selected: Record<string, string> = {
+    CI: "true",
+    RUN_DATABASE_INTEGRATION: "1",
+    RUN_DATABASE_ROLE_INTEGRATION: "1",
+  };
+  const selectConnection = (variable: string, expectedRole: string) => {
+    selected[variable] = ciIntegrationConnection(ambient, variable, expectedRole);
+  };
+  selectConnection("DIRECT_DATABASE_URL", DATABASE_ROLES.migrator);
+  selectConnection("DATABASE_URL", DATABASE_ROLES.public);
+  selectConnection("MEMBER_DATABASE_URL", DATABASE_ROLES.member);
+  selectConnection("OPS_DATABASE_URL", DATABASE_ROLES.ops);
+  selectConnection("WORKER_DATABASE_URL", DATABASE_ROLES.worker);
+  selectConnection("BILLING_DATABASE_URL", DATABASE_ROLES.billing);
+  selectConnection("AUTH_DATABASE_URL", DATABASE_ROLES.auth);
+  selectConnection("RETENTION_DATABASE_URL", DATABASE_ROLES.retention);
+  return Object.freeze({
+    mode: "ci-integration" as const,
+    environment: Object.freeze(selected),
+  });
+}
+
+export function databaseCliTarget(input: {
+  readonly execution: ResolvedDatabaseCliEnvironment;
+  readonly variable: string;
+  readonly productionEndpoint: ProductionDatabaseEndpoint;
+  readonly productionRole: ProductionDatabaseIdentity;
+  readonly ciRole: CiIntegrationDatabaseIdentity;
+}): DatabaseCliTarget {
+  const connectionString = input.execution.environment[input.variable];
+  if (input.execution.mode === "production") {
+    return {
+      mode: "production",
+      ...assertProductionDatabaseTarget({
+        connectionString,
+        endpoint: input.productionEndpoint,
+        expectedRole: input.productionRole,
+        sslCa: input.execution.environment.DATABASE_SSL_CA,
+      }),
+    };
+  }
+  return {
+    mode: "ci-integration",
+    connectionString: ciIntegrationConnection(
+      input.execution.environment,
+      input.variable,
+      input.ciRole,
+    ),
+    expectedDatabase: CI_INTEGRATION_DATABASE_NAME,
+    expectedRole: input.ciRole,
+    sslCa: undefined,
+  };
+}
+
+export function assertLiveDatabaseCliIdentity<
+  RecordType extends { readonly current_database?: unknown; readonly current_user?: unknown },
+>(
+  record: RecordType | undefined,
+  target: DatabaseCliTarget,
+): asserts record is RecordType & {
+  readonly current_database: string;
+  readonly current_user: string;
+} {
+  if (target.mode === "production") {
+    assertLiveProductionDatabaseIdentity(record, target.expectedRole);
+    return;
+  }
+  if (
+    record?.current_database !== target.expectedDatabase ||
+    record.current_user !== target.expectedRole
+  ) {
+    fail("The live PostgreSQL identity does not match the exact local CI target");
+  }
 }
 
 function defaultIgnored(root: string, relativePath: string): boolean {

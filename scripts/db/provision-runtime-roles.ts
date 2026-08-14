@@ -2,8 +2,6 @@ import {
   APPLICATION_FUNCTIONS,
   APPLICATION_TABLES,
   APPLICATION_TYPES,
-  assertLiveProductionDatabaseIdentity,
-  assertProductionDatabaseTarget,
   createDatabaseClient,
   DATABASE_ROLES,
   RUNTIME_COLUMN_PRIVILEGES,
@@ -11,7 +9,11 @@ import {
   type DatabaseRoleKind,
   type PoolClient,
 } from "@trendsfast/database";
-import { loadPinnedProductionDatabaseEnvironment } from "@trendsfast/database/production-cli-environment";
+import {
+  assertLiveDatabaseCliIdentity,
+  databaseCliTarget,
+  resolveDatabaseCliEnvironment,
+} from "@trendsfast/database/production-cli-environment";
 
 import { verifyRuntimeRoleState } from "./verify-runtime-roles";
 
@@ -369,26 +371,23 @@ async function applyRuntimeGrants(client: PoolClient) {
 }
 
 async function main() {
-  const environment = loadPinnedProductionDatabaseEnvironment("provision-runtime-roles");
+  const execution = resolveDatabaseCliEnvironment("provision-runtime-roles");
+  const { environment } = execution;
   const roleAdminUrl = environment.ROLE_ADMIN_DATABASE_URL;
   const roleAdminConfigured = Boolean(roleAdminUrl?.trim());
-  const connectionString = roleAdminConfigured ? roleAdminUrl : environment.DIRECT_DATABASE_URL;
-  if (!connectionString?.trim()) {
-    throw new Error("ROLE_ADMIN_DATABASE_URL or DIRECT_DATABASE_URL is required");
-  }
-  const expectedOperator = roleAdminConfigured ? "postgres" : DATABASE_ROLES.migrator;
-  const target = assertProductionDatabaseTarget({
-    connectionString,
-    endpoint: "direct-or-session",
-    expectedRole: expectedOperator,
-    sslCa: environment.DATABASE_SSL_CA,
+  const target = databaseCliTarget({
+    execution,
+    variable: roleAdminConfigured ? "ROLE_ADMIN_DATABASE_URL" : "DIRECT_DATABASE_URL",
+    productionEndpoint: "direct-or-session",
+    productionRole: roleAdminConfigured ? "postgres" : DATABASE_ROLES.migrator,
+    ciRole: "trendsfast_managed_operator",
   });
   const passwords = Object.fromEntries(
     allKinds.map((kind) => [kind, requiredPassword(environment, kind)]),
   ) as Record<DatabaseRoleKind, string>;
   const database = createDatabaseClient({
     connectionString: target.connectionString,
-    sslCa: target.sslCa,
+    ...(target.sslCa ? { sslCa: target.sslCa } : {}),
     maxConnections: 1,
     applicationName: "trendsfast-role-provisioner",
   });
@@ -409,14 +408,21 @@ async function main() {
          from pg_roles role
         where role.rolname = current_user`,
     );
-    assertLiveProductionDatabaseIdentity(operator.rows[0], target.expectedRole);
+    assertLiveDatabaseCliIdentity(operator.rows[0], target);
     const operatorIsSuperuser = operator.rows[0]?.rolsuper === true;
     const operatorCanCreateRoles = operator.rows[0]?.rolcreaterole === true;
     const serverVersion = Number(operator.rows[0]?.server_version_num ?? "0");
     if (!Number.isSafeInteger(serverVersion) || serverVersion < 150000) {
       throw new Error("Role provisioning requires PostgreSQL 15 or newer");
     }
-    if (target.expectedRole !== "postgres" && (operatorIsSuperuser || operatorCanCreateRoles)) {
+    if (target.mode === "ci-integration" && (operatorIsSuperuser || !operatorCanCreateRoles)) {
+      throw new Error("The local CI role administrator has unexpected capabilities");
+    }
+    if (
+      target.mode === "production" &&
+      target.expectedRole !== "postgres" &&
+      (operatorIsSuperuser || operatorCanCreateRoles)
+    ) {
       throw new Error("The migrator has unexpected role-administration capability");
     }
     if (!operatorIsSuperuser && !operatorCanCreateRoles) {

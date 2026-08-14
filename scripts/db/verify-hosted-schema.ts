@@ -1,14 +1,13 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 
+import { APPLICATION_FUNCTIONS, createDatabaseClient, DATABASE_ROLES } from "@trendsfast/database";
 import {
-  APPLICATION_FUNCTIONS,
-  assertLiveProductionDatabaseIdentity,
-  assertProductionDatabaseTarget,
-  createDatabaseClient,
-  DATABASE_ROLES,
-} from "@trendsfast/database";
-import { loadPinnedProductionDatabaseEnvironment } from "@trendsfast/database/production-cli-environment";
+  assertLiveDatabaseCliIdentity,
+  databaseCliTarget,
+  resolveDatabaseCliEnvironment,
+  type ResolvedDatabaseCliEnvironment,
+} from "@trendsfast/database/production-cli-environment";
 
 import {
   compareHostedSchemaCatalog,
@@ -350,23 +349,18 @@ function difference(expected: readonly string[], actual: ReadonlySet<string>) {
   return expected.filter((value) => !actual.has(value));
 }
 
-function requireDirectTarget(environment: Readonly<Record<string, string | undefined>>) {
-  const connectionString = environment.DIRECT_DATABASE_URL;
-  if (!connectionString?.trim()) {
-    throw new Error(
-      "DIRECT_DATABASE_URL is required. Use the direct migration connection, not the pooled runtime URL.",
-    );
-  }
-  return assertProductionDatabaseTarget({
-    connectionString,
-    endpoint: "direct-or-session",
-    expectedRole: DATABASE_ROLES.migrator,
-    sslCa: environment.DATABASE_SSL_CA,
+function requireDirectTarget(execution: ResolvedDatabaseCliEnvironment) {
+  return databaseCliTarget({
+    execution,
+    variable: "DIRECT_DATABASE_URL",
+    productionEndpoint: "direct-or-session",
+    productionRole: DATABASE_ROLES.migrator,
+    ciRole: DATABASE_ROLES.migrator,
   });
 }
 
 async function main() {
-  const environment = loadPinnedProductionDatabaseEnvironment("verify-hosted");
+  const execution = resolveDatabaseCliEnvironment("verify-hosted");
   const migrationsDirectory = new URL("../../packages/database/migrations/", import.meta.url);
   const migrationFiles = (await readdir(migrationsDirectory))
     .filter((name) => /^\d{4}_.+\.sql$/.test(name))
@@ -411,10 +405,10 @@ async function main() {
   ) {
     throw new Error("Migration SQL files do not exactly match the committed Drizzle journal.");
   }
-  const target = requireDirectTarget(environment);
+  const target = requireDirectTarget(execution);
   const client = createDatabaseClient({
     connectionString: target.connectionString,
-    sslCa: target.sslCa,
+    ...(target.sslCa ? { sslCa: target.sslCa } : {}),
     maxConnections: 1,
     applicationName: "trendsfast-schema-verifier",
     connectionTimeoutMs: 10_000,
@@ -426,7 +420,7 @@ async function main() {
     const identity = await pool.query<{ current_database: string; current_user: string }>(
       "select current_user, current_database() as current_database",
     );
-    assertLiveProductionDatabaseIdentity(identity.rows[0], target.expectedRole);
+    assertLiveDatabaseCliIdentity(identity.rows[0], target);
     const [
       versionResult,
       tableResult,
