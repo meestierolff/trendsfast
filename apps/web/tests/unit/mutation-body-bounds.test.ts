@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
@@ -61,6 +61,8 @@ function streamedRequest(input: {
     duplex: "half",
   } as RequestInit & { duplex: "half" });
 }
+
+beforeEach(() => vi.stubEnv("TRENDSFAST_SURFACE", "ops"));
 
 afterEach(() => {
   vi.unstubAllEnvs();

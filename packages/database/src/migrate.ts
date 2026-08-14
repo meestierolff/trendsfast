@@ -5,41 +5,59 @@ import { migrate } from "drizzle-orm/node-postgres/migrator";
 
 import type { TrendsFastDatabase } from "./client";
 import { createDatabaseClient } from "./client";
-import { loadCliEnvironment } from "./load-cli-env";
+import { loadPinnedProductionDatabaseEnvironment } from "./production-cli-environment";
+import {
+  assertLiveProductionDatabaseIdentity,
+  assertProductionDatabaseTarget,
+  type ProductionDatabaseTarget,
+} from "./production-target";
+import { DATABASE_ROLES } from "./runtime-roles";
 
 export const DEFAULT_MIGRATIONS_FOLDER = fileURLToPath(new URL("../migrations", import.meta.url));
 
-export async function migrateDatabase(
+async function migrateDatabase(
   db: TrendsFastDatabase,
   migrationsFolder = DEFAULT_MIGRATIONS_FOLDER,
 ) {
   await migrate(db, { migrationsFolder });
 }
 
-export function migrationConnectionString(
+export function migrationTarget(
   environment: Readonly<Record<string, string | undefined>>,
-): string {
-  const value = environment.DIRECT_DATABASE_URL?.trim();
-  if (!value) {
+): ProductionDatabaseTarget {
+  const connectionString = environment.DIRECT_DATABASE_URL;
+  if (!connectionString?.trim()) {
     throw new Error(
       "DIRECT_DATABASE_URL is required for controlled database migrations; the pooled runtime URL is not accepted",
     );
   }
-  const parsed = new URL(value);
-  if (parsed.protocol !== "postgres:" && parsed.protocol !== "postgresql:") {
-    throw new Error("The migration connection must use PostgreSQL");
-  }
-  return value;
+  return assertProductionDatabaseTarget({
+    connectionString,
+    endpoint: "direct-or-session",
+    expectedRole: DATABASE_ROLES.migrator,
+    sslCa: environment.DATABASE_SSL_CA,
+  });
+}
+
+export function migrationConnectionString(
+  environment: Readonly<Record<string, string | undefined>>,
+): string {
+  return migrationTarget(environment).connectionString;
 }
 
 async function main() {
-  loadCliEnvironment();
+  const environment = loadPinnedProductionDatabaseEnvironment("migrate");
+  const target = migrationTarget(environment);
   const client = createDatabaseClient({
-    connectionString: migrationConnectionString(process.env),
-    ...(process.env.DATABASE_SSL_CA?.trim() ? { sslCa: process.env.DATABASE_SSL_CA.trim() } : {}),
+    connectionString: target.connectionString,
+    sslCa: target.sslCa,
     applicationName: "trendsfast_migrate",
   });
   try {
+    const identity = await client.pool.query<{ current_database: string; current_user: string }>(
+      "select current_user, current_database() as current_database",
+    );
+    assertLiveProductionDatabaseIdentity(identity.rows[0], target.expectedRole);
     await migrateDatabase(client.db);
     console.info("TrendsFast database migrations applied.");
   } finally {
@@ -49,5 +67,10 @@ async function main() {
 
 const entrypoint = process.argv[1];
 if (entrypoint && import.meta.url === pathToFileURL(resolve(entrypoint)).href) {
-  await main();
+  try {
+    await main();
+  } catch {
+    console.error(JSON.stringify({ ok: false, error: "DATABASE_MIGRATION_FAILED" }));
+    process.exitCode = 1;
+  }
 }

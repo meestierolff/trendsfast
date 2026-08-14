@@ -3,7 +3,7 @@ import { ProviderRunRequestSchema } from "../request-schema";
 import { PROVIDER_METADATA } from "../fixtures";
 import { normalizeXaiXSearchResponse } from "../normalization";
 import { hasRequiredCredentials } from "../runtime";
-import { finiteMetric } from "../util";
+import { finiteMetric, usdTicksToUsd } from "../util";
 import {
   boundedIntegerEnvironment,
   elapsedMilliseconds,
@@ -97,7 +97,11 @@ export function createXAdapter(): ProviderAdapter {
         outputTokens += normalized.outputTokens ?? 0;
         const response = record(data);
         const usage = record(response.usage);
-        const reportedCost = finiteMetric(usage.cost_usd ?? usage.cost ?? response.cost_usd);
+        const reportedCost =
+          usdTicksToUsd(usage.cost_in_usd_ticks) ??
+          finiteMetric(usage.cost_usd) ??
+          finiteMetric(usage.cost) ??
+          finiteMetric(response.cost_usd);
         if (reportedCost === undefined) actualCostKnown = false;
         else actualCostUsd += reportedCost;
       }

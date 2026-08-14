@@ -559,18 +559,27 @@ export const EnvironmentSchema = z
           message: "Managed mode requires API_KEY_PEPPER with at least 32 characters",
         });
       }
-      if (env.DATABASE_URL === DEFAULT_DATABASE_URL) {
+      if (env.TRENDSFAST_SURFACE === "public" && env.DATABASE_URL === DEFAULT_DATABASE_URL) {
         context.addIssue({
           code: "custom",
           path: ["DATABASE_URL"],
-          message: "Managed mode cannot use the local fixture database URL",
+          message: "The managed public surface cannot use the local fixture database URL",
         });
       }
+      if (hostedOpsSurface && !env.OPS_DATABASE_URL) {
+        context.addIssue({
+          code: "custom",
+          path: ["OPS_DATABASE_URL"],
+          message: "The hosted operations surface requires its dedicated database role URL",
+        });
+      }
+      const surfaceDatabaseUrl =
+        env.TRENDSFAST_SURFACE === "ops" ? env.OPS_DATABASE_URL : env.DATABASE_URL;
       let databaseHost = "";
       try {
-        databaseHost = new URL(env.DATABASE_URL).hostname.toLowerCase();
+        databaseHost = surfaceDatabaseUrl ? new URL(surfaceDatabaseUrl).hostname.toLowerCase() : "";
       } catch {
-        // DATABASE_URL reports its own validation issue.
+        // The selected surface URL reports its own validation issue.
       }
       if (
         databaseHost &&
@@ -585,15 +594,9 @@ export const EnvironmentSchema = z
       }
       const hostedDatabase =
         databaseHost && !["localhost", "127.0.0.1", "[::1]", "::1"].includes(databaseHost);
-      if (hostedDatabase && env.TRENDSFAST_SURFACE === "ops" && !env.OPS_DATABASE_URL) {
-        context.addIssue({
-          code: "custom",
-          path: ["OPS_DATABASE_URL"],
-          message: "The hosted operations surface requires its dedicated database role URL",
-        });
-      }
       if (
         hostedDatabase &&
+        env.TRENDSFAST_SURFACE === "public" &&
         (env.PROVIDER_CALLS_ENABLED ||
           env.MONITORING_ENABLED ||
           Boolean(env.CRON_SECRET) ||
@@ -624,9 +627,13 @@ export const EnvironmentSchema = z
       }
     }
 
+    const runtimeDatabaseUrl =
+      env.TRENDSFAST_SURFACE === "ops"
+        ? (env.OPS_DATABASE_URL ?? env.DATABASE_URL)
+        : env.DATABASE_URL;
     let runtimeDatabaseHost = "";
     try {
-      runtimeDatabaseHost = new URL(env.DATABASE_URL).hostname.toLowerCase();
+      runtimeDatabaseHost = new URL(runtimeDatabaseUrl).hostname.toLowerCase();
     } catch {
       // DATABASE_URL reports its own validation issue.
     }

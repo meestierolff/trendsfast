@@ -142,6 +142,8 @@ describe("hosted 0024 schema manifest", () => {
     expect(verifier).toContain("constraint_metadata.oid is null");
     expect(verifier).toContain("constraint_metadata.contype in ('f', 'c')");
     expect(verifier).toContain("compareHostedSchemaCatalog(expectedCatalog, actualCatalog");
+    expect(verifier).toContain('process.env.STRICT_HOSTED_SCHEMA?.trim() === "0"');
+    expect(verifier).toContain("const strictExtras = true");
     expect(verifier).toContain("readPinned0024HostedSchemaManifest(snapshot0024)");
     expect(verifier).not.toContain("information_schema");
     expect(verifier).toContain("applicationOwnerDriftResult");

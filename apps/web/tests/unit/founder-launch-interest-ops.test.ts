@@ -36,6 +36,7 @@ function authorizedRequest(body?: string) {
 beforeEach(() => {
   vi.stubEnv("APP_URL", origin);
   vi.stubEnv("SESSION_SECRET", secret);
+  vi.stubEnv("TRENDSFAST_SURFACE", "ops");
   hardDelete.mockReset().mockResolvedValue({ deleted: true });
   getRepositories.mockClear();
 });

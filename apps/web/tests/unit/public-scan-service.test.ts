@@ -142,6 +142,23 @@ describe("public scan acceptance", () => {
     ).rejects.toBeInstanceOf(PublicScanError);
   });
 
+  it("rejects an invalid URL before redeeming a one-time Turnstile token", async () => {
+    const verify = vi.fn(async () => true);
+    await expect(
+      acceptPublicScan(
+        { productUrl: "not-a-public-url", address: "203.0.113.10", turnstileToken: "one-time" },
+        {
+          repository: repository(),
+          fingerprintPepper: "pepper-pepper-pepper-pepper-pepper",
+          dailyLimit: 31,
+          turnstile: { verify },
+          ...globalPolicy,
+        },
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_URL" });
+    expect(verify).not.toHaveBeenCalled();
+  });
+
   it.each(["GLOBAL_CAPACITY_REACHED", "GLOBAL_BUDGET_REACHED"] as const)(
     "returns the stable founder-capacity error for %s",
     async (status) => {

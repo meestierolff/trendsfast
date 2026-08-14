@@ -1,20 +1,19 @@
-import { lstat } from "node:fs/promises";
-import { resolve } from "node:path";
-
 import {
   APPLICATION_FUNCTIONS,
   APPLICATION_TABLES,
   APPLICATION_TYPES,
+  assertLiveProductionDatabaseIdentity,
+  assertProductionDatabaseTarget,
   createDatabaseClient,
   DATABASE_ROLES,
-  parseCliEnvironmentFile,
   RUNTIME_COLUMN_PRIVILEGES,
   RUNTIME_TABLE_PRIVILEGES,
   type DatabaseRoleKind,
   type PoolClient,
 } from "@trendsfast/database";
+import { loadPinnedProductionDatabaseEnvironment } from "@trendsfast/database/production-cli-environment";
 
-import { loadCliEnvironment } from "../../packages/database/src/load-cli-env";
+import { verifyRuntimeRoleState } from "./verify-runtime-roles";
 
 const PASSWORD_VARIABLES: Readonly<Record<DatabaseRoleKind, string>> = {
   migrator: "TRENDSFAST_MIGRATOR_PASSWORD",
@@ -31,7 +30,6 @@ const runtimeKinds = ["public", "member", "ops", "worker", "billing", "auth", "r
 const allKinds = ["migrator", ...runtimeKinds] as const;
 const supabaseDataApiRoles = ["anon", "authenticated", "service_role"] as const;
 const identifierPattern = /^[a-z][a-z0-9_]{0,62}$/;
-const MAX_ROLE_SECRETS_FILE_BYTES = 64 * 1_024;
 
 function identifier(value: string): string {
   if (!identifierPattern.test(value)) throw new Error("Unsafe database identifier");
@@ -40,23 +38,6 @@ function identifier(value: string): string {
 
 function grantee(value: string): string {
   return value === "PUBLIC" ? "PUBLIC" : identifier(value);
-}
-
-async function privateRoleSecretEnvironment(): Promise<Readonly<Record<string, string>> | null> {
-  const configuredPath = process.env.RUNTIME_ROLE_SECRETS_FILE?.trim();
-  if (!configuredPath) return null;
-  const absolutePath = resolve(configuredPath);
-  const metadata = await lstat(absolutePath);
-  if (!metadata.isFile() || metadata.isSymbolicLink()) {
-    throw new Error("RUNTIME_ROLE_SECRETS_FILE must be a regular file");
-  }
-  if ((metadata.mode & 0o777) !== 0o600) {
-    throw new Error("RUNTIME_ROLE_SECRETS_FILE must have mode 0600");
-  }
-  if (metadata.size > MAX_ROLE_SECRETS_FILE_BYTES) {
-    throw new Error("RUNTIME_ROLE_SECRETS_FILE exceeds the bounded file size");
-  }
-  return parseCliEnvironmentFile(absolutePath);
 }
 
 function requiredPassword(
@@ -388,36 +369,70 @@ async function applyRuntimeGrants(client: PoolClient) {
 }
 
 async function main() {
-  loadCliEnvironment();
-  const privateSecrets = await privateRoleSecretEnvironment();
-  const adminUrl =
-    process.env.ROLE_ADMIN_DATABASE_URL?.trim() ?? process.env.DIRECT_DATABASE_URL?.trim();
-  if (!adminUrl) {
+  const environment = loadPinnedProductionDatabaseEnvironment("provision-runtime-roles");
+  const roleAdminUrl = environment.ROLE_ADMIN_DATABASE_URL;
+  const roleAdminConfigured = Boolean(roleAdminUrl?.trim());
+  const connectionString = roleAdminConfigured ? roleAdminUrl : environment.DIRECT_DATABASE_URL;
+  if (!connectionString?.trim()) {
     throw new Error("ROLE_ADMIN_DATABASE_URL or DIRECT_DATABASE_URL is required");
   }
+  const expectedOperator = roleAdminConfigured ? "postgres" : DATABASE_ROLES.migrator;
+  const target = assertProductionDatabaseTarget({
+    connectionString,
+    endpoint: "direct-or-session",
+    expectedRole: expectedOperator,
+    sslCa: environment.DATABASE_SSL_CA,
+  });
   const passwords = Object.fromEntries(
-    allKinds.map((kind) => [kind, requiredPassword(privateSecrets ?? process.env, kind)]),
+    allKinds.map((kind) => [kind, requiredPassword(environment, kind)]),
   ) as Record<DatabaseRoleKind, string>;
   const database = createDatabaseClient({
-    connectionString: adminUrl,
-    ...(process.env.DATABASE_SSL_CA?.trim() ? { sslCa: process.env.DATABASE_SSL_CA.trim() } : {}),
+    connectionString: target.connectionString,
+    sslCa: target.sslCa,
     maxConnections: 1,
     applicationName: "trendsfast-role-provisioner",
   });
   const client = await database.pool.connect();
   try {
-    await client.query("BEGIN");
-    const operator = await client.query<{ rolsuper: boolean; server_version_num: string }>(
-      `select role.rolsuper,
+    const operator = await client.query<{
+      current_database: string;
+      current_user: string;
+      rolcreaterole: boolean;
+      rolsuper: boolean;
+      server_version_num: string;
+    }>(
+      `select current_user,
+              current_database() as current_database,
+              role.rolcreaterole,
+              role.rolsuper,
               current_setting('server_version_num') as server_version_num
          from pg_roles role
         where role.rolname = current_user`,
     );
+    assertLiveProductionDatabaseIdentity(operator.rows[0], target.expectedRole);
     const operatorIsSuperuser = operator.rows[0]?.rolsuper === true;
+    const operatorCanCreateRoles = operator.rows[0]?.rolcreaterole === true;
     const serverVersion = Number(operator.rows[0]?.server_version_num ?? "0");
     if (!Number.isSafeInteger(serverVersion) || serverVersion < 150000) {
       throw new Error("Role provisioning requires PostgreSQL 15 or newer");
     }
+    if (target.expectedRole !== "postgres" && (operatorIsSuperuser || operatorCanCreateRoles)) {
+      throw new Error("The migrator has unexpected role-administration capability");
+    }
+    if (!operatorIsSuperuser && !operatorCanCreateRoles) {
+      const verification = await verifyRuntimeRoleState();
+      console.info(
+        JSON.stringify({
+          provisioned: false,
+          alreadyExact: true,
+          verifiedRoles: verification.catalog.roles,
+          restrictedOperator: true,
+          secretValuesPrinted: false,
+        }),
+      );
+      return;
+    }
+    await client.query("BEGIN");
     for (const kind of allKinds) {
       await ensureRole(client, kind, passwords[kind], operatorIsSuperuser);
     }
@@ -483,4 +498,9 @@ async function main() {
   }
 }
 
-await main();
+try {
+  await main();
+} catch {
+  console.error(JSON.stringify({ ok: false, error: "RUNTIME_ROLE_PROVISIONING_FAILED" }));
+  process.exitCode = 1;
+}

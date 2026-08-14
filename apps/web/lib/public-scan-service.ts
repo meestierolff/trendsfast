@@ -97,12 +97,6 @@ export async function acceptPublicScan(
   if (typeof input.honeypot === "string" && input.honeypot.trim()) {
     throw new PublicScanError("ABUSE_REJECTED", "The request could not be accepted.");
   }
-  if (
-    dependencies.turnstile &&
-    !(await dependencies.turnstile.verify(input.turnstileToken, input.address))
-  ) {
-    throw new PublicScanError("TURNSTILE_FAILED", "The abuse-protection check did not pass.");
-  }
   let normalizedUrl: string;
   try {
     normalizedUrl = normalizePublicSubmission(input.productUrl);
@@ -111,6 +105,12 @@ export async function acceptPublicScan(
       "INVALID_URL",
       error instanceof Error ? error.message : "Enter a valid public product URL.",
     );
+  }
+  if (
+    dependencies.turnstile &&
+    !(await dependencies.turnstile.verify(input.turnstileToken, input.address))
+  ) {
+    throw new PublicScanError("TURNSTILE_FAILED", "The abuse-protection check did not pass.");
   }
   const fingerprintHash = anonymizeAddress(input.address, dependencies.fingerprintPepper);
   const now = dependencies.now ?? new Date();

@@ -1,9 +1,13 @@
 import { createHash } from "node:crypto";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import {
   APPLICATION_FUNCTIONS,
   APPLICATION_TABLES,
   APPLICATION_TYPES,
+  assertLiveProductionDatabaseIdentity,
+  assertProductionDatabaseTarget,
   BILLING_FORBIDDEN_MUTATION_TABLES,
   createDatabaseClient,
   DATABASE_ROLES,
@@ -17,8 +21,7 @@ import {
   type RuntimeDatabaseRoleKind,
   type Pool,
 } from "@trendsfast/database";
-
-import { loadCliEnvironment } from "../../packages/database/src/load-cli-env";
+import { loadPinnedProductionDatabaseEnvironment } from "@trendsfast/database/production-cli-environment";
 
 const runtimeKinds = ["public", "member", "ops", "worker", "billing", "auth", "retention"] as const;
 const supabaseDataApiRoles = ["anon", "authenticated", "service_role"] as const;
@@ -38,9 +41,12 @@ function identifier(value: string): string {
   return `"${value}"`;
 }
 
-function requiredUrl(variable: string): string {
-  const value = process.env[variable]?.trim();
-  if (!value) throw new Error(`${variable} is required`);
+function requiredUrl(
+  environment: Readonly<Record<string, string | undefined>>,
+  variable: string,
+): string {
+  const value = environment[variable];
+  if (!value?.trim()) throw new Error(`${variable} is required`);
   return value;
 }
 
@@ -86,33 +92,41 @@ async function verifyBrowserFunctionDenied(pool: Pool, functionOid: string, labe
   }
 }
 
-async function verifyRuntimeConnection(kind: RuntimeDatabaseRoleKind, sslCa: string | undefined) {
+async function verifyRuntimeConnection(
+  kind: RuntimeDatabaseRoleKind,
+  sslCa: string | undefined,
+  environment: Readonly<Record<string, string | undefined>>,
+) {
   const variable = roleUrlVariables[kind];
-  const connectionString = requiredUrl(variable);
-  const database = createDatabaseClient({
+  const connectionString = requiredUrl(environment, variable);
+  const target = assertProductionDatabaseTarget({
     connectionString,
-    ...(sslCa ? { sslCa } : {}),
+    endpoint: "transaction-pooler",
+    expectedRole: DATABASE_ROLES[kind],
+    sslCa,
+  });
+  const database = createDatabaseClient({
+    connectionString: target.connectionString,
+    sslCa: target.sslCa,
     maxConnections: 1,
     applicationName: `trendsfast-role-verifier-${kind}`,
   });
   try {
     const identity = await database.pool.query<{
+      current_database: string;
       current_user: string;
       ssl: boolean;
       version: string | null;
       search_path: string;
     }>(`select
         current_user,
+        current_database() as current_database,
         coalesce((select ssl from pg_stat_ssl where pid = pg_backend_pid()), false) as ssl,
         (select version from pg_stat_ssl where pid = pg_backend_pid()) as version,
         current_setting('search_path') as search_path`);
     const record = identity.rows[0];
-    if (!record || record.current_user !== DATABASE_ROLES[kind]) {
-      throw new Error(`${variable} does not authenticate as ${DATABASE_ROLES[kind]}`);
-    }
-    const host = new URL(connectionString).hostname.toLowerCase();
-    const local = ["localhost", "127.0.0.1", "[::1]", "::1"].includes(host);
-    if ((!local || process.env.ALLOW_LOCAL_ROLE_VERIFICATION !== "YES") && !record.ssl) {
+    assertLiveProductionDatabaseIdentity(record, target.expectedRole);
+    if (!record?.ssl) {
       throw new Error(`${variable} did not negotiate TLS`);
     }
     if (record.search_path.replaceAll('"', "") !== "pg_catalog, public") {
@@ -212,17 +226,34 @@ async function verifyRuntimeConnection(kind: RuntimeDatabaseRoleKind, sslCa: str
   }
 }
 
-async function verifyCatalog(sslCa: string | undefined) {
-  const adminUrl =
-    process.env.ROLE_ADMIN_DATABASE_URL?.trim() ?? process.env.DIRECT_DATABASE_URL?.trim();
-  if (!adminUrl) throw new Error("ROLE_ADMIN_DATABASE_URL or DIRECT_DATABASE_URL is required");
+async function verifyCatalog(
+  sslCa: string | undefined,
+  environment: Readonly<Record<string, string | undefined>>,
+) {
+  const roleAdminUrl = environment.ROLE_ADMIN_DATABASE_URL;
+  const roleAdminConfigured = Boolean(roleAdminUrl?.trim());
+  const connectionString = roleAdminConfigured ? roleAdminUrl : environment.DIRECT_DATABASE_URL;
+  if (!connectionString?.trim()) {
+    throw new Error("ROLE_ADMIN_DATABASE_URL or DIRECT_DATABASE_URL is required");
+  }
+  const target = assertProductionDatabaseTarget({
+    connectionString,
+    endpoint: "direct-or-session",
+    expectedRole: roleAdminConfigured ? "postgres" : DATABASE_ROLES.migrator,
+    sslCa,
+  });
   const database = createDatabaseClient({
-    connectionString: adminUrl,
-    ...(sslCa ? { sslCa } : {}),
+    connectionString: target.connectionString,
+    sslCa: target.sslCa,
     maxConnections: 1,
     applicationName: "trendsfast-role-catalog-verifier",
   });
   try {
+    const identity = await database.pool.query<{
+      current_database: string;
+      current_user: string;
+    }>("select current_user, current_database() as current_database");
+    assertLiveProductionDatabaseIdentity(identity.rows[0], target.expectedRole);
     const roles = await database.pool.query<{
       rolname: string;
       rolsuper: boolean;
@@ -268,17 +299,14 @@ async function verifyCatalog(sslCa: string | undefined) {
     const version = await database.pool.query<{
       server_version_num: string;
       operator: string;
-      operator_is_superuser: boolean;
     }>(
       `select current_setting('server_version_num') as server_version_num,
-              role.rolname as operator,
-              role.rolsuper as operator_is_superuser
+              role.rolname as operator
          from pg_roles role
         where role.rolname = current_user`,
     );
     const serverVersion = Number(version.rows[0]?.server_version_num ?? "0");
     const operator = version.rows[0]?.operator;
-    const operatorIsSuperuser = version.rows[0]?.operator_is_superuser === true;
     if (!Number.isSafeInteger(serverVersion) || serverVersion < 150000 || !operator) {
       throw new Error("Runtime-role verification requires PostgreSQL 15 or newer");
     }
@@ -314,11 +342,14 @@ async function verifyCatalog(sslCa: string | undefined) {
       serverVersion >= 160000 ? modernMembershipSql : legacyMembershipSql,
       [Object.values(DATABASE_ROLES)],
     );
+    // Supabase's managed `postgres` operator receives narrowly-scoped SET-only
+    // memberships from `supabase_admin` when it creates roles. Pin that platform
+    // contract instead of tying verification to the current connection identity;
+    // this lets the restricted migrator perform read-only catalog verification.
     const managedCreatorMembership = (membership: RoleMembership) =>
       serverVersion >= 160000 &&
-      !operatorIsSuperuser &&
-      membership.member === operator &&
-      membership.grantor !== operator &&
+      membership.member === "postgres" &&
+      membership.grantor === "supabase_admin" &&
       membership.grantor_is_superuser &&
       Object.values(DATABASE_ROLES).includes(membership.granted_role as never) &&
       membership.admin_option &&
@@ -331,7 +362,7 @@ async function verifyCatalog(sslCa: string | undefined) {
     const expectedManagedGrantedRoles = new Set(Object.values(DATABASE_ROLES));
     if (
       memberships.rows.some((membership) => !managedCreatorMembership(membership)) ||
-      (serverVersion >= 160000 && !operatorIsSuperuser
+      (serverVersion >= 160000
         ? managedMemberships.length !== expectedManagedGrantedRoles.size ||
           managedGrantedRoles.size !== expectedManagedGrantedRoles.size ||
           [...expectedManagedGrantedRoles].some((role) => !managedGrantedRoles.has(role))
@@ -832,16 +863,27 @@ async function verifyCatalog(sslCa: string | undefined) {
   }
 }
 
-async function main() {
-  loadCliEnvironment();
-  const sslCa = process.env.DATABASE_SSL_CA?.trim();
-  const catalog = await verifyCatalog(sslCa);
+export async function verifyRuntimeRoleState() {
+  const environment = loadPinnedProductionDatabaseEnvironment("verify-runtime-roles");
+  const sslCa = environment.DATABASE_SSL_CA;
+  const catalog = await verifyCatalog(sslCa, environment);
   const runtime = Object.fromEntries(
     await Promise.all(
-      runtimeKinds.map(async (kind) => [kind, await verifyRuntimeConnection(kind, sslCa)]),
+      runtimeKinds.map(async (kind) => [
+        kind,
+        await verifyRuntimeConnection(kind, sslCa, environment),
+      ]),
     ),
   );
-  console.info(JSON.stringify({ ok: true, catalog, runtime, rowValuesRead: false }));
+  return { ok: true as const, catalog, runtime, rowValuesRead: false as const };
 }
 
-await main();
+const entrypoint = process.argv[1];
+if (entrypoint && import.meta.url === pathToFileURL(resolve(entrypoint)).href) {
+  try {
+    console.info(JSON.stringify(await verifyRuntimeRoleState()));
+  } catch {
+    console.error(JSON.stringify({ ok: false, error: "RUNTIME_ROLE_VERIFICATION_FAILED" }));
+    process.exitCode = 1;
+  }
+}

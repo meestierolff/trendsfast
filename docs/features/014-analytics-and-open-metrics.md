@@ -86,9 +86,10 @@ Exact-project deletion removes linked request, key, authentication, analytics,
 and related cascaded records. `pnpm db:purge` removes eligible retained terminal
 and nonterminal (`QUEUED`, `RUNNING`, and `REVIEW_REQUIRED`) scans, expired
 delivery tokens, linked analytics, and eligible orphan projects. A code-local
-authenticated ops-only retention route, daily ops deployment template,
-aggregate health/alerts, operator privacy runbook, and founder-private review
-export now exist. They are not deployment or DSAR-acceptance proof: no public
+authenticated ops-only retention route, dedicated retention role, aggregate
+health/alerts, operator privacy runbook, and founder-private review export now
+exist. The pre-revenue Hobby ops template is cron-free, so these are not
+deployment or DSAR-acceptance proof: no public
 privacy-request route, production scheduler execution, general rights export,
 backup-expiry proof, or approved legal-hold policy is verified.
 

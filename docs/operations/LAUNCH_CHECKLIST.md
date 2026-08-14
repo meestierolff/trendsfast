@@ -4,6 +4,16 @@ Every item starts unchecked. Link immutable evidence (release SHA, CI run,
 redacted read-back, screenshot, or review record) before checking it. “Works on
 my machine,” fixture success, and code presence are not production proof.
 
+The current pre-revenue topology is fixed by the
+[2026-08-13 Hobby launch runbook](HOBBY_LAUNCH_2026-08-13.md): existing Supabase
+ref `auxienkuufejeakaczlq` is the sole production database; public `trendsfast`
+and application-gated, cron-free `trendsfast-ops` are separate Hobby surfaces;
+and the only registered cron is public monitoring at `0 7 * * *`. Standard
+Vercel Authentication does not protect the ops Production alias on Hobby. Older
+dated preview and blocked-preparation records below remain historical evidence
+for their own SHAs and decisions, not instructions to create another database
+or require Pro before this free validation phase.
+
 ## Current release evidence
 
 Implementation candidate `73297a6cfdc99b025990b001b39cef399f4d235e`
@@ -85,13 +95,12 @@ evidence, not production proof. See the
 [2026-08-13 protected hosted-preview record](HOSTED_PREVIEW_VERIFICATION_2026-08-13.md).
 The separate
 [2026-08-13 staged-production preparation record](STAGED_PRODUCTION_PREPARATION_2026-08-13.md)
-confirms the existing Vercel project/generated origin and a private-inventory
-preflight, but it remains `BLOCKED_EXTERNAL`: the founder-owned Supabase Free
-organization has no project capacity, production environment values were not
-uploaded, and no deployment or promotion occurred.
-Launch remains blocked on production/ops infrastructure and every applicable
-external, operational, provider, Stripe, monitoring, dogfood, legal, and
-founder-approval gate.
+preserves why the earlier two-database/Pro plan was `BLOCKED_EXTERNAL`. The
+founder's later decision supersedes that topology: reuse the existing project
+ref as production and validate free on Hobby. No new-release deployment,
+promotion, custom domain, provider matrix, or internal API loop is inferred
+from either historical record; those current gates remain open until their own
+read-backs are recorded.
 
 ## Ownership and truth
 
@@ -170,8 +179,13 @@ founder-approval gate.
 - [ ] Public count/duplicate/insert admission remains atomic under concurrent
       requests sharing a fingerprint, and replay attempts consume the durable
       daily cap.
-- [ ] Ops login has explicit origin enforcement and durable admission; network
-      restriction is verified until stronger identity exists.
+- [ ] Ops login has explicit origin enforcement and durable admission;
+      anonymous network reachability is assumed and no edge restriction is
+      claimed.
+- [ ] The ops project has only generated Vercel aliases and no custom domain;
+      anonymous routes disclose no private data; invalid `OPS_TOKEN` admission,
+      signed sessions, and exact ops-surface guards are verified. Standard
+      Vercel Authentication is not counted as Production access proof on Hobby.
 - [ ] Request/provider/delivery idempotency and concurrent claim tests pass.
 - [ ] Persisted hard deadlines, rotating processing fences, stale-worker
       rejection, bounded retry, timeout/abort, circuit breaker, duration, and
@@ -185,6 +199,13 @@ founder-approval gate.
       operator price schedule is reviewed before any cost claim.
 - [ ] Secret-pattern/log/browser-bundle checks find no credentials or private
       payloads.
+- [ ] The tracked `.vercelignore` and accepted-SHA source-boundary verifier
+      exclude private environments, `.var`, local tool state, test output,
+      databases, keys, and backups while retaining required release sources.
+- [ ] Rotation evidence covers all eight database-role passwords, the
+      preview-era `SESSION_SECRET`/`API_KEY_PEPPER`, and the launch cron secret
+      after the historical preview source upload; the redacted hosted role
+      verifier passes and the backup passphrase/dump absence is recorded.
 - [ ] The Stripe test key exposed in local CLI output is revoked/rotated, and
       only redacted rotation evidence is retained.
 - [ ] Exact-project deletion and `pnpm db:purge` (including eligible nonterminal
@@ -226,8 +247,9 @@ declared launch-ready.
 - [ ] Founder owns Vercel project, Supabase/PostgreSQL project, domain, provider
       accounts, GitHub repository, monitoring, and on-call contacts.
 - [ ] Commercial Vercel plan/runtime limits are suitable for bounded execution.
-- [ ] Production and preview databases/secrets are separate; browser variables
-      contain no server secrets.
+- [ ] The single approved production database ref is used without a clone or
+      preview database; public and ops sessions/runtime roles are split, and
+      browser variables contain no server secret.
 - [ ] Migrations run once from a controlled job using a direct database
       connection; connection pooling and capacity are reviewed.
 - [ ] Paid monitoring remains disabled until the deployment verifies

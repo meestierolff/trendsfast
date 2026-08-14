@@ -1,5 +1,7 @@
 import { cookies } from "next/headers";
 
+import { deploymentSurface } from "@trendsfast/config";
+
 import { createCsrfToken, verifyOpsSession } from "../../lib/ops-session";
 
 export type OpsPageAuthorization = {
@@ -8,6 +10,8 @@ export type OpsPageAuthorization = {
 };
 
 export async function getOpsPageAuthorization(): Promise<OpsPageAuthorization | null> {
+  if (deploymentSurface() !== "ops") return null;
+
   const secret = process.env.SESSION_SECRET ?? "";
   if (secret.length < 32) return null;
 

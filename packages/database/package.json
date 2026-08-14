@@ -5,6 +5,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./migrate": "./src/migrate.ts",
+    "./production-cli-environment": "./src/production-cli-environment.ts",
     "./purge": "./src/purge.ts",
     "./seed": "./src/seed.ts"
   },

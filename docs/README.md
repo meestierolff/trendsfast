@@ -22,6 +22,9 @@ connectivity, deployment, security approval, billing, or customer outcomes.
   [deployment procedure](operations/DEPLOYMENT.md), plus the
   [environment reference](operations/ENVIRONMENT.md) and
   [Supabase Auth setup](operations/SUPABASE_AUTH.md)
+- [2026-08-13 pre-revenue Hobby launch and dogfood runbook](operations/HOBBY_LAUNCH_2026-08-13.md)
+  — the current one-database/two-Vercel-surface contract; no deployment or
+  domain completion is implied by the runbook
 - [2026-08-13 local product-completion record](operations/LOCAL_VERIFICATION_2026-08-13.md)
   and the
   [2026-08-13 protected hosted-preview record](operations/HOSTED_PREVIEW_VERIFICATION_2026-08-13.md),

@@ -1,7 +1,14 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 
-import { APPLICATION_FUNCTIONS, createDatabaseClient, DATABASE_ROLES } from "@trendsfast/database";
+import {
+  APPLICATION_FUNCTIONS,
+  assertLiveProductionDatabaseIdentity,
+  assertProductionDatabaseTarget,
+  createDatabaseClient,
+  DATABASE_ROLES,
+} from "@trendsfast/database";
+import { loadPinnedProductionDatabaseEnvironment } from "@trendsfast/database/production-cli-environment";
 
 import {
   compareHostedSchemaCatalog,
@@ -343,17 +350,23 @@ function difference(expected: readonly string[], actual: ReadonlySet<string>) {
   return expected.filter((value) => !actual.has(value));
 }
 
-function requireDirectUrl() {
-  const directUrl = process.env.DIRECT_DATABASE_URL?.trim();
-  if (!directUrl) {
+function requireDirectTarget(environment: Readonly<Record<string, string | undefined>>) {
+  const connectionString = environment.DIRECT_DATABASE_URL;
+  if (!connectionString?.trim()) {
     throw new Error(
       "DIRECT_DATABASE_URL is required. Use the direct migration connection, not the pooled runtime URL.",
     );
   }
-  return directUrl;
+  return assertProductionDatabaseTarget({
+    connectionString,
+    endpoint: "direct-or-session",
+    expectedRole: DATABASE_ROLES.migrator,
+    sslCa: environment.DATABASE_SSL_CA,
+  });
 }
 
 async function main() {
+  const environment = loadPinnedProductionDatabaseEnvironment("verify-hosted");
   const migrationsDirectory = new URL("../../packages/database/migrations/", import.meta.url);
   const migrationFiles = (await readdir(migrationsDirectory))
     .filter((name) => /^\d{4}_.+\.sql$/.test(name))
@@ -398,9 +411,10 @@ async function main() {
   ) {
     throw new Error("Migration SQL files do not exactly match the committed Drizzle journal.");
   }
+  const target = requireDirectTarget(environment);
   const client = createDatabaseClient({
-    connectionString: requireDirectUrl(),
-    ...(process.env.DATABASE_SSL_CA?.trim() ? { sslCa: process.env.DATABASE_SSL_CA.trim() } : {}),
+    connectionString: target.connectionString,
+    sslCa: target.sslCa,
     maxConnections: 1,
     applicationName: "trendsfast-schema-verifier",
     connectionTimeoutMs: 10_000,
@@ -409,6 +423,10 @@ async function main() {
   const { pool } = client;
 
   try {
+    const identity = await pool.query<{ current_database: string; current_user: string }>(
+      "select current_user, current_database() as current_database",
+    );
+    assertLiveProductionDatabaseIdentity(identity.rows[0], target.expectedRole);
     const [
       versionResult,
       tableResult,
@@ -676,7 +694,12 @@ async function main() {
       indexes: indexResult.rows.map((row) => row.index_name),
       constraints: constraintResult.rows.map((row) => row.constraint_name),
     };
-    const strictExtras = process.env.STRICT_HOSTED_SCHEMA === "1";
+    // The launch-facing verifier is always exact. A stale ambient diagnostic
+    // override must never weaken the 44-table release proof.
+    if (process.env.STRICT_HOSTED_SCHEMA?.trim() === "0") {
+      throw new Error("Hosted schema verification cannot disable exact manifest checks");
+    }
+    const strictExtras = true;
     const schemaDrift = compareHostedSchemaCatalog(expectedCatalog, actualCatalog, strictExtras);
     const apiPolicyColumnsHaveNoDefault =
       apiPolicyDefaultResult.rows.length === 2 &&
@@ -764,4 +787,9 @@ async function main() {
   }
 }
 
-await main();
+try {
+  await main();
+} catch {
+  console.error(JSON.stringify({ ok: false, error: "HOSTED_SCHEMA_VERIFICATION_FAILED" }));
+  process.exitCode = 1;
+}

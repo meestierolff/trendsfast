@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { resolveVercelConfig } from "../../vercel";
+
 vi.mock("server-only", () => ({}));
 
 const mocks = vi.hoisted(() => ({
@@ -77,14 +79,16 @@ describe("monitoring cron route", () => {
   });
 
   it("requires the exact CRON_SECRET before querying due work", async () => {
+    const missing = new Request("https://trendsfast.example/api/cron/monitoring");
+    expect(await GET(missing)).toMatchObject({ status: 401 });
     expect(await GET(request("wrong-secret"))).toMatchObject({ status: 401 });
     expect(mocks.runMonitoringBatch).not.toHaveBeenCalled();
+    expect(mocks.runDailyOperationsReconciliation).not.toHaveBeenCalled();
+    expect(mocks.dispatchOperationsAlerts).not.toHaveBeenCalled();
   });
 
-  it("keeps the default Hobby-safe and commits the bounded cadence only in the Pro config", () => {
-    const defaultConfig = JSON.parse(
-      readFileSync(fileURLToPath(new URL("../../vercel.json", import.meta.url)), "utf8"),
-    );
+  it("uses the Hobby daily window while retaining the bounded Pro cadence", () => {
+    const defaultConfig = resolveVercelConfig(undefined);
     const pro = JSON.parse(
       readFileSync(fileURLToPath(new URL("../../vercel.pro.json", import.meta.url)), "utf8"),
     );
@@ -92,8 +96,8 @@ describe("monitoring cron route", () => {
       readFileSync(fileURLToPath(new URL("../../vercel.hobby.json", import.meta.url)), "utf8"),
     );
     expect(maxDuration).toBe(300);
-    expect(defaultConfig.crons).toBeUndefined();
-    expect(hobby.crons).toBeUndefined();
+    expect(defaultConfig).not.toHaveProperty("crons");
+    expect(hobby.crons).toEqual([{ path: "/api/cron/monitoring", schedule: "0 7 * * *" }]);
     expect(pro.crons).toEqual([{ path: "/api/cron/monitoring", schedule: "*/10 * * * *" }]);
   });
 
@@ -151,6 +155,24 @@ describe("monitoring cron route", () => {
       },
     });
     expect(mocks.runDailyOperationsReconciliation).toHaveBeenCalledOnce();
+    expect(mocks.dispatchOperationsAlerts).toHaveBeenCalledOnce();
+  });
+
+  it("fails the cron visibly when daily reconciliation reports failure", async () => {
+    mocks.runDailyOperationsReconciliation.mockResolvedValueOnce({
+      ran: true,
+      alertsQueued: 1,
+      failed: true,
+    });
+
+    const response = await GET(request());
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toMatchObject({
+      ok: false,
+      reconciliation: { ran: true, alertsQueued: 1, failed: true },
+      alerts: { failed: 0, deadLetter: 0, stale: 0 },
+    });
     expect(mocks.dispatchOperationsAlerts).toHaveBeenCalledOnce();
   });
 

@@ -29,6 +29,14 @@ export default function PrivacyPage() {
             paid launch list, we also store the normalized email address and consent record needed
             to contact you about that launch.
           </p>
+          <p>
+            If you sign in, Supabase Auth processes your authentication identifier, email address,
+            session and sign-in metadata. TrendsFast stores the corresponding authentication ID,
+            normalized email address, and—when supplied by the identity provider—a bounded display
+            name and HTTPS avatar URL. If Google sign-in is enabled and you choose it, Google and
+            Supabase also process the minimum identity profile used for that sign-in; TrendsFast
+            does not retain Google access or refresh tokens.
+          </p>
           <h2>Private by default</h2>
           <p>
             Scan links use unguessable tokens and are not made public without explicit consent. We
@@ -52,6 +60,16 @@ export default function PrivacyPage() {
             Public website content and public source metadata may be sent to configured model/data
             providers to produce a scan. Managed keys stay server-side. Provider-specific terms and
             rights remain disclosed in the source-rights matrix.
+          </p>
+          <p>
+            When abuse protection is enabled, the scan form loads Cloudflare Turnstile. Cloudflare
+            receives browser and network information, including the requesting IP address, to issue
+            and verify the challenge; TrendsFast sends the one-time challenge token—but deliberately
+            omits the optional IP field—for server-side verification. Supabase and Cloudflare may
+            process data in other countries under their own applicable terms and transfer
+            safeguards. The founder and qualified privacy counsel must approve the final processor
+            list, lawful bases, transfers, retention periods, and contact details before public
+            launch.
           </p>
         </div>
       </section>

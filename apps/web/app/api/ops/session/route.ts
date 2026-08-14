@@ -72,20 +72,11 @@ export async function POST(request: Request) {
       { status: 503, headers: privateHeaders },
     );
   }
-  const durablyAdmitted = await getOpsRepositories().authAdmission.admit({
-    namespace: "ops",
-    fingerprintHash: anonymizeAddress(clientAddress(request.headers), fingerprintSecret),
-    windowMs: 5 * 60_000,
-    maxAttemptsPerFingerprint: 5,
-    maxAttemptsGlobal: 100,
-    maxFingerprintBuckets: 512,
-  });
-  if (!durablyAdmitted) {
-    return NextResponse.json(
-      { error: "Too many operations login attempts. Try again later." },
-      { status: 429, headers: { ...privateHeaders, "retry-after": "300" } },
-    );
-  }
+  // Reject malformed and incorrect high-entropy founder credentials using the
+  // bounded process-local limiter and constant-time comparison before an
+  // unauthenticated request can acquire a PostgreSQL connection or advisory
+  // lock. A valid token still passes through the durable cross-instance bucket
+  // below before any session cookie is returned.
   const authentication = await authenticateOpsLoginRequest(request, {
     parsedBody: parsedBody.value,
   });
@@ -99,6 +90,20 @@ export async function POST(request: Request) {
           ...(authentication.status === 429 ? { "retry-after": "300" } : {}),
         },
       },
+    );
+  }
+  const durablyAdmitted = await getOpsRepositories().authAdmission.admit({
+    namespace: "ops",
+    fingerprintHash: anonymizeAddress(clientAddress(request.headers), fingerprintSecret),
+    windowMs: 5 * 60_000,
+    maxAttemptsPerFingerprint: 5,
+    maxAttemptsGlobal: 100,
+    maxFingerprintBuckets: 512,
+  });
+  if (!durablyAdmitted) {
+    return NextResponse.json(
+      { error: "Too many operations login attempts. Try again later." },
+      { status: 429, headers: { ...privateHeaders, "retry-after": "300" } },
     );
   }
   const response = NextResponse.json({ ok: true }, { headers: privateHeaders });

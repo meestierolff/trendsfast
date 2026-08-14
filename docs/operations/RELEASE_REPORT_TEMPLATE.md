@@ -24,21 +24,24 @@ Do not mark a gate passed without a link or artifact.
 19. **Stripe SDK/API decision:** `[SDK and explicit API version plus rationale]`
 20. **Commercial boundary and cost configuration:** `[open-source/cloud truth; public variables versus private operator values; settlement limitations]`
 21. **Supabase infrastructure:** `[project/environment, PostgreSQL version, hosted migration/runtime-role read-back, backup/restore; or NOT RUN]`
-22. **Vercel:** `[project/scope/plan and preview/production URLs/IDs; or NOT RUN]`
-23. **Domain/DNS:** `[exact assigned records, TLS, canonical redirect; or unresolved]`
-24. **Provider readback matrix:** `[website, HN, Google Trends, Tavily/xAI, GitHub, YouTube, manual; status, cost/quota, limitation, artifact]`
-25. **Live API:** `[hosted create/poll/strict result and project-scoped key evidence or NOT RUN]`
-26. **Design-partner grant:** `[project, expiry, key/usage audit evidence or NOT RUN]`
-27. **Stripe and paid monitoring:** `[safe Product/Price IDs, sandbox Checkout/webhook/claim/Portal matrix, live gate, €39 offer state]`
-28. **Monitoring/retention/privacy:** `[scheduler, lease/overlap, alerts, purge, request workflow, backup expiry evidence or NOT RUN]`
-29. **Halio bundle path:** `[exact private redacted JSON and Markdown paths or NOT RUN]`
-30. **ShipToUsers bundle path:** `[exact private redacted JSON and Markdown paths or NOT RUN]`
-31. **Dogfood costs:** `[Halio and ShipToUsers actual/unknown breakdowns]`
-32. **External dogfood review:** `[AWAITING_EXTERNAL_DOGFOOD_REVIEW, approved value, or not reached; corrections]`
-33. **Hosted URLs and domain status:** `[public, protected ops, Supabase, canonical domain; exact verification state]`
-34. **Remaining launch blockers:** `[explicit technical, provider, legal, tax, billing, monitoring, dogfood, and founder-owned actions]`
-35. **Go/no-go:** `[limited free founder scans; paid monitoring; broader launch]`
-36. **Founder actions:** `[exact, executable actions still required]`
+22. **Vercel:** `[project/scope/plan, Fluid Compute and 300-second read-back, public/ops Production URLs and IDs; or NOT RUN]`
+23. **Hobby environment phase:** `[exact local SOL_HOBBY_ENVIRONMENT_PHASE, public and ops origins, and every enabled/disabled effect flag; or NOT APPLIED]`
+24. **Daily Hobby cron:** `[public-only 0 7 * * * registration/deployment read-back; no/wrong/correct Bearer results; monitoring-disabled no-claim and bounded-reconciliation evidence; or NOT RUN]`
+25. **Domain/DNS:** `[exact assigned records, public DNS, TLS, canonical metadata, www-to-apex redirect, mixed-content result; or unresolved]`
+26. **Turnstile:** `[dedicated widget and exact hostnames/action; credential preflight; valid, missing, forged, replayed, expired, wrong-action, and wrong-host deployed results; or NOT RUN]`
+27. **Provider readback matrix:** `[website, HN, Google Trends, Tavily/xAI, GitHub, YouTube, manual; status, cost/quota, limitation, artifact]`
+28. **Live API:** `[hosted create/poll/strict result and project-scoped key evidence or NOT RUN]`
+29. **Design-partner grant:** `[project, expiry, key/usage audit evidence or NOT RUN]`
+30. **Stripe and paid monitoring:** `[safe Product/Price IDs, sandbox Checkout/webhook/claim/Portal matrix, live gate, €39 offer state]`
+31. **Monitoring/retention/privacy:** `[scheduler, lease/overlap, alerts, purge, request workflow, backup expiry evidence or NOT RUN]`
+32. **Halio bundle path:** `[exact private redacted JSON and Markdown paths or NOT RUN]`
+33. **ShipToUsers bundle path:** `[exact private redacted JSON and Markdown paths or NOT RUN]`
+34. **Dogfood costs:** `[Halio and ShipToUsers actual/unknown breakdowns]`
+35. **External dogfood review:** `[AWAITING_EXTERNAL_DOGFOOD_REVIEW, approved value, or not reached; corrections]`
+36. **Hosted URLs and domain status:** `[public; generated ops alias and app-level auth proof; no ops custom domain; Supabase; canonical domain; exact verification state]`
+37. **Remaining launch blockers:** `[explicit technical, provider, legal, tax, billing, monitoring, dogfood, and founder-owned actions]`
+38. **Go/no-go:** `[limited free founder scans; paid monitoring; broader launch]`
+39. **Founder actions:** `[exact, executable actions still required]`
 
 Prohibited unsupported claims include legal/provider approval, production
 readiness, live billing, source coverage, security approval, successful external

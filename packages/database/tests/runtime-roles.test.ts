@@ -283,7 +283,9 @@ describe("hosted least-privilege database roles", () => {
       fileURLToPath(new URL("../../../scripts/db/provision-runtime-roles.ts", import.meta.url)),
       "utf8",
     );
-    expect(provisioner).toContain("RUNTIME_ROLE_SECRETS_FILE");
+    expect(provisioner).toContain(
+      'loadPinnedProductionDatabaseEnvironment("provision-runtime-roles")',
+    );
     expect(provisioner).toContain("passwordsPrinted: false");
     expect(provisioner).toContain('operatorIsSuperuser ? "NOSUPERUSER " : ""');
     expect(provisioner).toContain("cannot safely demote it");
@@ -303,11 +305,12 @@ describe("hosted least-privilege database roles", () => {
     expect(verifier).toContain("membership.admin_option");
     expect(verifier).toContain("!membership.inherit_option");
     expect(verifier).toContain("!membership.set_option");
-    expect(verifier).toContain("membership.grantor !== operator");
     expect(verifier).toContain("membership.grantor_is_superuser");
     expect(verifier).toContain("managedGrantedRoles.size !== expectedManagedGrantedRoles.size");
     expect(verifier).toContain("!managedGrantedRoles.has(role)");
     expect(verifier).toContain("!managedCreatorMembership(membership)");
+    expect(verifier).toContain('membership.member === "postgres"');
+    expect(verifier).toContain('membership.grantor === "supabase_admin"');
     expect(verifier).not.toContain("information_schema");
     expect(verifier).toContain('["anon", "authenticated", "service_role"]');
     expect(verifier).toContain("unsafeMigratorDefaults");

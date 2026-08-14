@@ -57,6 +57,7 @@ function request(path: string, authenticated = true): Request {
 describe("founder review bundle routes", () => {
   beforeEach(() => {
     vi.stubEnv("SESSION_SECRET", secret);
+    vi.stubEnv("TRENDSFAST_SURFACE", "ops");
     mocks.buildReviewBundle.mockReset();
     mocks.buildReviewBundle.mockResolvedValue(bundle);
   });

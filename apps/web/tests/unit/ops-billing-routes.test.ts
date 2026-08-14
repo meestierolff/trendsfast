@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@trendsfast/config", () => ({
+  deploymentSurface: () => "ops",
   loadEnv: () => ({
     APP_URL: "https://trendsfast.example",
     BILLING_ENABLED: true,

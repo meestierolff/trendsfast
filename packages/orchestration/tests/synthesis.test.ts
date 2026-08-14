@@ -291,7 +291,12 @@ describe("bounded structured synthesis", () => {
       return new Response(
         JSON.stringify({
           choices: [{ message: { content: JSON.stringify(valid) } }],
-          usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 },
+          usage: {
+            prompt_tokens: 100,
+            completion_tokens: 20,
+            total_tokens: 120,
+            cost_in_usd_ticks: 37_756_000,
+          },
         }),
         { status: 200, headers: { "content-type": "application/json" } },
       );
@@ -346,6 +351,113 @@ describe("bounded structured synthesis", () => {
         outputTokens: 20,
         actualCostUsd: 0.00014,
       }),
+    );
+  });
+
+  it("prefers xAI provider-reported USD ticks over operator token pricing", async () => {
+    const fetcher = vi.fn<typeof fetch>(
+      async () =>
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: JSON.stringify(valid) } }],
+            usage: {
+              prompt_tokens: 100,
+              completion_tokens: 20,
+              total_tokens: 120,
+              cost_in_usd_ticks: "37756000",
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+    const reserve = vi.fn(async () => ({ created: true, projectedCostUsd: 0.01 }));
+    const settle = vi.fn(async () => ({ committedCostUsd: 0.01 }));
+    const client = createOpenAiCompatibleModelClient({
+      apiKey: "fixture-key",
+      model: "grok-test",
+      baseUrl: "https://api.x.ai/v1",
+      fetch: fetcher,
+      maxOutputTokens: 512,
+      pricing: {
+        provider: "xai",
+        inputUsdPerMillionTokens: 1,
+        outputUsdPerMillionTokens: 2,
+      },
+    });
+
+    await client.generate({
+      system: "system",
+      user: "user",
+      temperature: 0,
+      responseFormat: "json",
+      schemaName: "test",
+      cost: {
+        ledgerKey: "model:synthesis:attempt:1",
+        operation: "synthesis",
+        attempt: 1,
+        reserve,
+        settle,
+      },
+    });
+
+    expect(settle).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "xai",
+        inputTokens: 100,
+        outputTokens: 20,
+        actualCostUsd: 0.0037756,
+      }),
+    );
+  });
+
+  it("falls back to operator token pricing when xAI USD ticks are malformed", async () => {
+    const fetcher = vi.fn<typeof fetch>(
+      async () =>
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: JSON.stringify(valid) } }],
+            usage: {
+              prompt_tokens: 100,
+              completion_tokens: 20,
+              total_tokens: 120,
+              cost_in_usd_ticks: "37756000.5",
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+    const reserve = vi.fn(async () => ({ created: true, projectedCostUsd: 0.01 }));
+    const settle = vi.fn(async () => ({ committedCostUsd: 0.01 }));
+    const client = createOpenAiCompatibleModelClient({
+      apiKey: "fixture-key",
+      model: "grok-test",
+      baseUrl: "https://api.x.ai/v1",
+      fetch: fetcher,
+      maxOutputTokens: 512,
+      pricing: {
+        provider: "xai",
+        inputUsdPerMillionTokens: 1,
+        outputUsdPerMillionTokens: 2,
+      },
+    });
+
+    await client.generate({
+      system: "system",
+      user: "user",
+      temperature: 0,
+      responseFormat: "json",
+      schemaName: "test",
+      cost: {
+        ledgerKey: "model:synthesis:attempt:1",
+        operation: "synthesis",
+        attempt: 1,
+        reserve,
+        settle,
+      },
+    });
+
+    expect(settle).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "xai", actualCostUsd: 0.00014 }),
     );
   });
 
