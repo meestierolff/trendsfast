@@ -179,6 +179,7 @@ type DeployHarnessOptions = {
   effectiveConfigMode?: "accepted" | "missing" | "mismatched" | "malformed" | "oversized";
   preexistingEffectiveConfig?: "matching" | "leaf-symlink" | "parent-symlink";
   failOpsAttestation?: boolean;
+  initialLinkMode?: "accepted" | "project-symlink" | "readme-symlink";
   ambientProjectOverride?: boolean;
   ambientTeamOverride?: boolean;
   vercelVersion?: string;
@@ -211,7 +212,14 @@ function runDeployHarness(options: DeployHarnessOptions) {
     null,
     2,
   )}\n`;
+  const expectedOpsLink = `${JSON.stringify({
+    projectName: "trendsfast-ops",
+    projectId: "prj_EYAjX2Nyd1jUXSjfWVTVoI320nnU",
+    orgId: "team_UVAUfp4G8CmlSNPI9w5FasKj",
+  })}\n`;
   const originalReadme = "pinned public link\n";
+  const originalGitignore = ".vercel/\n.env.*\n!.env.example\n";
+  const originalEnvLocal = "LOCAL_SENTINEL=preserve-byte-for-byte\n";
 
   try {
     for (const directory of [
@@ -227,6 +235,23 @@ function runDeployHarness(options: DeployHarnessOptions) {
 
     writeFileSync(join(vercelDirectory, "project.json"), originalLink);
     writeFileSync(join(vercelDirectory, "README.txt"), originalReadme);
+    chmodSync(join(vercelDirectory, "project.json"), 0o644);
+    chmodSync(join(vercelDirectory, "README.txt"), 0o644);
+    if (options.initialLinkMode === "project-symlink") {
+      const target = join(state, "public-project-link.json");
+      writeFileSync(target, originalLink);
+      rmSync(join(vercelDirectory, "project.json"));
+      symlinkSync(target, join(vercelDirectory, "project.json"));
+    } else if (options.initialLinkMode === "readme-symlink") {
+      const target = join(state, "public-link-readme.txt");
+      writeFileSync(target, originalReadme);
+      rmSync(join(vercelDirectory, "README.txt"));
+      symlinkSync(target, join(vercelDirectory, "README.txt"));
+    }
+    writeFileSync(join(root, ".gitignore"), originalGitignore);
+    writeFileSync(join(root, ".env.local"), originalEnvLocal, { mode: 0o600 });
+    chmodSync(join(root, ".env.local"), 0o600);
+    writeFileSync(join(state, "original-gitignore"), originalGitignore);
     writeFileSync(join(root, ".vercelignore"), ".env*\n.vercel\nnode_modules\n");
     writeFileSync(
       join(privateDirectory, "hobby-release.json"),
@@ -282,11 +307,17 @@ function runDeployHarness(options: DeployHarnessOptions) {
     writeExecutable(
       join(bin, "git"),
       `#!/usr/bin/env node
+const fs = require("node:fs");
+const path = require("node:path");
 const args = process.argv.slice(2);
 const root = process.env.HARNESS_ROOT;
 const sha = process.env.HARNESS_SHA;
 if (args[0] === "rev-parse" && args[1] === "--show-toplevel") process.stdout.write(root + "\\n");
-else if (args[0] === "status") process.exit(0);
+else if (args[0] === "status") {
+  const expected = fs.readFileSync(path.join(root, ".harness", "original-gitignore"), "utf8");
+  const actual = fs.readFileSync(path.join(root, ".gitignore"), "utf8");
+  if (actual !== expected) process.stdout.write(" M .gitignore\\n");
+}
 else if (args[0] === "symbolic-ref") process.stdout.write(process.env.HARNESS_BRANCH + "\\n");
 else if (args[0] === "fetch") process.exit(0);
 else if (args[0] === "ls-files" && args.includes("--others") && args.includes("--ignored") && args.includes("--exclude-standard")) {
@@ -306,6 +337,12 @@ const path = require("node:path");
 const args = process.argv.slice(2);
 fs.appendFileSync(path.join(process.env.HARNESS_ROOT, ".harness", "pnpm.log"), JSON.stringify(args) + "\\n");
 process.stderr.write(process.env.HARNESS_SECRET + "\\n");
+if (args.includes("env:import-ops") && args.includes("--check")) {
+  fs.copyFileSync(
+    path.join(process.env.HARNESS_ROOT, ".vercel", "project.json"),
+    path.join(process.env.HARNESS_ROOT, ".harness", "ops-check-project.json"),
+  );
+}
 if (process.env.HARNESS_FAIL_OPS_ATTESTATION === "true" && args.includes("env:import-ops") && args.includes("--check")) process.exit(23);
 `,
     );
@@ -386,10 +423,13 @@ if (args[0] === "--version") {
   const environment = args.includes(publicProjectId) ? "public-environment.json" : "ops-environment.json";
   send(fs.readFileSync(path.join(state, environment), "utf8"));
 } else if (args[0] === "link") {
+  fs.appendFileSync(path.join(root, ".gitignore"), ".vercel\\n.env*\\n");
+  fs.writeFileSync(path.join(root, ".env.local"), "LOCAL_SENTINEL=mutated-by-vercel-link\\n");
   fs.writeFileSync(path.join(root, ".vercel", "project.json"), JSON.stringify({ projectName: "trendsfast-ops", projectId: opsProjectId, orgId: teamId }));
   fs.writeFileSync(path.join(root, ".vercel", "README.txt"), "mutated ops link\\n");
   send("linked\\n");
 } else if (args[0] === "deploy") {
+  fs.copyFileSync(path.join(root, ".vercel", "project.json"), path.join(state, "deploy-project.json"));
   if (process.env.HARNESS_EFFECTIVE_CONFIG_MODE !== "missing") {
     const compiledDirectory = path.join(root, "apps", "web", ".vercel");
     fs.mkdirSync(compiledDirectory, { recursive: true });
@@ -545,10 +585,22 @@ if (args[0] === "--version") {
       sleepLog: readOptionalHarnessFile(join(state, "sleep.log")),
       vercelLog: readOptionalHarnessFile(join(state, "vercel.log")),
       pnpmLog: readOptionalHarnessFile(join(state, "pnpm.log")),
+      opsCheckLink: readOptionalHarnessFile(join(state, "ops-check-project.json")),
+      deployedLink: readOptionalHarnessFile(join(state, "deploy-project.json")),
       restoredLink: readFileSync(join(vercelDirectory, "project.json"), "utf8"),
+      restoredLinkMode: statSync(join(vercelDirectory, "project.json")).mode & 0o777,
       restoredReadme: readFileSync(join(vercelDirectory, "README.txt"), "utf8"),
+      restoredReadmeMode: statSync(join(vercelDirectory, "README.txt")).mode & 0o777,
+      restoredGitignore: readFileSync(join(root, ".gitignore"), "utf8"),
+      restoredEnvLocal: readFileSync(join(root, ".env.local"), "utf8"),
+      restoredEnvLocalMode: statSync(join(root, ".env.local")).mode & 0o777,
       originalLink,
+      originalLinkMode: 0o644,
       originalReadme,
+      originalReadmeMode: 0o644,
+      originalGitignore,
+      originalEnvLocal,
+      expectedOpsLink,
       release: JSON.parse(readFileSync(join(privateDirectory, "hobby-release.json"), "utf8")) as {
         publicDeploymentHost?: string;
         publicDeploymentId?: string;
@@ -681,6 +733,28 @@ describe("founder-only Hobby deployment scripts", () => {
     expect(result.stderr).toBe("FAIL: the founder deploy requires Vercel CLI 58.0.0\n");
     expect(result.vercelLog).toBe('["--version"]\n');
     expect(`${result.stdout}${result.stderr}`).not.toContain(redactionCanary);
+  }, 30_000);
+
+  it("rejects symlinked local Vercel link state before authentication or deployment", () => {
+    const cases = [
+      {
+        initialLinkMode: "project-symlink" as const,
+        failure: "FAIL: the public Vercel project link is missing or unsafe\n",
+      },
+      {
+        initialLinkMode: "readme-symlink" as const,
+        failure: "FAIL: the public Vercel project link README is unsafe\n",
+      },
+    ];
+
+    for (const testCase of cases) {
+      const result = runDeployHarness({ target: "ops", initialLinkMode: testCase.initialLinkMode });
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe(testCase.failure);
+      expect(result.vercelLog).toBe('["--version"]\n');
+      expect(`${result.stdout}${result.stderr}`).not.toContain(redactionCanary);
+    }
   }, 30_000);
 
   it("checks every Git-ignored path against the effective Vercel upload matcher", () => {
@@ -1058,8 +1132,16 @@ describe("founder-only Hobby deployment scripts", () => {
     expect(result.status).toBe(0);
     expect(result.cronReadCount).toBe(2);
     expect(result.sleepLog).toBe("2\n");
+    expect(result.opsCheckLink).toBe(result.expectedOpsLink);
+    expect(result.deployedLink).toBe(result.expectedOpsLink);
     expect(result.restoredLink).toBe(result.originalLink);
+    expect(result.restoredLinkMode).toBe(result.originalLinkMode);
     expect(result.restoredReadme).toBe(result.originalReadme);
+    expect(result.restoredReadmeMode).toBe(result.originalReadmeMode);
+    expect(result.restoredGitignore).toBe(result.originalGitignore);
+    expect(result.restoredEnvLocal).toBe(result.originalEnvLocal);
+    expect(result.restoredEnvLocalMode).toBe(0o600);
+    expect(harnessCommandCalls(result.vercelLog).filter((args) => args[0] === "link")).toEqual([]);
     expect(result.stdout).toBe(
       "Deployment URL: https://trendsfast-ops.vercel.app\nDeployment ID: dpl_OpsNew\n",
     );
@@ -1084,8 +1166,16 @@ describe("founder-only Hobby deployment scripts", () => {
       opsAliasMode: "rejected",
     });
     expect(result.status).not.toBe(0);
+    expect(result.opsCheckLink).toBe(result.expectedOpsLink);
+    expect(result.deployedLink).toBe(result.expectedOpsLink);
     expect(result.restoredLink).toBe(result.originalLink);
+    expect(result.restoredLinkMode).toBe(result.originalLinkMode);
     expect(result.restoredReadme).toBe(result.originalReadme);
+    expect(result.restoredReadmeMode).toBe(result.originalReadmeMode);
+    expect(result.restoredGitignore).toBe(result.originalGitignore);
+    expect(result.restoredEnvLocal).toBe(result.originalEnvLocal);
+    expect(result.restoredEnvLocalMode).toBe(0o600);
+    expect(harnessCommandCalls(result.vercelLog).filter((args) => args[0] === "link")).toEqual([]);
     expect(result.stdout).toBe("");
     expect(result.stderr).toBe(
       "FAIL: the ops deployment provenance does not match the accepted SHA and pinned project\n",
@@ -1093,12 +1183,20 @@ describe("founder-only Hobby deployment scripts", () => {
     expect(`${result.stdout}${result.stderr}`).not.toContain(redactionCanary);
   }, 30_000);
 
-  it("restores the public link when an ops predeploy proof fails after relinking", () => {
+  it("restores the public link when an ops predeploy proof fails after installing the temporary ops link", () => {
     const result = runDeployHarness({ target: "ops", failOpsAttestation: true });
     expect(result.status).not.toBe(0);
     expect(result.cronReadCount).toBe(0);
+    expect(result.opsCheckLink).toBe(result.expectedOpsLink);
+    expect(result.deployedLink).toBe("");
     expect(result.restoredLink).toBe(result.originalLink);
+    expect(result.restoredLinkMode).toBe(result.originalLinkMode);
     expect(result.restoredReadme).toBe(result.originalReadme);
+    expect(result.restoredReadmeMode).toBe(result.originalReadmeMode);
+    expect(result.restoredGitignore).toBe(result.originalGitignore);
+    expect(result.restoredEnvLocal).toBe(result.originalEnvLocal);
+    expect(result.restoredEnvLocalMode).toBe(0o600);
+    expect(harnessCommandCalls(result.vercelLog).filter((args) => args[0] === "link")).toEqual([]);
     expect(result.stdout).toBe("");
     expect(result.stderr).toBe("FAIL: the ops Production environment attestation did not pass\n");
     expect(`${result.stdout}${result.stderr}`).not.toContain(redactionCanary);
@@ -1128,10 +1226,16 @@ describe("founder-only Hobby deployment scripts", () => {
       'pnpm --silent env:update-ops-provenance "$public_deployment_host" "$public_deployment_id"',
     );
     expect(opsScript).not.toMatch(/env:update-ops-provenance[ \t]+--(?:[ \t]|$)/u);
+    expect(opsScript).not.toMatch(/\bvercel[ \t]+link\b/u);
     expect(opsScript).toContain('vercel api "/v13/deployments/${public_deployment_id}" --raw');
     expect(opsScript).toContain("deployment.meta?.githubCommitSha === process.argv[5]");
     expect(opsScript).not.toMatch(/vercel env add PUBLIC_DEPLOYMENT_(?:HOST|ID)/u);
     expect(opsScript).toContain("trap cleanup EXIT");
+    expect(opsScript).toContain("const [target, projectName, projectId, orgId]");
+    expect(opsScript).toContain("JSON.stringify({ projectName, projectId, orgId })");
+    expect(opsScript).toContain('install_project_link "$ops_link_file" .vercel/project.json 600');
+    expect(opsScript).toContain("fs.renameSync(temporary, target)");
+    expect(opsScript).toContain('cmp -s -- "$ops_link_file" .vercel/project.json');
     expect(opsScript).toContain("restore_public_link || fail");
     expect(opsScript).toContain('cmp -s -- "$public_link_backup" .vercel/project.json');
     expect(opsScript).toContain("aliases.includes(expectedAlias)");

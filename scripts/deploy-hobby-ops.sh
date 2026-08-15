@@ -77,7 +77,10 @@ STRIPE_MODE'
 temp_dir=""
 command_log=""
 public_link_backup=""
+public_link_mode=""
 public_readme_backup=""
+public_readme_mode=""
+ops_link_file=""
 link_changed="false"
 effective_config_backup=""
 effective_config_existed="false"
@@ -102,13 +105,61 @@ restore_effective_deployment_config() {
   effective_config_prepared="false"
 }
 
+install_project_link() {
+  # Replace the tiny non-secret link atomically so interruption cannot leave a
+  # partially written project identity behind in the accepted checkout.
+  # shellcheck disable=SC2016
+  node -e '
+    const crypto = require("node:crypto");
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const [source, target, requestedMode] = process.argv.slice(1);
+    const sourceMetadata = fs.lstatSync(source);
+    const parent = path.dirname(target);
+    const parentMetadata = fs.lstatSync(parent);
+    if (!sourceMetadata.isFile() || sourceMetadata.isSymbolicLink() || sourceMetadata.size > 64 * 1024) process.exit(1);
+    if (!parentMetadata.isDirectory() || parentMetadata.isSymbolicLink() || !/^[0-7]{3,4}$/.test(requestedMode)) process.exit(1);
+    try {
+      const targetMetadata = fs.lstatSync(target);
+      if (!targetMetadata.isFile() || targetMetadata.isSymbolicLink()) process.exit(1);
+    } catch (error) {
+      if (error?.code !== "ENOENT") process.exit(1);
+    }
+    const temporary = path.join(parent, `.project-link-${process.pid}-${crypto.randomBytes(8).toString("hex")}.tmp`);
+    let descriptor;
+    try {
+      descriptor = fs.openSync(temporary, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
+      fs.writeFileSync(descriptor, fs.readFileSync(source));
+      fs.fsyncSync(descriptor);
+      fs.closeSync(descriptor);
+      descriptor = undefined;
+      fs.chmodSync(temporary, Number.parseInt(requestedMode, 8));
+      fs.renameSync(temporary, target);
+    } finally {
+      if (descriptor !== undefined) {
+        try { fs.closeSync(descriptor); } catch {}
+      }
+      try { fs.unlinkSync(temporary); } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+      }
+    }
+  ' "$1" "$2" "$3" >/dev/null 2>&1
+}
+
 restore_public_link() {
   if [[ "$link_changed" != "true" ]]; then
     return 0
   fi
-  cp -p -- "$public_link_backup" .vercel/project.json || return 1
+  [[ -d .vercel && ! -L .vercel ]] || return 1
+  if [[ -e .vercel/project.json || -L .vercel/project.json ]]; then
+    [[ -f .vercel/project.json && ! -L .vercel/project.json ]] || return 1
+  fi
+  install_project_link "$public_link_backup" .vercel/project.json "$public_link_mode" || return 1
+  [[ "$(file_mode .vercel/project.json)" == "$public_link_mode" ]] || return 1
   if [[ -n "$public_readme_backup" ]]; then
+    [[ ! -L .vercel/README.txt ]] || return 1
     cp -p -- "$public_readme_backup" .vercel/README.txt || return 1
+    [[ "$(file_mode .vercel/README.txt)" == "$public_readme_mode" ]] || return 1
   fi
   link_changed="false"
 }
@@ -177,12 +228,13 @@ assert_git_ignored_upload_boundary() {
 }
 
 assert_link() {
+  local link_file="$1"
   node -e '
     const fs = require("node:fs");
     const link = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
     const valid = link.projectName === process.argv[2] && link.projectId === process.argv[3] && link.orgId === process.argv[4];
     process.exit(valid ? 0 : 1);
-  ' .vercel/project.json "$1" "$2" "$team_id" >/dev/null 2>&1
+  ' "$link_file" "$2" "$3" "$team_id" >/dev/null 2>&1
 }
 
 assert_environment_names() {
@@ -264,9 +316,10 @@ deployment_api_report="$temp_dir/deployment-api.json"
 postdeploy_project_report="$temp_dir/postdeploy-project.json"
 safe_deployment="$temp_dir/deployment-safe.json"
 public_link_backup="$temp_dir/public-project.json"
+ops_link_file="$temp_dir/ops-project.json"
 git_ignored_report="$temp_dir/git-ignored-paths.bin"
 effective_config_backup="$temp_dir/effective-vercel.json"
-for private_file in "$command_log" "$team_report" "$project_report" "$domains_report" "$public_deployment_api_report" "$environment_report" "$expected_environment_file" "$deployment_output" "$deployment_report" "$deployment_api_report" "$postdeploy_project_report" "$safe_deployment" "$public_link_backup" "$git_ignored_report" "$effective_config_backup"; do
+for private_file in "$command_log" "$team_report" "$project_report" "$domains_report" "$public_deployment_api_report" "$environment_report" "$expected_environment_file" "$deployment_output" "$deployment_report" "$deployment_api_report" "$postdeploy_project_report" "$safe_deployment" "$public_link_backup" "$ops_link_file" "$git_ignored_report" "$effective_config_backup"; do
   : >"$private_file"
   chmod 0600 "$private_file"
 done
@@ -278,13 +331,18 @@ fi
 [[ "$vercel_version" == "58.0.0" ]] || fail "the founder deploy requires Vercel CLI 58.0.0"
 unset vercel_version
 
-[[ -f .vercel/project.json ]] || fail "the public Vercel project link is missing"
-assert_link "$public_project" "$public_project_id" || fail "the repository is not initially linked to the pinned public Vercel project"
+[[ -d .vercel && ! -L .vercel ]] || fail "the public Vercel project link directory is unsafe"
+[[ -f .vercel/project.json && ! -L .vercel/project.json ]] || fail "the public Vercel project link is missing or unsafe"
+assert_link .vercel/project.json "$public_project" "$public_project_id" || fail "the repository is not initially linked to the pinned public Vercel project"
+public_link_mode="$(file_mode .vercel/project.json)" || fail "the public Vercel project link mode could not be read"
+[[ "$public_link_mode" =~ ^[0-7]{3,4}$ ]] || fail "the public Vercel project link mode is invalid"
 cp -p -- .vercel/project.json "$public_link_backup"
-if [[ -f .vercel/README.txt ]]; then
+if [[ -e .vercel/README.txt || -L .vercel/README.txt ]]; then
+  [[ -f .vercel/README.txt && ! -L .vercel/README.txt ]] || fail "the public Vercel project link README is unsafe"
+  public_readme_mode="$(file_mode .vercel/README.txt)" || fail "the public Vercel project link README mode could not be read"
+  [[ "$public_readme_mode" =~ ^[0-7]{3,4}$ ]] || fail "the public Vercel project link README mode is invalid"
   public_readme_backup="$temp_dir/public-readme.txt"
   cp -p -- .vercel/README.txt "$public_readme_backup"
-  chmod 0600 "$public_readme_backup"
 fi
 
 if ! vercel whoami --no-color >"$command_log" 2>&1; then
@@ -392,11 +450,29 @@ if ! pnpm --silent env:import-ops --apply >"$command_log" 2>&1; then
   fail "the exact ops Production environment could not be applied and attested"
 fi
 
-link_changed="true"
-if ! vercel link --yes --team "$team_id" --project "$ops_project_id" >"$command_log" 2>&1; then
-  fail "the isolated ops Vercel project link failed"
+# Vercel CLI 58 `link` mutates tracked .gitignore and refreshes the linked
+# project's OIDC token in .env.local. Install only the already validated,
+# non-secret project identity so the accepted checkout and private local
+# environment remain untouched.
+# shellcheck disable=SC2016
+if ! node -e '
+  const fs = require("node:fs");
+  const [target, projectName, projectId, orgId] = process.argv.slice(1);
+  fs.writeFileSync(target, `${JSON.stringify({ projectName, projectId, orgId })}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+' "$ops_link_file" "$ops_project" "$ops_project_id" "$team_id" >"$command_log" 2>&1; then
+  fail "the pinned ops project link could not be prepared"
 fi
-assert_link "$ops_project" "$ops_project_id" || fail "the isolated link does not identify the pinned ops project"
+assert_link "$ops_link_file" "$ops_project" "$ops_project_id" || fail "the prepared ops project link is invalid"
+link_changed="true"
+[[ -d .vercel && ! -L .vercel && -f .vercel/project.json && ! -L .vercel/project.json ]] || fail "the public Vercel project link became unsafe"
+if ! install_project_link "$ops_link_file" .vercel/project.json 600; then
+  fail "the pinned ops project link could not be installed"
+fi
+assert_link .vercel/project.json "$ops_project" "$ops_project_id" || fail "the isolated link does not identify the pinned ops project"
+cmp -s -- "$ops_link_file" .vercel/project.json || fail "the isolated ops project link is not exact"
 
 # This is the final environment proof after provenance import: exact all-target
 # scope, sensitivity, remote revisions, and the value-bound attestation match.
@@ -551,8 +627,9 @@ if [[ "$cron_state_verified" != "true" ]]; then
 fi
 
 restore_effective_deployment_config || fail "the prior ignored effective deployment config could not be restored"
+cmp -s -- "$ops_link_file" .vercel/project.json || fail "the pinned ops project link changed during deploy"
 restore_public_link || fail "the pinned public Vercel link could not be restored"
-assert_link "$public_project" "$public_project_id" || fail "the restored Vercel link is not the pinned public project"
+assert_link .vercel/project.json "$public_project" "$public_project_id" || fail "the restored Vercel link is not the pinned public project"
 cmp -s -- "$public_link_backup" .vercel/project.json || fail "the original public Vercel link was not restored byte-for-byte"
 [[ -z "$(git status --porcelain --untracked-files=normal)" ]] || fail "the Git working tree was not restored to the accepted release"
 
