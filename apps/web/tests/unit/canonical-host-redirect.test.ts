@@ -41,4 +41,14 @@ describe("canonical host redirect", () => {
     expect(response.status).toBe(200);
     expect(getRedirectUrl(response)).toBeNull();
   });
+
+  it.each([
+    ["https://trendsfast.com/login", "strict-origin"],
+    ["https://trendsfast.com/scan/private-result", "strict-origin"],
+    ["https://trendsfast.com/billing/success", "no-referrer"],
+  ])("emits the scoped document referrer policy for %s", async (url, policy) => {
+    const response = await unstable_getResponseFromNextConfig({ url, nextConfig });
+
+    expect(response.headers.get("referrer-policy")).toBe(policy);
+  });
 });

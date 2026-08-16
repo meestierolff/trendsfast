@@ -6,9 +6,36 @@ import { refreshSupabaseAuthSession } from "./lib/supabase/proxy";
 const privateHeaders = {
   "Cache-Control": "private, no-store, max-age=0",
   Pragma: "no-cache",
-  "Referrer-Policy": "no-referrer",
   "X-Robots-Tag": "noindex, nofollow, noarchive",
 } as const;
+
+function nativeMutationDocument(pathname: string): boolean {
+  return (
+    pathname === "/login" ||
+    pathname === "/dashboard" ||
+    pathname.startsWith("/dashboard/") ||
+    pathname === "/scan" ||
+    pathname.startsWith("/scan/") ||
+    pathname === "/ops" ||
+    pathname.startsWith("/ops/")
+  );
+}
+
+function privateReferrerPolicy(request: NextRequest, pathname: string): string {
+  const documentRead = request.method === "GET" || request.method === "HEAD";
+  return documentRead && nativeMutationDocument(pathname) ? "strict-origin" : "no-referrer";
+}
+
+function responseOnlyPath(pathname: string): boolean {
+  return (
+    pathname === "/auth" ||
+    pathname.startsWith("/auth/") ||
+    pathname === "/api" ||
+    pathname.startsWith("/api/") ||
+    pathname === "/v1" ||
+    pathname.startsWith("/v1/")
+  );
+}
 
 function founderPath(pathname: string): boolean {
   return (
@@ -51,6 +78,7 @@ function hiddenResponse(): NextResponse {
     status: 404,
     headers: {
       ...privateHeaders,
+      "Referrer-Policy": "no-referrer",
       "Content-Type": "text/plain; charset=utf-8",
       "X-Content-Type-Options": "nosniff",
     },
@@ -86,6 +114,9 @@ export async function proxy(request: NextRequest) {
     for (const [name, value] of Object.entries(privateHeaders)) {
       response.headers.set(name, value);
     }
+    response.headers.set("Referrer-Policy", privateReferrerPolicy(request, pathname));
+  } else if (responseOnlyPath(pathname)) {
+    response.headers.set("Referrer-Policy", "no-referrer");
   }
   return response;
 }

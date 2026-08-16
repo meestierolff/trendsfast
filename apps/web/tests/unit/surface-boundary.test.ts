@@ -46,6 +46,63 @@ describe("public and founder operations deployment surfaces", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("x-robots-tag")).toBe("noindex, nofollow, noarchive");
+    expect(response.headers.get("referrer-policy")).toBe("strict-origin");
+  });
+
+  it.each(["/login", "/dashboard", "/dashboard/agents", "/scan/private-capability"])(
+    "preserves only the tuple origin for native mutation document %s",
+    async (path) => {
+      vi.stubEnv("TRENDSFAST_SURFACE", "public");
+      vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "");
+      vi.stubEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "");
+
+      const response = await proxy(new NextRequest(`https://trendsfast.example${path}`));
+
+      expect(response.headers.get("referrer-policy")).toBe("strict-origin");
+    },
+  );
+
+  it("keeps private mutation and hidden responses on no-referrer", async () => {
+    vi.stubEnv("TRENDSFAST_SURFACE", "public");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "");
+
+    const mutation = await proxy(
+      new NextRequest("https://trendsfast.example/auth/magic-link", { method: "POST" }),
+    );
+    const hidden = await proxy(new NextRequest("https://trendsfast.example/api/ops/session"));
+
+    expect(mutation.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(hidden.headers.get("referrer-policy")).toBe("no-referrer");
+  });
+
+  it.each(["/auth/confirm", "/api/scan-requests", "/v1/next-move"])(
+    "keeps response-only path %s on no-referrer",
+    async (path) => {
+      vi.stubEnv("TRENDSFAST_SURFACE", "public");
+      vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "");
+      vi.stubEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "");
+
+      const response = await proxy(new NextRequest(`https://trendsfast.example${path}`));
+
+      expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    },
+  );
+
+  it("uses strict-origin only for document reads", async () => {
+    vi.stubEnv("TRENDSFAST_SURFACE", "public");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "");
+
+    const head = await proxy(
+      new NextRequest("https://trendsfast.example/login", { method: "HEAD" }),
+    );
+    const post = await proxy(
+      new NextRequest("https://trendsfast.example/login", { method: "POST" }),
+    );
+
+    expect(head.headers.get("referrer-policy")).toBe("strict-origin");
+    expect(post.headers.get("referrer-policy")).toBe("no-referrer");
   });
 
   it.each([
