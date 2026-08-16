@@ -191,6 +191,13 @@ function error(code: string, message: string, status: number) {
   });
 }
 
+function applyPollingRetryAfter(response: Response, result: NextMoveStatusResponse): Response {
+  if ("poll_after_seconds" in result) {
+    response.headers.set("Retry-After", String(result.poll_after_seconds));
+  }
+  return response;
+}
+
 export function createV1Api(dependencies: V1ApiDependencies) {
   const app = new Hono<{
     Variables: { principal: ApiPrincipal; parsedJsonBody: BoundedJsonBodyResult };
@@ -204,6 +211,13 @@ export function createV1Api(dependencies: V1ApiDependencies) {
         "application/json": { schema: { $ref: "#/components/schemas/ApiError" } },
       },
     });
+    const pollingResponseHeaders = {
+      "Retry-After": {
+        description:
+          "Seconds to wait before polling again. Present only for QUEUED, RUNNING, and REVIEW_REQUIRED responses and equal to poll_after_seconds in the response body.",
+        schema: { type: "integer", const: 30, example: 30 },
+      },
+    };
     return context.json({
       openapi: "3.1.0",
       info: {
@@ -264,6 +278,7 @@ export function createV1Api(dependencies: V1ApiDependencies) {
               },
               "202": {
                 description: "Bounded work is queued, running, or awaiting review",
+                headers: pollingResponseHeaders,
                 content: {
                   "application/json": { schema: { $ref: "#/components/schemas/NextMoveStatus" } },
                 },
@@ -332,6 +347,7 @@ export function createV1Api(dependencies: V1ApiDependencies) {
               },
               "202": {
                 description: "Bounded work is queued, running, or awaiting review",
+                headers: pollingResponseHeaders,
                 content: {
                   "application/json": { schema: { $ref: "#/components/schemas/NextMoveStatus" } },
                 },
@@ -364,6 +380,7 @@ export function createV1Api(dependencies: V1ApiDependencies) {
             responses: {
               "200": {
                 description: "Current state",
+                headers: pollingResponseHeaders,
                 content: {
                   "application/json": {
                     schema: { $ref: "#/components/schemas/NextMoveStatus" },
@@ -543,7 +560,7 @@ export function createV1Api(dependencies: V1ApiDependencies) {
       const status = result.status === "READY" ? 200 : result.status === "FAILED" ? 200 : 202;
       const response = context.json(result, status);
       if ("status_url" in result) response.headers.set("Location", result.status_url);
-      return response;
+      return applyPollingRetryAfter(response, result);
     } catch (caught) {
       if (caught instanceof ApiServiceError)
         return error(caught.code, caught.message, caught.status);
@@ -585,7 +602,7 @@ export function createV1Api(dependencies: V1ApiDependencies) {
       const status = result.status === "READY" || result.status === "FAILED" ? 200 : 202;
       const response = context.json(result, status);
       if ("status_url" in result) response.headers.set("Location", result.status_url);
-      return response;
+      return applyPollingRetryAfter(response, result);
     } catch (caught) {
       if (caught instanceof ApiServiceError)
         return error(caught.code, caught.message, caught.status);
@@ -599,7 +616,7 @@ export function createV1Api(dependencies: V1ApiDependencies) {
       return error("FORBIDDEN", "The API key does not have read scope.", 403);
     const result = await dependencies.getStatus({ principal, id: context.req.param("id") });
     if (!result) return error("NOT_FOUND", "No Next Move was found for this key.", 404);
-    return context.json(result, 200);
+    return applyPollingRetryAfter(context.json(result, 200), result);
   });
 
   app.notFound(() => error("NOT_FOUND", "No API route exists at this path.", 404));
