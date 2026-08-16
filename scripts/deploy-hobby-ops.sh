@@ -398,6 +398,7 @@ if ! node -e '
     project.accountId === process.argv[4] &&
     project.rootDirectory === process.argv[5] &&
     project.framework === "nextjs" &&
+    project.autoExposeSystemEnvs === true &&
     project.defaultResourceConfig?.fluid === true &&
     project.resourceConfig?.fluid === true &&
     project.defaultResourceConfig?.functionDefaultTimeout === 300 &&

@@ -103,7 +103,10 @@ The release script must be run from clean, accepted `main` with explicit
 a staged Production deployment with the cron-free config, safely smokes the
 immutable deployment, checks error logs, and only then promotes it to the stable
 origin and repeats the stable-origin checks. The Vercel `--skip-domain` option
-does not itself promote a deployment.
+does not itself promote a deployment. Because this historical flow deliberately
+uses the cron-free profile on the public project, its command carries the
+non-secret `staged` selector into hosted compilation as a per-deployment build
+value; it does not alter the project's stored Production environment.
 
 ```bash
 bash scripts/deploy-staged-production.sh

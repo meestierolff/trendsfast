@@ -308,6 +308,15 @@ The public script verifies the pinned project/team/root, Fluid Compute,
 300-second duration, exact environment name set, config, and release
 provenance. It deploys with `--skip-domain`, then atomically records only the
 safe public deployment host and `dpl_...` ID into the private release contract.
+Before its single deploy call it reserves a mode-`0600`, ignored attempt journal
+keyed by accepted SHA plus predecessor deployment ID. An unresolved
+pre-contract attempt must not be retried blindly: reconcile its safe URL/ID
+against deployment V13, the stable Current origin, and project V9 cron state,
+then stop for a reviewed recovery decision. If the release contract already
+advanced but final stdout was lost, continue reconciliation and smoke without
+deploying again. The candidate cron is active before immutable smoke; scans-off
+prevents public, paid, and provider scan effects, but an authorized scheduler
+call can still write bounded daily reconciliation or alert state.
 The ops script requires that provenance, temporarily links the exact ops
 project, verifies its exact environment/config and accepted SHA, deploys only
 to generated Vercel hosts, and restores the public repository link

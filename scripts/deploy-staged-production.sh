@@ -552,7 +552,10 @@ PHASE_1_FLAGS
 pass "required Production variable names and exact Phase 1 effect flags"
 
 : >"$command_output_file"
-if ! deployment_output="$(TRENDSFAST_VERCEL_CONFIG_PROFILE=staged vercel deploy --prod --skip-domain --yes -A apps/web/vercel.ops.json 2>"$command_output_file")"; then
+# This historical public-project flow intentionally remains cron-free. Vercel
+# compiles vercel.ts again in the hosted build, so carry only this non-secret
+# selector as a per-deployment build value; it does not change Project env.
+if ! deployment_output="$(TRENDSFAST_VERCEL_CONFIG_PROFILE=staged vercel deploy --prod --skip-domain --yes --build-env TRENDSFAST_VERCEL_CONFIG_PROFILE=staged -A apps/web/vercel.ops.json 2>"$command_output_file")"; then
   fail "staged Production deployment failed"
 fi
 

@@ -359,7 +359,7 @@ describe("founder staged Production deploy script", () => {
 
     expect(script).toContain("set -euo pipefail");
     expect(script).toContain(
-      "TRENDSFAST_VERCEL_CONFIG_PROFILE=staged vercel deploy --prod --skip-domain --yes -A apps/web/vercel.ops.json",
+      "TRENDSFAST_VERCEL_CONFIG_PROFILE=staged vercel deploy --prod --skip-domain --yes --build-env TRENDSFAST_VERCEL_CONFIG_PROFILE=staged -A apps/web/vercel.ops.json",
     );
     expect(script).toContain("trap cleanup EXIT");
     expect(script).not.toMatch(/\bsource\s+[^\n]*production\.env/);
@@ -384,7 +384,9 @@ describe("founder staged Production deploy script", () => {
       "PASS: stable Production origin resolves to the accepted deployment",
     );
     expect(combinedOutput).not.toContain("TOP_SECRET_SENTINEL");
-    expect(vercelLog).toContain("deploy --prod --skip-domain --yes -A apps/web/vercel.ops.json\n");
+    expect(vercelLog).toContain(
+      "deploy --prod --skip-domain --yes --build-env TRENDSFAST_VERCEL_CONFIG_PROFILE=staged -A apps/web/vercel.ops.json\n",
+    );
     expect(vercelLog.match(/^deploy /gm)).toHaveLength(1);
     expect(vercelLog).toContain(
       "inspect https://trendsfast-abcdef.vercel.app --wait --timeout 5m --format=json",

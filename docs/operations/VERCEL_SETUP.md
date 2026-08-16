@@ -55,11 +55,15 @@ historical deployment had no aliases and was not Production, after which that
 exact deployment was deleted and confirmed absent. The separate legacy
 Supabase-key shutdown remains a release gate.
 
-- `apps/web/vercel.ts` remains the automatic Git/default no-cron config and
-  selects a reviewed founder profile only from the local deploy-script selector.
-- A later Pro deploy using `apps/web/vercel.pro.json` must set
-  `TRENDSFAST_VERCEL_CONFIG_PROFILE=pro`; the Hobby scripts set only `public`
-  or `ops`.
+- `apps/web/vercel.ts` selects a reviewed founder profile from the local
+  deploy-script selector during CLI compilation. Vercel compiles it again in
+  the hosted build, where the already-enabled system `VERCEL_PROJECT_ID` must
+  map exactly to the pinned public or ops project; an unknown hosted project
+  fails closed. Unlinked local tooling retains the cron-free default.
+- A later Pro deploy using `apps/web/vercel.pro.json` needs a separately
+  reviewed hosted-compilation selector or pinned project mapping in addition
+  to the local `TRENDSFAST_VERCEL_CONFIG_PROFILE=pro` selector. The current
+  Hobby scripts set only `public` or `ops` locally.
 - `apps/web/vercel.hobby.json` disables Git deployment from `main`, pins `fra1`,
   and registers the sole Hobby cron: `/api/cron/monitoring` at `0 7 * * *`.
 - `apps/web/vercel.ops.json` disables Git deployment from `main`, pins `fra1`,
@@ -70,6 +74,10 @@ Supabase-key shutdown remains a release gate.
 Hobby may invoke the daily public cron at any time from 07:00 through 07:59
 UTC. Retaining the 300-second route budget depends on the verified Fluid
 Compute project setting; do not infer it from the plan name alone.
+Both Hobby projects must keep Vercel's automatic system environment variables
+exposed so hosted `vercel.ts` compilation receives the authoritative project
+ID. This uses an existing Vercel system value; no profile selector is added to
+the Production environment inventory.
 
 ## Strict environments
 
