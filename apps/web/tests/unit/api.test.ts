@@ -58,7 +58,11 @@ describe("v1 Next Move API", () => {
           post: {
             responses: {
               "200": {},
-              "202": {},
+              "202": {
+                headers: {
+                  "Retry-After": { schema: { type: "integer", const: 30, example: 30 } },
+                },
+              },
               "400": {},
               "401": {},
               "403": {},
@@ -75,7 +79,11 @@ describe("v1 Next Move API", () => {
           post: {
             responses: {
               "200": {},
-              "202": {},
+              "202": {
+                headers: {
+                  "Retry-After": { schema: { type: "integer", const: 30, example: 30 } },
+                },
+              },
               "400": {},
               "401": {},
               "403": {},
@@ -91,7 +99,11 @@ describe("v1 Next Move API", () => {
         "/v1/next-moves/{id}": {
           get: {
             responses: {
-              "200": {},
+              "200": {
+                headers: {
+                  "Retry-After": { schema: { type: "integer", const: 30, example: 30 } },
+                },
+              },
               "401": {},
               "403": {},
               "404": {},
@@ -412,7 +424,14 @@ describe("v1 Next Move API", () => {
     });
     expect(response.status).toBe(202);
     expect(response.headers.get("location")).toBe("/v1/next-moves/move_test");
-    expect(await response.json()).toMatchObject({ poll_after_seconds: 30 });
+    expect(response.headers.get("retry-after")).toBe("30");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({
+      id: "move_test",
+      status: "QUEUED",
+      status_url: "/v1/next-moves/move_test",
+      poll_after_seconds: 30,
+    });
   });
 
   it("admits the preferred claimed-project route only for its project-restricted key", async () => {
@@ -451,6 +470,14 @@ describe("v1 Next Move API", () => {
 
     expect(response.status).toBe(202);
     expect(response.headers.get("location")).toBe("/v1/next-moves/move_project");
+    expect(response.headers.get("retry-after")).toBe("30");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({
+      id: "move_project",
+      status: "QUEUED",
+      status_url: "/v1/next-moves/move_project",
+      poll_after_seconds: 30,
+    });
     expect(createOrReuseForProject).toHaveBeenCalledWith({
       principal: expect.objectContaining({ projectId }),
       projectId,
@@ -478,6 +505,65 @@ describe("v1 Next Move API", () => {
     expect(createOrReuseForProject).toHaveBeenCalledTimes(1);
   });
 
+  it.each(["QUEUED", "RUNNING", "REVIEW_REQUIRED"] as const)(
+    "adds body-derived Retry-After to a %s status response",
+    async (status) => {
+      const result = {
+        id: "move_status",
+        status,
+        status_url: "/v1/next-moves/move_status",
+        poll_after_seconds: 30 as const,
+      };
+      const response = await createV1Api(
+        dependencies({ getStatus: vi.fn(async () => result) }),
+      ).request("/v1/next-moves/move_status", {
+        headers: { authorization: `Bearer ${TEST_KEY}` },
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("retry-after")).toBe(String(result.poll_after_seconds));
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(await response.json()).toEqual(result);
+    },
+  );
+
+  it("omits polling Retry-After from terminal READY and FAILED status responses", async () => {
+    const openApiResponse = await createV1Api(dependencies()).request("/v1/openapi.json");
+    const document = (await openApiResponse.json()) as {
+      paths?: {
+        "/v1/next-move"?: {
+          post?: {
+            responses?: {
+              "200"?: { content?: { "application/json"?: { example?: unknown } } };
+            };
+          };
+        };
+      };
+    };
+    const ready = NextMoveReadyResponseSchema.parse(
+      document.paths?.["/v1/next-move"]?.post?.responses?.["200"]?.content?.["application/json"]
+        ?.example,
+    );
+    const failed = {
+      id: "move_failed",
+      status: "FAILED" as const,
+      error: { code: "SCAN_FAILED", message: "The scan failed.", retryable: true },
+    };
+
+    for (const result of [ready, failed]) {
+      const response = await createV1Api(
+        dependencies({ getStatus: vi.fn(async () => result) }),
+      ).request(`/v1/next-moves/${result.id}`, {
+        headers: { authorization: `Bearer ${TEST_KEY}` },
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("retry-after")).toBeNull();
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(await response.json()).toEqual(result);
+    }
+  });
+
   it("adds Retry-After to service-level 429 responses", async () => {
     const response = await createV1Api(
       dependencies({
@@ -497,6 +583,10 @@ describe("v1 Next Move API", () => {
     });
     expect(response.status).toBe(429);
     expect(response.headers.get("retry-after")).toBe("3600");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({
+      error: { code: "RATE_LIMITED", message: "Create limit reached." },
+    });
   });
 
   it("does not accept unknown request fields", async () => {
