@@ -42,7 +42,9 @@ const contentSecurityPolicy = [
 const securityHeaders = [
   { key: "Content-Security-Policy", value: contentSecurityPolicy },
   { key: "X-Content-Type-Options", value: "nosniff" },
-  { key: "Referrer-Policy", value: "no-referrer" },
+  // Native same-origin form navigations need a tuple Origin for the mutation
+  // guard. `strict-origin` sends only scheme/host/port and strips path/query.
+  { key: "Referrer-Policy", value: "strict-origin" },
   { key: "X-Frame-Options", value: "DENY" },
   { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
   { key: "Cross-Origin-Resource-Policy", value: "same-origin" },
@@ -100,7 +102,7 @@ export const nextConfig: NextConfig = {
         source: "/scan/:path*",
         headers: [
           { key: "Cache-Control", value: "private, no-store, max-age=0" },
-          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "Referrer-Policy", value: "strict-origin" },
           { key: "X-Robots-Tag", value: "noindex, nofollow, noarchive" },
         ],
       },

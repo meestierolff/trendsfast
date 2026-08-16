@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   acceptPublicScan,
+  isSameOrigin,
   publicScanCredentialModeAvailable,
   PublicScanError,
   type PublicScanRepository,
@@ -183,4 +184,64 @@ describe("public scan acceptance", () => {
       });
     },
   );
+});
+
+describe("browser mutation origin boundary", () => {
+  const appUrl = "https://trendsfast.com";
+
+  it("accepts an explicit matching tuple Origin and rejects a mismatch", () => {
+    expect(
+      isSameOrigin(
+        new Request(`${appUrl}/auth/magic-link`, {
+          method: "POST",
+          headers: { origin: appUrl, "sec-fetch-site": "same-origin" },
+        }),
+        appUrl,
+      ),
+    ).toBe(true);
+    expect(
+      isSameOrigin(
+        new Request(`${appUrl}/auth/magic-link`, {
+          method: "POST",
+          headers: { origin: "https://attacker.example", "sec-fetch-site": "cross-site" },
+        }),
+        appUrl,
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps opaque and malformed Origin values fail-closed", () => {
+    for (const origin of ["null", "not-an-origin"]) {
+      expect(
+        isSameOrigin(
+          new Request(`${appUrl}/auth/magic-link`, {
+            method: "POST",
+            headers: { origin, "sec-fetch-site": "same-origin" },
+          }),
+          appUrl,
+        ),
+      ).toBe(false);
+    }
+  });
+
+  it("uses Fetch Metadata only when Origin is absent", () => {
+    expect(
+      isSameOrigin(
+        new Request(`${appUrl}/auth/magic-link`, {
+          method: "POST",
+          headers: { "sec-fetch-site": "same-origin" },
+        }),
+        appUrl,
+      ),
+    ).toBe(true);
+    expect(
+      isSameOrigin(
+        new Request(`${appUrl}/auth/magic-link`, {
+          method: "POST",
+          headers: { "sec-fetch-site": "cross-site" },
+        }),
+        appUrl,
+      ),
+    ).toBe(false);
+  });
 });

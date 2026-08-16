@@ -13,7 +13,7 @@ export const metadata: Metadata = {
   title: "Sign in",
   description: "Claim and save a private TrendsFast result.",
   robots: "noindex, nofollow, noarchive",
-  referrer: "no-referrer",
+  referrer: "strict-origin",
 };
 
 const errorMessages: Record<string, string> = {

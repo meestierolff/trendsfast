@@ -15,7 +15,7 @@ export const metadata: Metadata = {
   title: "Private Next Move",
   description: "A private, founder-reviewed TrendsFast Next Move with evidence receipts.",
   robots: "noindex, nofollow, noarchive",
-  referrer: "no-referrer",
+  referrer: "strict-origin",
 };
 
 export default async function ScanResultPage({ params }: { params: Promise<{ token: string }> }) {

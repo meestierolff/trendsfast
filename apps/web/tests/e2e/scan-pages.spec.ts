@@ -16,7 +16,7 @@ test("reviewed fixture result stays private and records customer signals", async
   const response = await page.goto(`/scan/${fixtureToken}`);
   expect(response?.status()).toBe(200);
   expect(response?.headers()["cache-control"]).toMatch(/no-store|no-cache/);
-  expect(response?.headers()["referrer-policy"]).toBe("no-referrer");
+  expect(response?.headers()["referrer-policy"]).toBe("strict-origin");
   await expect(page.getByRole("heading", { name: "Your next distribution move." })).toBeVisible();
   await expect(page.getByText(/Founder-reviewed|Founder reviewed/).first()).toBeVisible();
   await expect(page.getByText("auto_publish=false", { exact: true }).first()).toBeVisible();
