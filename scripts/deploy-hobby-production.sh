@@ -86,6 +86,8 @@ command_log=""
 effective_config_backup=""
 effective_config_existed="false"
 effective_config_prepared="false"
+deployment_attempt_journal=""
+predecessor_deployment_id=""
 
 restore_effective_deployment_config() {
   if [[ "$effective_config_prepared" != "true" ]]; then
@@ -140,6 +142,70 @@ file_mode() {
   stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null
 }
 
+write_deployment_attempt() {
+  local next_state="$1"
+  local deployment_url_value="${2:-}"
+  local deployment_host_value="${3:-}"
+  local deployment_id_value="${4:-}"
+  node -e '
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const [target, nextState, branch, sha, projectId, predecessorDeploymentId, deploymentUrl, deploymentHost, deploymentId] = process.argv.slice(1);
+    const now = new Date().toISOString();
+    const transitions = {
+      attempt_reserved: undefined,
+      url_captured: "attempt_reserved",
+      deployment_identified: "url_captured",
+      accepted: "deployment_identified",
+    };
+    if (!(nextState in transitions)) process.exit(1);
+    let previous;
+    if (nextState !== "attempt_reserved") {
+      previous = JSON.parse(fs.readFileSync(target, "utf8"));
+      if (
+        previous?.version !== 1 ||
+        previous?.state !== transitions[nextState] ||
+        previous?.acceptedBranch !== branch ||
+        previous?.acceptedSha !== sha ||
+        previous?.projectId !== projectId ||
+        previous?.predecessorDeploymentId !== predecessorDeploymentId
+      ) process.exit(1);
+    }
+    const value = {
+      version: 1,
+      state: nextState,
+      acceptedBranch: branch,
+      acceptedSha: sha,
+      projectId,
+      predecessorDeploymentId,
+      deploymentUrl: deploymentUrl || previous?.deploymentUrl || null,
+      deploymentHost: deploymentHost || previous?.deploymentHost || null,
+      deploymentId: deploymentId || previous?.deploymentId || null,
+      recordedAt: previous?.recordedAt || now,
+      updatedAt: now,
+    };
+    const temporary = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.tmp`);
+    let descriptor;
+    try {
+      if (nextState === "attempt_reserved") {
+        descriptor = fs.openSync(target, "wx", 0o600);
+      } else {
+        descriptor = fs.openSync(temporary, "wx", 0o600);
+      }
+      fs.writeFileSync(descriptor, `${JSON.stringify(value, null, 2)}\n`);
+      fs.fsyncSync(descriptor);
+      fs.closeSync(descriptor);
+      descriptor = undefined;
+      if (nextState !== "attempt_reserved") fs.renameSync(temporary, target);
+      fs.chmodSync(target, 0o600);
+    } catch (error) {
+      if (descriptor !== undefined) fs.closeSync(descriptor);
+      try { fs.unlinkSync(temporary); } catch {}
+      throw error;
+    }
+  ' "$deployment_attempt_journal" "$next_state" "$accepted_branch" "$accepted_sha" "$public_project_id" "$predecessor_deployment_id" "$deployment_url_value" "$deployment_host_value" "$deployment_id_value" >/dev/null 2>&1
+}
+
 assert_git_ignored_upload_boundary() {
   local ignored_path_report="$1"
   git ls-files --others --ignored --exclude-standard -z >"$ignored_path_report" || return 1
@@ -181,14 +247,28 @@ if ! release_identity="$(node -e '
   const release = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
   const branch = release.acceptedBranch;
   const sha = release.acceptedSha;
+  const predecessorDeploymentHost = release.publicDeploymentHost;
+  const predecessorDeploymentId = release.publicDeploymentId ?? "none";
   const validBranch = branch === "main" || branch === "sol/hobby-launch-dogfood";
-  if (release.version !== 1 || !validBranch || !/^[0-9a-f]{40}$/.test(sha)) process.exit(1);
-  process.stdout.write(`${branch}\t${sha}`);
+  const noProvenance = predecessorDeploymentHost === undefined && predecessorDeploymentId === "none";
+  const validProvenance =
+    typeof predecessorDeploymentHost === "string" &&
+    /^[A-Za-z0-9-]+\.vercel\.app$/.test(predecessorDeploymentHost) &&
+    /^dpl_[A-Za-z0-9]+$/.test(predecessorDeploymentId);
+  if (release.version !== 1 || !validBranch || !/^[0-9a-f]{40}$/.test(sha) || (!noProvenance && !validProvenance)) process.exit(1);
+  process.stdout.write(`${branch}\t${sha}\t${predecessorDeploymentId}`);
 ' "$release_contract" 2>/dev/null)"; then
   fail "the private accepted-release contract is invalid"
 fi
-IFS=$'\t' read -r accepted_branch accepted_sha <<<"$release_identity"
+IFS=$'\t' read -r accepted_branch accepted_sha predecessor_deployment_id <<<"$release_identity"
 unset release_identity
+
+release_evidence_directory="${release_contract%/*}/release-evidence"
+[[ -d "$release_evidence_directory" && ! -L "$release_evidence_directory" ]] || fail "the private release-evidence directory is missing or unsafe"
+[[ "$(file_mode "$release_evidence_directory")" == "700" ]] || fail "the private release-evidence directory must be mode 0700"
+deployment_attempt_journal="${release_evidence_directory}/hobby-public-deployment-attempt-${accepted_sha}-${predecessor_deployment_id}.json"
+git check-ignore -q -- "$deployment_attempt_journal" || fail "the public deployment attempt journal is not ignored"
+[[ ! -e "$deployment_attempt_journal" && ! -L "$deployment_attempt_journal" ]] || fail "this accepted SHA already has a public deployment attempt requiring read-only reconciliation"
 
 [[ "$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)" == "$accepted_branch" ]] || fail "HEAD is not on the accepted release branch"
 if ! git fetch --quiet origin "refs/heads/${accepted_branch}:refs/remotes/origin/${accepted_branch}" >/dev/null 2>&1; then
@@ -271,6 +351,7 @@ if ! node -e '
     project.rootDirectory === process.argv[5] &&
     project.framework === "nextjs" &&
     project.link?.productionBranch === "main" &&
+    project.autoExposeSystemEnvs === true &&
     project.defaultResourceConfig?.fluid === true &&
     project.resourceConfig?.fluid === true &&
     project.defaultResourceConfig?.functionDefaultTimeout === 300;
@@ -359,8 +440,23 @@ deployment_git_metadata=(
   --meta "githubCommitRepo=trendsfast"
   --meta "githubCommitOrg=meestierolff"
 )
+if ! write_deployment_attempt "attempt_reserved"; then
+  fail "the public deployment attempt could not be reserved safely"
+fi
 if ! TRENDSFAST_VERCEL_CONFIG_PROFILE=public vercel deploy --prod --skip-domain --yes -A apps/web/vercel.hobby.json "${deployment_git_metadata[@]}" >"$deployment_output" 2>"$command_log"; then
   fail "the public Hobby Production deployment failed"
+fi
+if ! deployment_url="$(node -e '
+  const fs = require("node:fs");
+  const output = fs.readFileSync(process.argv[1], "utf8");
+  const urls = [...new Set(output.match(/https:\/\/[A-Za-z0-9-]+\.vercel\.app\/?/g) ?? [])].map((value) => value.replace(/\/$/, ""));
+  if (urls.length !== 1) process.exit(1);
+  process.stdout.write(urls[0]);
+' "$deployment_output" 2>/dev/null)"; then
+  fail "the public deployment URL could not be captured safely"
+fi
+if ! write_deployment_attempt "url_captured" "$deployment_url"; then
+  fail "the public deployment URL could not be journaled safely"
 fi
 if ! node -e '
   const fs = require("node:fs");
@@ -374,15 +470,6 @@ if ! node -e '
   process.exit(isDeepStrictEqual(actual, expected) ? 0 : 1);
 ' "$effective_deployment_config" "$deployment_config" >/dev/null 2>&1; then
   fail "the effective public deployment config did not match the reviewed Hobby profile"
-fi
-if ! deployment_url="$(node -e '
-  const fs = require("node:fs");
-  const output = fs.readFileSync(process.argv[1], "utf8");
-  const urls = [...new Set(output.match(/https:\/\/[A-Za-z0-9-]+\.vercel\.app\/?/g) ?? [])].map((value) => value.replace(/\/$/, ""));
-  if (urls.length !== 1) process.exit(1);
-  process.stdout.write(urls[0]);
-' "$deployment_output" 2>/dev/null)"; then
-  fail "the public deployment URL could not be captured safely"
 fi
 if ! vercel inspect "$deployment_url" --wait --timeout 5m --format=json >"$deployment_report" 2>"$command_log"; then
   fail "the public deployment could not be inspected"
@@ -407,6 +494,9 @@ fi
 deployment_url="$(node -e 'const value=require(process.argv[1]); process.stdout.write(value.url)' "$safe_deployment")"
 deployment_host="$(node -e 'const value=require(process.argv[1]); process.stdout.write(value.host)' "$safe_deployment")"
 deployment_id="$(node -e 'const value=require(process.argv[1]); process.stdout.write(value.id)' "$safe_deployment")"
+if ! write_deployment_attempt "deployment_identified" "$deployment_url" "$deployment_host" "$deployment_id"; then
+  fail "the public deployment identity could not be journaled safely"
+fi
 if ! vercel api "/v13/deployments/${deployment_id}" --raw >"$deployment_api_report" 2>"$command_log"; then
   fail "the public deployment provenance could not be read back"
 fi
@@ -439,7 +529,9 @@ if ! node -e '
     report.regions.length === 1 &&
     report.regions[0] === "fra1" &&
     Array.isArray(report.crons) &&
-    report.crons.length === 0 &&
+    report.crons.length === 1 &&
+    report.crons[0]?.path === "/api/cron/monitoring" &&
+    report.crons[0]?.schedule === "0 7 * * *" &&
     report.config?.functionType === "fluid" &&
     report.config?.functionTimeout === 300 &&
     report.autoAssignCustomDomains === false &&
@@ -467,8 +559,12 @@ for ((cron_readback_attempt = 1; cron_readback_attempt <= cron_readback_attempts
         !Array.isArray(crons) &&
         crons.deploymentId === process.argv[3] &&
         crons.disabledAt === null &&
+        Number.isSafeInteger(crons.enabledAt) &&
+        crons.enabledAt > 0 &&
         Array.isArray(definitions) &&
-        definitions.length === 0;
+        definitions.length === 1 &&
+        definitions[0]?.path === "/api/cron/monitoring" &&
+        definitions[0]?.schedule === "0 7 * * *";
       process.exit(valid ? 0 : 1);
     ' "$postdeploy_project_report" "$public_project_id" "$deployment_id" >/dev/null 2>&1; then
     cron_state_verified="true"
@@ -479,7 +575,7 @@ for ((cron_readback_attempt = 1; cron_readback_attempt <= cron_readback_attempts
   fi
 done
 if [[ "$cron_state_verified" != "true" ]]; then
-  fail "the public project did not retain the exact inactive staged Hobby cron state for the new deployment"
+  fail "the public project did not register the exact active Hobby cron for the new deployment"
 fi
 if ! vercel inspect "https://${public_generated_domain}" --format=json >"$stable_origin_after_report" 2>"$command_log"; then
   fail "the stable public Vercel origin could not be inspected after deployment"
@@ -493,6 +589,9 @@ if ! node -e '
   fail "the staged deployment changed the stable public Vercel origin"
 fi
 restore_effective_deployment_config || fail "the prior ignored effective deployment config could not be restored"
+if ! write_deployment_attempt "accepted" "$deployment_url" "$deployment_host" "$deployment_id"; then
+  fail "the accepted public deployment could not be finalized in private evidence"
+fi
 # shellcheck disable=SC2016
 if ! node -e '
   const fs = require("node:fs");

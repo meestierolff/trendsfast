@@ -182,6 +182,11 @@ type DeployHarnessOptions = {
   initialLinkMode?: "accepted" | "project-symlink" | "readme-symlink";
   ambientProjectOverride?: boolean;
   ambientTeamOverride?: boolean;
+  autoExposeSystemEnvs?: boolean;
+  publicCronEnabledAt?: "accepted" | "missing" | "zero";
+  preexistingPublicAttempt?: boolean;
+  preexistingPriorPublicAttempt?: boolean;
+  publicPredecessor?: boolean;
   vercelVersion?: string;
   gitIgnoredPath?: string;
   acceptedPublicGitMetadataMode?: GitMetadataMode;
@@ -200,6 +205,7 @@ function runDeployHarness(options: DeployHarnessOptions) {
   const bin = join(root, "bin");
   const state = join(root, ".harness");
   const privateDirectory = join(root, ".var", "private");
+  const releaseEvidenceDirectory = join(privateDirectory, "release-evidence");
   const vercelDirectory = join(root, ".vercel");
   const webDirectory = join(root, "apps", "web");
   const temporaryDirectory = join(root, "tmp");
@@ -220,18 +226,22 @@ function runDeployHarness(options: DeployHarnessOptions) {
   const originalReadme = "pinned public link\n";
   const originalGitignore = ".vercel/\n.env.*\n!.env.example\n";
   const originalEnvLocal = "LOCAL_SENTINEL=preserve-byte-for-byte\n";
+  const publicPredecessorDeploymentId = options.publicPredecessor ? "dpl_PublicPrevious" : "none";
 
   try {
     for (const directory of [
       bin,
       state,
       privateDirectory,
+      releaseEvidenceDirectory,
       vercelDirectory,
       webDirectory,
       temporaryDirectory,
     ]) {
       mkdirSync(directory, { recursive: true });
     }
+    chmodSync(privateDirectory, 0o700);
+    chmodSync(releaseEvidenceDirectory, 0o700);
 
     writeFileSync(join(vercelDirectory, "project.json"), originalLink);
     writeFileSync(join(vercelDirectory, "README.txt"), originalReadme);
@@ -265,7 +275,12 @@ function runDeployHarness(options: DeployHarnessOptions) {
                 publicDeploymentHost: "trendsfast-public-accepted.vercel.app",
                 publicDeploymentId: "dpl_PublicAccepted",
               }
-            : {}),
+            : options.publicPredecessor
+              ? {
+                  publicDeploymentHost: "trendsfast-public-previous.vercel.app",
+                  publicDeploymentId: publicPredecessorDeploymentId,
+                }
+              : {}),
         },
         null,
         2,
@@ -273,6 +288,23 @@ function runDeployHarness(options: DeployHarnessOptions) {
       { mode: 0o600 },
     );
     chmodSync(join(privateDirectory, "hobby-release.json"), 0o600);
+    if (options.preexistingPublicAttempt) {
+      writeFileSync(
+        join(
+          releaseEvidenceDirectory,
+          `hobby-public-deployment-attempt-${acceptedSha}-${publicPredecessorDeploymentId}.json`,
+        ),
+        '{"version":1,"state":"attempt_reserved"}\n',
+        { mode: 0o600 },
+      );
+    }
+    if (options.preexistingPriorPublicAttempt) {
+      writeFileSync(
+        join(releaseEvidenceDirectory, `hobby-public-deployment-attempt-${acceptedSha}-none.json`),
+        '{"version":1,"state":"accepted"}\n',
+        { mode: 0o600 },
+      );
+    }
     writeFileSync(
       join(webDirectory, "vercel.hobby.json"),
       '{"$schema":"https://openapi.vercel.sh/vercel.json","git":{"deploymentEnabled":{"main":false}},"regions":["fra1"],"crons":[{"path":"/api/cron/monitoring","schedule":"0 7 * * *"}]}\n',
@@ -320,6 +352,7 @@ else if (args[0] === "status") {
 }
 else if (args[0] === "symbolic-ref") process.stdout.write(process.env.HARNESS_BRANCH + "\\n");
 else if (args[0] === "fetch") process.exit(0);
+else if (args[0] === "check-ignore") process.exit(0);
 else if (args[0] === "ls-files" && args.includes("--others") && args.includes("--ignored") && args.includes("--exclude-standard")) {
   if (process.env.HARNESS_GIT_IGNORED_PATH) process.stdout.write(process.env.HARNESS_GIT_IGNORED_PATH + "\\0");
 }
@@ -396,6 +429,7 @@ const publicProject = () => ({
   rootDirectory: "apps/web",
   framework: "nextjs",
   link: { productionBranch: "main" },
+  autoExposeSystemEnvs: process.env.HARNESS_AUTO_EXPOSE_SYSTEM_ENVS === "true",
   defaultResourceConfig: { fluid: true, functionDefaultTimeout: 300 },
   resourceConfig: { fluid: true },
 });
@@ -405,6 +439,7 @@ const opsProject = () => ({
   accountId: teamId,
   rootDirectory: "apps/web",
   framework: "nextjs",
+  autoExposeSystemEnvs: process.env.HARNESS_AUTO_EXPOSE_SYSTEM_ENVS === "true",
   defaultResourceConfig: { fluid: true, functionDefaultTimeout: 300 },
   resourceConfig: { fluid: true },
   ssoProtection: { deploymentType: "all_except_custom_domains" },
@@ -466,9 +501,12 @@ if (args[0] === "--version") {
     project.crons = {
       deploymentId: stale ? "dpl_Stale" : "dpl_PublicNew",
       disabledAt: null,
+      ...(process.env.HARNESS_PUBLIC_CRON_ENABLED_AT === "missing"
+        ? {}
+        : { enabledAt: process.env.HARNESS_PUBLIC_CRON_ENABLED_AT === "zero" ? 0 : 1 }),
       definitions: stale
-        ? [{ path: "/api/cron/monitoring", schedule: "0 7 * * *" }]
-        : [],
+        ? [{ path: "/api/cron/monitoring", schedule: "*/10 * * * *" }]
+        : [{ path: "/api/cron/monitoring", schedule: "0 7 * * *" }],
     };
   }
   send(project);
@@ -500,7 +538,7 @@ if (args[0] === "--version") {
     readyState: "READY",
     url: "trendsfast-public-new.vercel.app",
     regions: ["fra1"],
-    crons: [],
+    crons: [{ path: "/api/cron/monitoring", schedule: "0 7 * * *" }],
     config: { functionType: "fluid", functionTimeout: 300 },
     autoAssignCustomDomains: false,
     alias: [aliases[0]],
@@ -547,6 +585,8 @@ if (args[0] === "--version") {
       HARNESS_PUBLIC_STABLE_ORIGIN_MODE: options.publicStableOriginMode ?? "accepted",
       HARNESS_EFFECTIVE_CONFIG_MODE: options.effectiveConfigMode ?? "accepted",
       HARNESS_FAIL_OPS_ATTESTATION: String(options.failOpsAttestation ?? false),
+      HARNESS_AUTO_EXPOSE_SYSTEM_ENVS: String(options.autoExposeSystemEnvs ?? true),
+      HARNESS_PUBLIC_CRON_ENABLED_AT: options.publicCronEnabledAt ?? "accepted",
       HARNESS_VERCEL_VERSION: options.vercelVersion ?? "58.0.0",
       HARNESS_GIT_IGNORED_PATH: options.gitIgnoredPath ?? "",
       HARNESS_ACCEPTED_PUBLIC_GIT_METADATA_MODE:
@@ -594,6 +634,30 @@ if (args[0] === "--version") {
       restoredGitignore: readFileSync(join(root, ".gitignore"), "utf8"),
       restoredEnvLocal: readFileSync(join(root, ".env.local"), "utf8"),
       restoredEnvLocalMode: statSync(join(root, ".env.local")).mode & 0o777,
+      publicDeploymentAttempt: readOptionalHarnessFile(
+        join(
+          releaseEvidenceDirectory,
+          `hobby-public-deployment-attempt-${acceptedSha}-${publicPredecessorDeploymentId}.json`,
+        ),
+      ),
+      publicDeploymentAttemptMode: (() => {
+        try {
+          return (
+            statSync(
+              join(
+                releaseEvidenceDirectory,
+                `hobby-public-deployment-attempt-${acceptedSha}-${publicPredecessorDeploymentId}.json`,
+              ),
+            ).mode & 0o777
+          );
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+          throw error;
+        }
+      })(),
+      priorPublicDeploymentAttempt: readOptionalHarnessFile(
+        join(releaseEvidenceDirectory, `hobby-public-deployment-attempt-${acceptedSha}-none.json`),
+      ),
       originalLink,
       originalLinkMode: 0o644,
       originalReadme,
@@ -684,6 +748,16 @@ describe("founder-only Hobby deployment scripts", () => {
     expect(resolveVercelConfig("staged")).toEqual(ops);
     expect(resolveVercelConfig("public")).toEqual(hobby);
     expect(resolveVercelConfig("pro")).toEqual(pro);
+    expect(resolveVercelConfig(undefined, "prj_nYn6zjWW4BcKd03QaVO6LTOF3CSC")).toEqual(hobby);
+    expect(resolveVercelConfig(undefined, "prj_EYAjX2Nyd1jUXSjfWVTVoI320nnU")).toEqual(ops);
+    expect(resolveVercelConfig("ops", "prj_nYn6zjWW4BcKd03QaVO6LTOF3CSC")).toEqual(ops);
+    expect(resolveVercelConfig("staged", "prj_nYn6zjWW4BcKd03QaVO6LTOF3CSC")).toEqual(ops);
+    expect(() => resolveVercelConfig(undefined, "prj_Unpinned")).toThrow(
+      "VERCEL_PROJECT_ID does not identify a pinned TrendsFast project",
+    );
+    expect(() => resolveVercelConfig("public", "prj_Unpinned")).toThrow(
+      "VERCEL_PROJECT_ID does not identify a pinned TrendsFast project",
+    );
     expect(() => resolveVercelConfig("unexpected")).toThrow(
       "TRENDSFAST_VERCEL_CONFIG_PROFILE must be public, staged, ops, pro, or unset",
     );
@@ -838,6 +912,25 @@ describe("founder-only Hobby deployment scripts", () => {
     );
   });
 
+  it("requires build-time Vercel project identity on both pinned projects", () => {
+    for (const script of [publicScript, opsScript]) {
+      expect(script).toContain("project.autoExposeSystemEnvs === true");
+    }
+
+    for (const target of ["public", "ops"] as const) {
+      const result = runDeployHarness({ target, autoExposeSystemEnvs: false });
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe(
+        `FAIL: the ${target} Vercel project settings do not match the pinned Hobby contract\n`,
+      );
+      expect(harnessCommandCalls(result.vercelLog).filter((args) => args[0] === "deploy")).toEqual(
+        [],
+      );
+      expect(`${result.stdout}${result.stderr}`).not.toContain(redactionCanary);
+    }
+  }, 30_000);
+
   it("uses only the two reviewed deploy commands and never promotes or mutates domains", () => {
     expect(publicScript).toContain(
       "vercel deploy --prod --skip-domain --yes -A apps/web/vercel.hobby.json",
@@ -973,6 +1066,13 @@ describe("founder-only Hobby deployment scripts", () => {
             ? "FAIL: the effective public deployment config did not match the reviewed Hobby profile\n"
             : "FAIL: the effective ops deployment config did not match the reviewed cron-free profile\n",
         );
+        if (target === "public") {
+          expect(JSON.parse(result.publicDeploymentAttempt)).toMatchObject({
+            state: "url_captured",
+            deploymentUrl: "https://trendsfast-public-new.vercel.app",
+          });
+          expect(result.publicDeploymentAttemptMode).toBe(0o600);
+        }
         expect(`${result.stdout}${result.stderr}`).not.toContain(redactionCanary);
       }
     }
@@ -1016,11 +1116,13 @@ describe("founder-only Hobby deployment scripts", () => {
     }
   }, 30_000);
 
-  it("reads back the exact staged public and cron-free ops state after each deployment", () => {
+  it("reads back the exact public Hobby cron and cron-free ops state after each deployment", () => {
     expect(
       publicScript.match(/vercel api "\/v9\/projects\/\$\{public_project_id\}" --raw/gu),
     ).toHaveLength(2);
-    expect(publicScript).toContain("report.crons.length === 0");
+    expect(publicScript).toContain("report.crons.length === 1");
+    expect(publicScript).toContain('report.crons[0]?.path === "/api/cron/monitoring"');
+    expect(publicScript).toContain('report.crons[0]?.schedule === "0 7 * * *"');
     expect(publicScript).toContain(
       'readonly effective_deployment_config="apps/web/.vercel/vercel.json"',
     );
@@ -1028,7 +1130,11 @@ describe("founder-only Hobby deployment scripts", () => {
     expect(publicScript).toContain('rm -f -- "$effective_deployment_config"');
     expect(publicScript).toContain("crons.deploymentId === process.argv[3]");
     expect(publicScript).toContain("crons.disabledAt === null");
-    expect(publicScript).toContain("definitions.length === 0");
+    expect(publicScript).toContain("Number.isSafeInteger(crons.enabledAt)");
+    expect(publicScript).toContain("crons.enabledAt > 0");
+    expect(publicScript).toContain("definitions.length === 1");
+    expect(publicScript).toContain('definitions[0]?.path === "/api/cron/monitoring"');
+    expect(publicScript).toContain('definitions[0]?.schedule === "0 7 * * *"');
 
     expect(
       opsScript.match(/vercel api "\/v9\/projects\/\$\{ops_project_id\}" --raw/gu),
@@ -1055,7 +1161,7 @@ describe("founder-only Hobby deployment scripts", () => {
     }
   });
 
-  it("tolerates stale public V9 cron state and accepts only the new staged deployment state", () => {
+  it("tolerates stale public V9 cron state and accepts only the new exact registration", () => {
     const result = runDeployHarness({
       target: "public",
       staleCronReads: 1,
@@ -1071,6 +1177,18 @@ describe("founder-only Hobby deployment scripts", () => {
       publicDeploymentHost: "trendsfast-public-new.vercel.app",
       publicDeploymentId: "dpl_PublicNew",
     });
+    expect(JSON.parse(result.publicDeploymentAttempt)).toMatchObject({
+      version: 1,
+      state: "accepted",
+      acceptedBranch,
+      acceptedSha,
+      projectId: "prj_nYn6zjWW4BcKd03QaVO6LTOF3CSC",
+      predecessorDeploymentId: "none",
+      deploymentUrl: "https://trendsfast-public-new.vercel.app",
+      deploymentHost: "trendsfast-public-new.vercel.app",
+      deploymentId: "dpl_PublicNew",
+    });
+    expect(result.publicDeploymentAttemptMode).toBe(0o600);
     expect(`${result.stdout}${result.stderr}`).not.toContain(redactionCanary);
   }, 30_000);
 
@@ -1081,9 +1199,59 @@ describe("founder-only Hobby deployment scripts", () => {
     expect(result.sleepLog).toBe("2\n".repeat(5));
     expect(result.stdout).toBe("");
     expect(result.stderr).toBe(
-      "FAIL: the public project did not retain the exact inactive staged Hobby cron state for the new deployment\n",
+      "FAIL: the public project did not register the exact active Hobby cron for the new deployment\n",
     );
+    expect(JSON.parse(result.publicDeploymentAttempt)).toMatchObject({
+      state: "deployment_identified",
+      deploymentId: "dpl_PublicNew",
+    });
     expect(`${result.stdout}${result.stderr}`).not.toContain(redactionCanary);
+  }, 30_000);
+
+  it("requires a positive scheduler enabledAt value for the staged public cron", () => {
+    for (const publicCronEnabledAt of ["missing", "zero"] as const) {
+      const result = runDeployHarness({
+        target: "public",
+        staleCronReads: 0,
+        publicCronEnabledAt,
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe(
+        "FAIL: the public project did not register the exact active Hobby cron for the new deployment\n",
+      );
+      expect(JSON.parse(result.publicDeploymentAttempt)).toMatchObject({
+        state: "deployment_identified",
+        deploymentId: "dpl_PublicNew",
+      });
+      expect(`${result.stdout}${result.stderr}`).not.toContain(redactionCanary);
+    }
+  }, 30_000);
+
+  it("blocks an unresolved attempt but permits the same SHA after its predecessor advances", () => {
+    const result = runDeployHarness({ target: "public", preexistingPublicAttempt: true });
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(
+      "FAIL: this accepted SHA already has a public deployment attempt requiring read-only reconciliation\n",
+    );
+    expect(result.vercelLog).toBe("");
+    expect(`${result.stdout}${result.stderr}`).not.toContain(redactionCanary);
+
+    const advancedPredecessor = runDeployHarness({
+      target: "public",
+      staleCronReads: 0,
+      publicPredecessor: true,
+      preexistingPriorPublicAttempt: true,
+    });
+    expect(advancedPredecessor.status).toBe(0);
+    expect(advancedPredecessor.priorPublicDeploymentAttempt).toContain('"state":"accepted"');
+    expect(JSON.parse(advancedPredecessor.publicDeploymentAttempt)).toMatchObject({
+      state: "accepted",
+      acceptedSha,
+      predecessorDeploymentId: "dpl_PublicPrevious",
+      deploymentId: "dpl_PublicNew",
+    });
   }, 30_000);
 
   it("rejects an unrelated staged public alias without leaking the response", () => {

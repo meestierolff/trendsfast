@@ -215,8 +215,11 @@ standalone maximum of 10 is not an independently valid production setting.
 These checks encode the current cron-route budget but do not prove that a
 scheduler is deployed, configured, or completing within that budget.
 
-`apps/web/vercel.ts` is the no-cron default discovered by automatic Git
-deployments because the Vercel Root Directory is `apps/web`.
+`apps/web/vercel.ts` uses the explicit local founder selector during CLI
+compilation and the existing build-time `VERCEL_PROJECT_ID` during Vercel's
+hosted compilation. The pinned public project resolves to the Hobby cron
+profile, the pinned ops project resolves to the cron-free ops profile, and an
+unknown hosted project fails closed. Unlinked local tooling remains cron-free.
 `apps/web/vercel.hobby.json` is the reviewed public Hobby release config: it
 pins `fra1` and registers the single `/api/cron/monitoring` schedule at
 `0 7 * * *`. Hobby may invoke it from 07:00 through 07:59 UTC. The public
@@ -227,6 +230,8 @@ not protect its Production alias on Hobby: `OPS_TOKEN` admission, a signed
 session, and exact ops-surface guards are the access boundary. The ops project
 keeps only generated Vercel hosts and no custom domain.
 `apps/web/vercel.pro.json` remains unchanged for the later Pro upgrade. The
+later Pro release must add a reviewed hosted-compilation selector or pinned
+project mapping; a local selector alone is not a cloud-build proof. The
 runtime also denies Vercel previews even if production flags were copied.
 
 Monitoring failures are durable. Only known outcomes receive a capped retry;

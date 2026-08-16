@@ -41,15 +41,39 @@ state the script already verified independently. Because the command uses
 `--skip-domain`, it does not promote the deployment or change the stable
 generated alias; the script proves that boundary by requiring the stable origin
 to resolve to the same READY Production deployment before and after the staged
-deploy. Vercel keeps this as a staged Production deployment: domain
-auto-assignment stays off and the project cron record remains bound to the new
-deployment with no active definitions until it becomes Current. The script
-temporarily preserves any prior ignored CLI-compiled config, requires CLI 58 to
-recreate an exact semantic copy of the tracked public profile for this deploy,
-and restores the prior ignored state. The tracked public config still pins the
-sole daily Hobby cron, whose active registration must be verified after
-promotion. On success the script atomically adds the safe public deployment host
-and ID to the private release contract for the ops provenance fence.
+deploy. Domain auto-assignment stays off, while the script requires both the
+deployment manifest and the project-level scheduler read-back to contain the
+sole daily Hobby cron bound to the new deployment. The script temporarily
+preserves any prior ignored CLI-compiled config, requires CLI 58 to recreate an
+exact semantic copy of the tracked public profile for this deploy, and restores
+the prior ignored state. Hosted `vercel.ts` compilation independently selects
+that same profile from Vercel's existing build-time project ID; both pinned
+projects must keep automatic system environment variables exposed. On success
+the script atomically adds the safe public deployment host and ID to the private
+release contract for the ops provenance fence.
+
+Immediately before its one public deploy call, the script creates a private
+mode-`0600` attempt journal under `.var/private/release-evidence/`. The journal
+is keyed by the accepted SHA and predecessor public deployment ID, then moves
+through `attempt_reserved`, `url_captured`, `deployment_identified`, and
+`accepted`. An unresolved pre-contract attempt with the same SHA and predecessor
+therefore cannot be retried blindly. Read only the journal's safe URL/ID fields,
+then reconcile that exact candidate through deployment V13, the stable Current
+origin, and the project V9 cron binding. Never delete or rename the journal
+merely to make a retry pass. If no external deployment or cron effect can be
+proved, or if an accepted candidate needs its release contract repaired, stop
+for a reviewed recovery decision. If the release contract already advanced but
+final stdout was lost, treat the stage as completed and continue reconciliation
+and smoke; do not deploy again. A successful release advances the predecessor in
+the contract, so a later intentional same-SHA environment redeploy receives a
+new journal key without erasing prior evidence.
+
+The staged candidate owns the active daily cron before immutable smoke. The
+seven scans-off flags prevent public, paid-monitoring, billing, and provider
+scan effects, but an authorized scheduled invocation can still perform bounded
+daily reconciliation and write reconciliation or alert state. Complete the
+immutable checks and promotion before the next `07:00`–`07:59` UTC scheduler
+window whenever possible.
 
 `deploy-hobby-ops.sh` requires that public provenance, pins the
 `trendsfast-ops` project, verifies its defense-in-depth Vercel Authentication
@@ -63,9 +87,10 @@ vercel deploy --prod --yes -A apps/web/vercel.ops.json
 It applies the same fresh CLI-compiled-config proof against the tracked
 cron-free ops profile and restores any prior ignored compiled file.
 
-It temporarily relinks the checkout to the ops project, then restores the
-original public `.vercel/project.json` byte-for-byte on success or failure. It
-prints only the stable app-authenticated ops alias and deployment ID after
+It temporarily installs the exact pinned ops project link without invoking
+`vercel link`, then restores the original public `.vercel/project.json`
+byte-for-byte on success or failure. It prints only the stable
+app-authenticated ops alias and deployment ID after
 all five Git attestation fields are read back from the unique deployment URL.
 Vercel Standard Authentication does not protect Production aliases on Hobby,
 so this read-back is not the founder-access proof. The application boundary is
