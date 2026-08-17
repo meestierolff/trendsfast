@@ -7,11 +7,19 @@ import {
 } from "./source-projection-model";
 import { deploymentProvenance } from "./deployment-provenance";
 
+export type PublicSourceProjectionState =
+  "identity_unavailable" | "lookup_failed" | "lookup_succeeded_empty" | "available";
+
+export type PublicSourceProjection = {
+  sources: PublicSourceStatusView[];
+  state: PublicSourceProjectionState;
+};
+
 /**
  * Returns friendly public labels plus an expandable exact technical record.
  * Database failure deliberately falls back to non-upgraded catalog truth.
  */
-export async function listPublicSourceStatuses(): Promise<PublicSourceStatusView[]> {
+export async function loadPublicSourceProjection(): Promise<PublicSourceProjection> {
   const deployment = deploymentProvenance();
   if (
     deployment.deploymentEnvironment !== "production" ||
@@ -19,7 +27,10 @@ export async function listPublicSourceStatuses(): Promise<PublicSourceStatusView
     !deployment.deploymentHost ||
     !deployment.deploymentId
   ) {
-    return projectPublicSourceStatuses([], deployment);
+    return {
+      sources: projectPublicSourceStatuses([], deployment),
+      state: "identity_unavailable",
+    };
   }
   try {
     const records = await getRepositories().providerVerifications.latestPublicProductionBySource({
@@ -27,8 +38,18 @@ export async function listPublicSourceStatuses(): Promise<PublicSourceStatusView
       deploymentHost: deployment.deploymentHost,
       deploymentId: deployment.deploymentId,
     });
-    return projectPublicSourceStatuses(records, deployment);
+    return {
+      sources: projectPublicSourceStatuses(records, deployment),
+      state: records.length === 0 ? "lookup_succeeded_empty" : "available",
+    };
   } catch {
-    return projectPublicSourceStatuses([], deployment);
+    return {
+      sources: projectPublicSourceStatuses([], deployment),
+      state: "lookup_failed",
+    };
   }
+}
+
+export async function listPublicSourceStatuses(): Promise<PublicSourceStatusView[]> {
+  return (await loadPublicSourceProjection()).sources;
 }
