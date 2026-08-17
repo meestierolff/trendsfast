@@ -5,6 +5,10 @@ export type DeploymentProvenance = {
   deploymentId: string | null;
 };
 
+// `next.config.ts` supplies this direct build-time expression. Keeping it out
+// of the dynamic `env` alias lets Next inline the ID into the server bundle.
+const buildDeploymentId = process.env.TRENDSFAST_BUILD_DEPLOYMENT_ID;
+
 function bounded(value: string | undefined, maximum: number): string | null {
   const normalized = value?.trim();
   return normalized ? normalized.slice(0, maximum) : null;
@@ -24,6 +28,7 @@ function host(value: string | undefined): string | null {
 /** Trusted server-side deployment identity; request bodies cannot override it. */
 export function deploymentProvenance(
   env: Readonly<Record<string, string | undefined>> = process.env,
+  embeddedDeploymentId: string | undefined = buildDeploymentId,
 ): DeploymentProvenance {
   const vercelEnvironment = env.VERCEL_ENV?.trim();
   if (vercelEnvironment === "production" || vercelEnvironment === "preview") {
@@ -31,7 +36,7 @@ export function deploymentProvenance(
       deploymentEnvironment: vercelEnvironment,
       releaseSha: bounded(env.VERCEL_GIT_COMMIT_SHA, 100),
       deploymentHost: host(env.VERCEL_URL),
-      deploymentId: bounded(env.VERCEL_DEPLOYMENT_ID, 255),
+      deploymentId: bounded(env.VERCEL_DEPLOYMENT_ID ?? embeddedDeploymentId, 255),
     };
   }
   if (env.TRENDSFAST_DEPLOYMENT_ENV?.trim() === "production") {

@@ -5,6 +5,37 @@ const isProduction = process.env.NODE_ENV === "production";
 const isHttpsDeployment = process.env.APP_URL?.startsWith("https://") ?? false;
 const distDir = process.env.NEXT_DIST_DIR?.trim() || ".next";
 
+export function resolveBuildOnlyDeploymentEnvironment(
+  environment: Readonly<Record<string, string | undefined>>,
+): Readonly<Record<string, string>> {
+  if (environment.VERCEL !== "1") return {};
+  const vercelEnvironment = environment.VERCEL_ENV?.trim();
+  if (vercelEnvironment === "development") return {};
+  if (vercelEnvironment !== "production" && vercelEnvironment !== "preview") {
+    throw new Error("Hosted Vercel builds require a production or preview VERCEL_ENV system value");
+  }
+
+  const required = [
+    environment.VERCEL_GIT_COMMIT_SHA,
+    environment.VERCEL_URL,
+    environment.VERCEL_DEPLOYMENT_ID,
+  ];
+  if (required.some((value) => !value?.trim() || value !== value.trim())) {
+    throw new Error(
+      "Hosted Vercel builds require clean VERCEL_GIT_COMMIT_SHA, VERCEL_URL, and VERCEL_DEPLOYMENT_ID system values",
+    );
+  }
+
+  return {
+    // Vercel assigns the deployment ID before the hosted framework build. Next
+    // embeds this non-secret fallback into the same immutable deployment so a
+    // request-time system-variable omission cannot erase exact provenance.
+    TRENDSFAST_BUILD_DEPLOYMENT_ID: environment.VERCEL_DEPLOYMENT_ID!,
+  };
+}
+
+const buildOnlyDeploymentEnvironment = resolveBuildOnlyDeploymentEnvironment(process.env);
+
 function configuredMediaOrigin(value: string | undefined): string | null {
   if (!value) return null;
   try {
@@ -72,6 +103,7 @@ export const canonicalHostRedirects = [
 
 export const nextConfig: NextConfig = {
   distDir,
+  env: buildOnlyDeploymentEnvironment,
   pageExtensions: ["js", "jsx", "mdx", "ts", "tsx"],
   allowedDevOrigins: ["127.0.0.1"],
   poweredByHeader: false,
