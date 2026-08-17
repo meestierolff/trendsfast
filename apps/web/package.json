@@ -28,7 +28,7 @@
     "@trendsfast/providers": "workspace:*",
     "@trendsfast/schemas": "workspace:*",
     "@trendsfast/scoring": "workspace:*",
-    "hono": "^4.0.0",
+    "hono": "^4.13.2",
     "next": "^16.0.0",
     "pg": "^8.0.0",
     "react": "^19.0.0",
