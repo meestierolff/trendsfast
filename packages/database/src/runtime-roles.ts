@@ -515,6 +515,18 @@ export const RUNTIME_COLUMN_PRIVILEGES: Readonly<
   ],
   member: [
     {
+      table: "analytics_events",
+      privilege: "INSERT",
+      columns: [
+        "name",
+        "scan_request_id",
+        "next_move_id",
+        "dedupe_key",
+        "properties",
+        "occurred_at",
+      ],
+    },
+    {
       table: "api_keys",
       privilege: "SELECT",
       columns: [
@@ -547,10 +559,57 @@ export const RUNTIME_COLUMN_PRIVILEGES: Readonly<
     {
       table: "delivery_tokens",
       privilege: "SELECT",
-      columns: ["id", "next_move_id", "status", "expires_at"],
+      columns: [
+        "id",
+        "next_move_id",
+        "token_prefix",
+        "status",
+        "expires_at",
+        "delivered_at",
+        "created_at",
+      ],
+    },
+    {
+      table: "delivery_tokens",
+      privilege: "INSERT",
+      columns: [
+        "next_move_id",
+        "token_prefix",
+        "token_hash",
+        "status",
+        "expires_at",
+        "delivered_at",
+      ],
+    },
+    {
+      table: "evidence_receipts",
+      privilege: "UPDATE",
+      columns: ["verified", "verified_at", "reviewed_by"],
     },
     { table: "founder_usage_events", privilege: "UPDATE", columns: ["scan_request_id"] },
-    { table: "next_moves", privilege: "UPDATE", columns: ["proposal_stale", "updated_at"] },
+    {
+      table: "monitoring_runs",
+      privilege: "SELECT",
+      columns: ["scan_request_id", "state"],
+    },
+    {
+      table: "monitoring_runs",
+      privilege: "UPDATE",
+      columns: ["state", "completed_at", "updated_at"],
+    },
+    {
+      table: "next_moves",
+      privilege: "UPDATE",
+      columns: [
+        "proposal_stale",
+        "state",
+        "founder_reviewed",
+        "independent_source_count",
+        "approved_at",
+        "delivered_at",
+        "updated_at",
+      ],
+    },
     {
       table: "project_claims",
       privilege: "UPDATE",
@@ -564,8 +623,32 @@ export const RUNTIME_COLUMN_PRIVILEGES: Readonly<
     { table: "project_context_versions", privilege: "UPDATE", columns: ["is_current"] },
     {
       table: "projects",
+      privilege: "INSERT",
+      columns: ["public_id", "name", "url", "normalized_url"],
+    },
+    {
+      table: "projects",
       privilege: "UPDATE",
       columns: ["url", "normalized_url", "updated_at"],
+    },
+    {
+      table: "review_events",
+      privilege: "INSERT",
+      columns: [
+        "scan_request_id",
+        "scan_run_id",
+        "next_move_id",
+        "action",
+        "reviewer_id",
+        "before",
+        "after",
+        "note",
+      ],
+    },
+    {
+      table: "scan_requests",
+      privilege: "UPDATE",
+      columns: ["state", "failure_code", "failure_message", "completed_at", "updated_at"],
     },
     { table: "subscriptions", privilege: "SELECT", columns: ["id"] },
     {
@@ -573,7 +656,16 @@ export const RUNTIME_COLUMN_PRIVILEGES: Readonly<
       privilege: "INSERT",
       columns: ["scan_request_id", "project_context_version_id", "attempt", "state"],
     },
-    { table: "scan_runs", privilege: "SELECT", columns: ["id"] },
+    {
+      table: "scan_runs",
+      privilege: "SELECT",
+      columns: ["id", "state", "failure_code"],
+    },
+    {
+      table: "scan_runs",
+      privilege: "UPDATE",
+      columns: ["state", "failure_code", "failure_message", "completed_at", "updated_at"],
+    },
     {
       table: "user_profiles",
       privilege: "UPDATE",

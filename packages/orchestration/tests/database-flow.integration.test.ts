@@ -18,7 +18,10 @@ import {
   storedSignal,
 } from "../src/database-store";
 import { decideDeterministically } from "../src/decision";
-import { deriveVersionedNextMove } from "../src/decision-contract";
+import {
+  assertVersionedNextMoveContentSafety,
+  deriveVersionedNextMove,
+} from "../src/decision-contract";
 import { inferFixtureProjectContext } from "../src/context";
 import { createProviderRunner } from "../src/provider-runner";
 import { processScan } from "../src/state-machine";
@@ -34,7 +37,9 @@ databaseDescribe("persisted fixture scan", () => {
 
   function fixtureDependencies(actionable = false) {
     return {
-      store: createDatabaseProcessingStore(repositories),
+      store: createDatabaseProcessingStore(repositories, {
+        includeHistoricalMetricSnapshots: true,
+      }),
       inferContext: inferFixtureProjectContext,
       planQueries: (
         context: Parameters<typeof projectContextToProductQueryContext>[0],
@@ -369,6 +374,25 @@ databaseDescribe("persisted fixture scan", () => {
         .sort((left, right) => left.observedAt.getTime() - right.observedAt.getTime())
         .map((snapshot) => snapshot.observedAt.getTime()),
     );
+
+    await repositories.scanData.updateSourceRun({
+      sourceRunId: firstHackerNews.sourceRun.id,
+      state: "DEGRADED",
+      callsMade: firstHackerNews.sourceRun.callsMade,
+      candidateCount: firstHackerNews.sourceRun.candidateCount,
+    });
+    const succeededOnlyHistory = await repositories.scanData.listHistoricalMetricSnapshotsForRun(
+      secondRun.id,
+    );
+    expect(
+      succeededOnlyHistory.filter((snapshot) => snapshot.signalId === currentHackerNews.id),
+    ).toEqual([
+      {
+        signalId: currentHackerNews.id,
+        observedAt: currentHackerNews.observedAt,
+        metrics: currentHackerNews.metrics,
+      },
+    ]);
   });
 
   it("serializes edit-and-approve, preserves immutable decision data, and delivers only current evidence", async () => {
@@ -433,7 +457,7 @@ databaseDescribe("persisted fixture scan", () => {
     }
 
     const contextValue = ProjectContextSchema.parse(context);
-    const validUntil = new Date(Date.now() + 2 * 86_400_000);
+    const validUntil = new Date(move.validUntil);
     const baseEdits = {
       topic: `${move.topic} · founder edit`,
       angle: move.angle,
@@ -454,6 +478,8 @@ databaseDescribe("persisted fixture scan", () => {
         reviewerId: "integration-founder",
         expectedVersion: move.reviewVersion,
         reason: "A channel outside the reviewed context must fail the quality floor.",
+        renewedEvidenceReceiptIds: decisionReceipts.map((receipt) => receipt.id),
+        assertFinalContentSafety: assertVersionedNextMoveContentSafety,
         edits: { ...baseEdits, channel: "unreviewed_channel" },
       }),
     ).rejects.toThrow(/channel.*current.*context/i);
@@ -463,11 +489,54 @@ databaseDescribe("persisted fixture scan", () => {
         reviewerId: "integration-founder",
         expectedVersion: move.reviewVersion,
         reason: "A format outside the reviewed context must fail the quality floor.",
+        renewedEvidenceReceiptIds: decisionReceipts.map((receipt) => receipt.id),
+        assertFinalContentSafety: assertVersionedNextMoveContentSafety,
         edits: { ...baseEdits, format: "unreviewed_format" },
       }),
     ).rejects.toThrow(/format.*current.*context/i);
     expect(contextValue.suitableChannels).toContain(baseEdits.channel);
     expect(contextValue.availableFormats).toContain(baseEdits.format);
+    await expect(
+      repositories.reviews.editAndApprove({
+        nextMoveId: move.id,
+        reviewerId: "integration-founder",
+        expectedVersion: move.reviewVersion,
+        reason: "A stale receipt attestation must not authorize newly edited content.",
+        renewedEvidenceReceiptIds: [],
+        assertFinalContentSafety: assertVersionedNextMoveContentSafety,
+        edits: { ...baseEdits, topic: `${move.topic} · missing renewed evidence review` },
+      }),
+    ).rejects.toThrow(/renewed review.*exact decision-support/i);
+    await expect(
+      repositories.reviews.editAndApprove({
+        nextMoveId: move.id,
+        reviewerId: "integration-founder",
+        expectedVersion: move.reviewVersion,
+        reason: "Founder edits cannot manufacture a longer action or reply timing window.",
+        renewedEvidenceReceiptIds: decisionReceipts.map((current) => current.id),
+        assertFinalContentSafety: assertVersionedNextMoveContentSafety,
+        edits: {
+          ...baseEdits,
+          topic: `${move.topic} · invalid timing extension`,
+          validUntil: new Date(move.validUntil.getTime() + 1),
+        },
+      }),
+    ).rejects.toThrow(/never extend/i);
+    await expect(
+      repositories.reviews.editAndApprove({
+        nextMoveId: move.id,
+        reviewerId: "integration-founder",
+        expectedVersion: move.reviewVersion,
+        reason: "Every content edit must pass the shared post-reconciliation safety boundary.",
+        renewedEvidenceReceiptIds: decisionReceipts.map((current) => current.id),
+        assertFinalContentSafety: assertVersionedNextMoveContentSafety,
+        edits: {
+          ...baseEdits,
+          topic: `${move.topic} · otherwise safe copy`,
+          whyNow: "Guaranteed 500% returns without risk; buy TSLA immediately.",
+        },
+      }),
+    ).rejects.toThrow(/final content-safety boundary/i);
 
     const beforeSignals = await repositories.scanData.listSignalsForRun(run.id);
     const beforeCosts = await repositories.costs.totalsForScan(run.id);
@@ -477,6 +546,8 @@ databaseDescribe("persisted fixture scan", () => {
         reviewerId: "integration-founder-a",
         expectedVersion: move.reviewVersion,
         reason: "Founder A tightened the topic after reviewing the same immutable receipts.",
+        renewedEvidenceReceiptIds: decisionReceipts.map((receipt) => receipt.id),
+        assertFinalContentSafety: assertVersionedNextMoveContentSafety,
         edits: { ...baseEdits, topic: `${move.topic} · founder edit A` },
       }),
       repositories.reviews.editAndApprove({
@@ -484,6 +555,8 @@ databaseDescribe("persisted fixture scan", () => {
         reviewerId: "integration-founder-b",
         expectedVersion: move.reviewVersion,
         reason: "Founder B concurrently tightened the topic from the same loaded version.",
+        renewedEvidenceReceiptIds: decisionReceipts.map((receipt) => receipt.id),
+        assertFinalContentSafety: assertVersionedNextMoveContentSafety,
         edits: { ...baseEdits, topic: `${move.topic} · founder edit B` },
       }),
     ]);
@@ -514,6 +587,13 @@ databaseDescribe("persisted fixture scan", () => {
     ).toBe(true);
     expect(new Set(edited.evidence.map((current) => current.signalId))).toEqual(
       new Set(detail.evidence.map((current) => current.signalId)),
+    );
+    const renewedSupport = edited.evidence.filter(
+      (current) => current.bindingRole === "DECISION_SUPPORT",
+    );
+    expect(renewedSupport.every((current) => current.verified && current.verifiedAt)).toBe(true);
+    expect(renewedSupport.every((current) => current.reviewedBy !== "integration-founder")).toBe(
+      true,
     );
     expect(await repositories.scanData.listSignalsForRun(run.id)).toEqual(beforeSignals);
     expect(await repositories.costs.totalsForScan(run.id)).toEqual(beforeCosts);
@@ -606,7 +686,7 @@ databaseDescribe("persisted fixture scan", () => {
             cta: move.cta,
             priority: move.priority,
             confidence: Number(move.confidence),
-            validUntil: new Date(Date.now() + 2 * 86_400_000).toISOString(),
+            validUntil: move.validUntil.toISOString(),
           },
           whyNow: move.whyNow,
           signalClass: move.signalClass,
@@ -622,6 +702,64 @@ databaseDescribe("persisted fixture scan", () => {
         },
       }),
     ).rejects.toThrow(/rejected evidence cannot re-enter/i);
+
+    const availableReceipt = detail.evidence.find(
+      (receipt) => receipt.bindingRole === "DECISION_SUPPORT",
+    );
+    if (!availableReceipt) throw new Error("The source-state regression requires stored support");
+    const availableSignalRow = (await repositories.scanData.listSignalsForRun(run.id)).find(
+      ({ signal }) => signal.id === availableReceipt.signalId,
+    );
+    if (!availableSignalRow) throw new Error("The stored support signal disappeared");
+    await repositories.scanData.updateSourceRun({
+      sourceRunId: availableSignalRow.sourceRun.id,
+      state: "DEGRADED",
+      callsMade: availableSignalRow.sourceRun.callsMade,
+      candidateCount: availableSignalRow.sourceRun.candidateCount,
+      ...(availableSignalRow.sourceRun.providerPayloadFragment
+        ? { providerPayloadFragment: availableSignalRow.sourceRun.providerPayloadFragment }
+        : {}),
+    });
+    await expect(
+      repositories.reviews.recomputeFromStoredEvidence({
+        nextMoveId: move.id,
+        reviewerId: "integration-founder",
+        expectedVersion: move.reviewVersion,
+        reason: "A degraded source row cannot re-enter a stored-evidence recompute.",
+        draft: {
+          move: {
+            action: move.action,
+            channel: move.channel,
+            topic: move.topic,
+            angle: move.angle,
+            format: move.format,
+            hook: move.hook,
+            outline: move.outline,
+            cta: move.cta,
+            priority: move.priority,
+            confidence: Number(move.confidence),
+            validUntil: move.validUntil.toISOString(),
+          },
+          whyNow: move.whyNow,
+          signalClass: move.signalClass,
+          independentSourceCount: move.independentSourceCount,
+          saturation: move.saturation,
+          limitations: move.limitations,
+          evidenceSignalIds: [availableReceipt.signalId],
+          promptVersion: move.promptVersion,
+          scoreVersion: move.scoreVersion,
+        },
+      }),
+    ).rejects.toThrow(/SUCCEEDED source.*same stored scan run/i);
+    await repositories.scanData.updateSourceRun({
+      sourceRunId: availableSignalRow.sourceRun.id,
+      state: "SUCCEEDED",
+      callsMade: availableSignalRow.sourceRun.callsMade,
+      candidateCount: availableSignalRow.sourceRun.candidateCount,
+      ...(availableSignalRow.sourceRun.providerPayloadFragment
+        ? { providerPayloadFragment: availableSignalRow.sourceRun.providerPayloadFragment }
+        : {}),
+    });
 
     const contextBefore = ProjectContextSchema.parse(context);
     const contextVersionsBefore = await repositories.reviews.listContextVersions(project.id);
@@ -1018,7 +1156,7 @@ databaseDescribe("persisted fixture scan", () => {
         cta: move.cta,
         priority: move.priority,
         confidence: Number(move.confidence),
-        validUntil: new Date(Date.now() + 2 * 86_400_000).toISOString(),
+        validUntil: move.validUntil.toISOString(),
       },
       whyNow: move.whyNow,
       signalClass: move.signalClass,
@@ -1117,6 +1255,10 @@ databaseDescribe("persisted fixture scan", () => {
         reviewerId: "stale-context-founder",
         expectedVersion: losingDraft.move.reviewVersion,
         reason: "A stale project context must block edits even when the move version matches.",
+        renewedEvidenceReceiptIds: losingEvidence
+          .filter((receipt) => receipt.bindingRole === "DECISION_SUPPORT")
+          .map((receipt) => receipt.id),
+        assertFinalContentSafety: assertVersionedNextMoveContentSafety,
         edits: {
           topic: `${losingDraft.move.topic} with a stale-context edit`,
           angle: losingDraft.move.angle,
@@ -1127,7 +1269,7 @@ databaseDescribe("persisted fixture scan", () => {
           cta: losingDraft.move.cta,
           whyNow: losingDraft.move.whyNow,
           limitations: losingDraft.move.limitations,
-          validUntil: new Date(Date.now() + 2 * 86_400_000),
+          validUntil: losingDraft.move.validUntil,
           confidenceRationale:
             losingDraft.move.confidenceRationale ??
             "The current stored evidence remains bounded by the original deterministic score.",

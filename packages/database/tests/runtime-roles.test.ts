@@ -174,7 +174,11 @@ describe("hosted least-privilege database roles", () => {
         expect.objectContaining({ table: "api_keys", privilege: "UPDATE" }),
         expect.objectContaining({ table: "project_context_versions", privilege: "UPDATE" }),
         expect.objectContaining({ table: "projects", privilege: "UPDATE" }),
-        expect.objectContaining({ table: "scan_runs", privilege: "SELECT", columns: ["id"] }),
+        expect.objectContaining({
+          table: "scan_runs",
+          privilege: "SELECT",
+          columns: ["id", "state", "failure_code"],
+        }),
         expect.objectContaining({
           table: "scan_runs",
           privilege: "INSERT",
@@ -182,6 +186,24 @@ describe("hosted least-privilege database roles", () => {
         }),
       ]),
     );
+    expect(member.projects).toEqual(["SELECT"]);
+    expect(RUNTIME_COLUMN_PRIVILEGES.member).toEqual(
+      expect.arrayContaining([
+        {
+          table: "projects",
+          privilege: "INSERT",
+          columns: ["public_id", "name", "url", "normalized_url"],
+        },
+        expect.objectContaining({ table: "review_events", privilege: "INSERT" }),
+        expect.objectContaining({ table: "evidence_receipts", privilege: "UPDATE" }),
+        expect.objectContaining({ table: "delivery_tokens", privilege: "INSERT" }),
+      ]),
+    );
+    const memberDeliverySelect = RUNTIME_COLUMN_PRIVILEGES.member.find(
+      (grant) => grant.table === "delivery_tokens" && grant.privilege === "SELECT",
+    );
+    expect(memberDeliverySelect?.columns).not.toContain("token_hash");
+    expect(member.provider_cost_ledger ?? []).toEqual([]);
     expect(member.billing_webhook_events ?? []).toEqual([]);
     expect(member.provider_verification_records ?? []).toEqual([]);
     expect(member.project_entitlements).toEqual(["SELECT"]);

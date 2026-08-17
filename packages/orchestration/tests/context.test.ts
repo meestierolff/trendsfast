@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Signal } from "@trendsfast/schemas";
-import { createModelContextInferer, inferFixtureProjectContext } from "../src/context";
+import {
+  createModelContextInferer,
+  deriveProjectContextProfile,
+  inferFixtureProjectContext,
+  inferWebsiteOnlyProjectContext,
+} from "../src/context";
 import type { ModelClient } from "../src/synthesis";
 
 const websiteSignal: Signal = {
@@ -31,6 +36,77 @@ describe("product context inference", () => {
     const context = await inferFixtureProjectContext("https://example.dev", [websiteSignal]);
     expect(context.name).toBe("Example");
     expect(context.assumptions.join(" ")).toMatch(/fixture|founder correction/i);
+  });
+
+  it("derives conservative website-only context without a model", () => {
+    const signal = {
+      ...websiteSignal,
+      url: "https://halio.nl/",
+      title: "Halio — Inzicht in je portefeuille",
+      textExcerpt:
+        "Description: Lees je beleggingen veilig en overzichtelijk\nHeadings: Beleggen met helder inzicht\nPage text: Voor Nederlandse beleggers met een portefeuille",
+    };
+    const context = inferWebsiteOnlyProjectContext("https://halio.nl", [signal]);
+
+    expect(context.category).toMatch(/investment/i);
+    expect(context.language).toBe("nl");
+    expect(context.markets).toEqual(["Netherlands"]);
+    expect(context.assumptions.join(" ")).toMatch(/founder confirmation/i);
+  });
+
+  it("binds every multi-page observed clue to the page that supplied it", () => {
+    const productSignal = {
+      ...websiteSignal,
+      url: "https://example.dev/",
+      textExcerpt:
+        "Description: Homepage proposition\nHeadings: Homepage workflow\nPage text: Homepage text",
+    };
+    const pricingSignal = {
+      ...websiteSignal,
+      id: "signal_pricing",
+      sourceId: "pricing",
+      url: "https://example.dev/pricing",
+      title: "Example pricing",
+      textExcerpt:
+        "Open Graph: Pricing proposition\nPrimary CTAs: Start paid plan\nFAQ prompts: Can I cancel?\nPage text: Pricing text",
+    };
+    const context = inferWebsiteOnlyProjectContext("https://example.dev", [
+      productSignal,
+      pricingSignal,
+    ]);
+    const profile = deriveProjectContextProfile(context, [productSignal, pricingSignal]);
+
+    expect(profile.contextProvenance.observed_facts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: "visible_proposition",
+          value: "Homepage proposition",
+          source_url: "https://example.dev/",
+        }),
+        expect.objectContaining({
+          field: "visible_proposition",
+          value: "Pricing proposition",
+          source_url: "https://example.dev/pricing",
+        }),
+        expect.objectContaining({
+          field: "visible_offer",
+          value: "Start paid plan",
+          source_url: "https://example.dev/pricing",
+        }),
+      ]),
+    );
+  });
+
+  it("keeps title- and hostname-derived product names in editable inferred context", () => {
+    for (const signal of [websiteSignal, { ...websiteSignal, title: "" }]) {
+      const context = inferWebsiteOnlyProjectContext("https://example.dev", [signal]);
+      const provenance = deriveProjectContextProfile(context, [signal]).contextProvenance;
+
+      expect(provenance.observed_facts.some((fact) => fact.field === "product_name")).toBe(false);
+      expect(provenance.inferred_context).toContainEqual(
+        expect.objectContaining({ field: "name", value: context.name }),
+      );
+    }
   });
 
   it("extracts a bounded title prefix from adversarial delimiter whitespace in linear time", async () => {

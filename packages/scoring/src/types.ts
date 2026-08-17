@@ -62,6 +62,7 @@ export type SignalCluster = {
   id: string;
   memberIds: string[];
   signals: ScoringSignal[];
+  representativeSignalId: string;
   representativeTitle: string;
   topicFingerprint: string[];
   independenceKeys: string[];

@@ -8,6 +8,7 @@ import type {
   VoiceProfile,
 } from "@trendsfast/schemas";
 import { useState, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
 
 function lines(value: readonly string[]) {
   return value.join("\n");
@@ -38,6 +39,7 @@ export function DashboardProjectForm({
   provenance,
   voiceProfile,
   contentCapabilities,
+  confirmed,
 }: {
   projectId: string;
   projectUrl: string;
@@ -46,7 +48,10 @@ export function DashboardProjectForm({
   provenance: ContextProvenance;
   voiceProfile: VoiceProfile;
   contentCapabilities: ContentCapabilities;
+  confirmed: boolean;
 }) {
+  const router = useRouter();
+  const [isConfirmed, setIsConfirmed] = useState(confirmed);
   const [pending, setPending] = useState(false);
   const [urlPending, setUrlPending] = useState(false);
   const [url, setUrl] = useState(projectUrl);
@@ -118,9 +123,9 @@ export function DashboardProjectForm({
       );
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
       if (!response.ok) throw new Error(body?.error ?? "The project context could not be saved.");
-      setNotice(
-        "Project context saved. Any unapproved move based on the old context is now stale.",
-      );
+      setIsConfirmed(true);
+      setNotice("Project context confirmed. This project is ready for founder-approved research.");
+      router.refresh();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "The project context could not be saved.");
     } finally {
@@ -151,7 +156,7 @@ export function DashboardProjectForm({
       if (body.changed) {
         setContextInvalidated(true);
         setNotice(
-          "Product URL updated. The earlier context and move are now stale; request a fresh move to re-infer this site.",
+          "Product URL updated. The earlier context and move are stale; read the new public website before confirming replacement context.",
         );
       } else {
         setNotice("The product URL is already current.");
@@ -168,6 +173,11 @@ export function DashboardProjectForm({
       <section className="dashboard-panel dashboard-panel-wide">
         <p className="kicker">Compact confirmation</p>
         <h2>Product and brand context</h2>
+        <p>
+          {isConfirmed
+            ? "This context is founder-confirmed. Saving corrections creates a new confirmed version."
+            : "Review the website observations, correct every inference that needs it, then confirm this context before research."}
+        </p>
         <div className="dashboard-form-grid">
           <label>
             Product URL
@@ -331,8 +341,26 @@ export function DashboardProjectForm({
       </section>
 
       <button type="submit" disabled={pending || urlPending || contextInvalidated}>
-        {pending ? "Saving…" : "Save project context"}
+        {pending
+          ? isConfirmed
+            ? "Saving…"
+            : "Confirming…"
+          : isConfirmed
+            ? "Save project context"
+            : "Confirm project context"}
       </button>
+      {isConfirmed ? (
+        <p>
+          <a href={`/dashboard/today?project=${encodeURIComponent(projectId)}`}>
+            Continue to Today →
+          </a>
+        </p>
+      ) : null}
+      {contextInvalidated ? (
+        <p>
+          <a href={`/dashboard/new?url=${encodeURIComponent(url)}`}>Read the updated website →</a>
+        </p>
+      ) : null}
       {notice ? <p role="status">{notice}</p> : null}
     </form>
   );

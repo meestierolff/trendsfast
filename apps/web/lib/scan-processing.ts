@@ -28,6 +28,7 @@ import {
 } from "@trendsfast/orchestration";
 
 import { getWorkerRepositories } from "./server-database";
+import { loadProviderExecutionEligibility } from "./provider-execution-eligibility";
 
 const logger = createLogger({});
 
@@ -52,6 +53,33 @@ function modelPricing(env: Environment, provider: "xai" | "openai") {
   const inputUsdPerMillionTokens = costs.llmInputUsdPerMillionTokens;
   const outputUsdPerMillionTokens = costs.llmOutputUsdPerMillionTokens;
   return { provider, inputUsdPerMillionTokens, outputUsdPerMillionTokens };
+}
+
+/**
+ * The current exact-deployment verification inventory has a source-level xAI
+ * record, not a generic model record. Synthesis is therefore eligible only
+ * when it uses the exact XAI_MODEL that the verified X adapter executed. An
+ * OpenAI model or a distinct LLM_MODEL stays deterministic-only until it gets
+ * its own exact-deployment readback contract.
+ */
+export function synthesisModelIsProductionVerified(
+  env: Environment,
+  providerEligibility: ReadonlyMap<ProviderSlug, { eligible: boolean }>,
+): boolean {
+  if (env.PROVIDER_CREDENTIAL_MODE === "fixture") return true;
+  if (env.LLM_PROVIDER !== "xai") return false;
+  const verifiedXModel = env.XAI_MODEL?.trim();
+  const synthesisModel = (env.LLM_MODEL ?? env.XAI_MODEL)?.trim();
+  return Boolean(
+    verifiedXModel &&
+    synthesisModel &&
+    synthesisModel === verifiedXModel &&
+    providerEligibility.get("x")?.eligible === true,
+  );
+}
+
+async function unavailableLiveContextInference(): Promise<never> {
+  throw new Error("SYNTHESIS_MODEL_NOT_PRODUCTION_VERIFIED");
 }
 
 export function createConfiguredModelClient(
@@ -98,22 +126,39 @@ export async function runPersistedScan(publicId: string) {
     }
     await repositories.operations.assertManagedPolicyRevision(env.MANAGED_POLICY_REVISION);
   }
-  const client = fixture ? null : createConfiguredModelClient(env);
   const providerContext = createProviderContext({
     credentialMode: env.PROVIDER_CREDENTIAL_MODE,
     env: { ...process.env, ...resolvedProviderCostEnvironment(env) },
   });
+  const providerRegistry = boundedProviderRegistry(env);
+  const providerEligibility = await loadProviderExecutionEligibility({
+    env,
+    context: providerContext,
+    registry: providerRegistry,
+  });
+  const modelVerified = synthesisModelIsProductionVerified(env, providerEligibility);
+  const client = fixture || !modelVerified ? null : createConfiguredModelClient(env);
   const result = await processScan(publicId, {
-    store: createDatabaseProcessingStore(repositories),
-    inferContext: fixture ? inferFixtureProjectContext : createModelContextInferer(client!),
+    store: createDatabaseProcessingStore(repositories, {
+      // Historical rows carry no exact-deployment verification identity. Live
+      // decisions therefore use only current-run succeeded evidence until that
+      // provenance can be represented durably.
+      includeHistoricalMetricSnapshots: fixture,
+    }),
+    inferContext: fixture
+      ? inferFixtureProjectContext
+      : client
+        ? createModelContextInferer(client)
+        : unavailableLiveContextInference,
     planQueries(context, options) {
       return buildQueryPlan(projectContextToProductQueryContext(context), options);
     },
     providers: createProviderRunner({
-      registry: boundedProviderRegistry(env),
+      registry: providerRegistry,
       context: providerContext,
+      eligibility: providerEligibility,
     }),
-    decide: fixture ? decideDeterministically : createModelAssistedDecision(client!),
+    decide: client ? createModelAssistedDecision(client) : decideDeterministically,
     maxCostUsd: resolveProviderCosts(env).maximumProviderCostUsdPerScan,
     maxDurationMs: env.MAX_SCAN_DURATION_SECONDS * 1_000,
   }).catch((error) => {

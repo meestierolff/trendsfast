@@ -19,11 +19,40 @@ import {
 } from "./synthesis";
 import { StaleProcessingClaimError, type DecisionDraft } from "./state-machine";
 
+function assertExactProse(actual: string, deterministic: string): void {
+  if (actual !== deterministic) {
+    throw new Error("Model prose changed a deterministic content field");
+  }
+}
+
+function assertGroundedProseRefinement(
+  proposal: {
+    topic: string;
+    angle: string;
+    hook: string;
+    outline: string[];
+    cta: string;
+  },
+  deterministic: DecisionDraft["move"],
+): void {
+  assertExactProse(proposal.topic, deterministic.topic);
+  assertExactProse(proposal.angle, deterministic.angle);
+  assertExactProse(proposal.hook, deterministic.hook);
+  if (proposal.outline.length !== deterministic.outline.length) {
+    throw new Error("Model prose changed the deterministic outline shape");
+  }
+  proposal.outline.forEach((item, index) => {
+    assertExactProse(item, deterministic.outline[index]!);
+  });
+  assertExactProse(proposal.cta, deterministic.cta);
+}
+
 /**
  * Runs the versioned deterministic ranking and quality floor first, then gives
- * the model only the winning compact candidate. Model output may improve the
- * prose but cannot change the approved action, numeric score, truth class,
- * evidence allowlist, or validity window.
+ * the model only the winning compact candidate. The model must echo every
+ * persisted field exactly; any prose or categorical change falls back to the
+ * deterministic draft. It cannot change the approved action, numeric score,
+ * truth class, evidence allowlist, or validity window.
  */
 export function createModelAssistedDecision(client: ModelClient) {
   const synthesizer = createStructuredSynthesizer(client);
@@ -47,9 +76,20 @@ export function createModelAssistedDecision(client: ModelClient) {
       const proposal = await synthesizer.synthesize({
         project: {
           name: input.context.name,
+          url: input.context.url,
+          category: input.context.category,
           audience: input.context.audience,
+          alternatives: input.context.alternatives,
+          competitors: input.context.competitors,
+          markets: input.context.markets,
+          language: input.context.language,
+          suitableChannels: input.context.suitableChannels,
+          availableFormats: input.context.availableFormats,
           credibleTopics: input.context.credibleTopics,
-          ...(input.objective ? { objective: input.objective } : {}),
+          problem: input.context.problem,
+          desiredOutcome: input.context.desiredOutcome,
+          credibleClaims: input.context.credibleClaims,
+          assumptions: input.context.assumptions,
           ...(input.voiceProfile
             ? {
                 voiceProfile: {
@@ -61,6 +101,12 @@ export function createModelAssistedDecision(client: ModelClient) {
               }
             : {}),
         },
+        request: {
+          ...(input.objective ? { objective: input.objective } : {}),
+          ...(input.generationLevel ? { generationLevel: input.generationLevel } : {}),
+          ...(input.contentCapabilities ? { contentCapabilities: input.contentCapabilities } : {}),
+        },
+        deterministicLimitations: ranked.limitations,
         compactClusters: [
           {
             id: "top_ranked_candidate",
@@ -68,6 +114,21 @@ export function createModelAssistedDecision(client: ModelClient) {
             signalIds: ranked.evidenceSignalIds,
             requiredAction: ranked.move.action,
             whyNow: ranked.whyNow,
+            fixedDecision: {
+              channel: ranked.move.channel,
+              format: ranked.move.format,
+              priority: ranked.move.priority,
+              confidence: ranked.move.confidence,
+              validUntil: ranked.move.validUntil,
+            },
+            deterministicProse: {
+              topic: ranked.move.topic,
+              angle: ranked.move.angle,
+              hook: ranked.move.hook,
+              outline: ranked.move.outline,
+              cta: ranked.move.cta,
+              confidenceRationale: ranked.confidenceRationale,
+            },
           },
         ],
         allowedSignalIds: ranked.evidenceSignalIds,
@@ -80,9 +141,20 @@ export function createModelAssistedDecision(client: ModelClient) {
             }
           : {}),
       });
-      if (proposal.action !== ranked.move.action) {
-        throw new Error("Model synthesis changed the action selected by the quality floor");
+      if (
+        proposal.action !== ranked.move.action ||
+        proposal.channel !== ranked.move.channel ||
+        proposal.format !== ranked.move.format ||
+        proposal.priority !== ranked.move.priority ||
+        proposal.confidence !== ranked.move.confidence ||
+        proposal.validUntil !== ranked.move.validUntil ||
+        proposal.whyNowSummary !== ranked.whyNow ||
+        proposal.confidenceRationale !== ranked.confidenceRationale ||
+        JSON.stringify(proposal.limitations) !== JSON.stringify(ranked.limitations)
+      ) {
+        throw new Error("Model synthesis changed a field fixed by deterministic ranking");
       }
+      assertGroundedProseRefinement(proposal, ranked.move);
       const refinedMove = {
         ...ranked.move,
         topic: proposal.topic,
@@ -109,11 +181,11 @@ export function createModelAssistedDecision(client: ModelClient) {
         ...ranked,
         move: refinedMove,
         ...(refinedVersionedMove ? { versionedMove: refinedVersionedMove } : {}),
-        whyNow: proposal.whyNowSummary,
-        limitations: [...new Set([...ranked.limitations, ...proposal.limitations])],
+        whyNow: ranked.whyNow,
+        limitations: [...ranked.limitations],
         evidenceSignalIds: [...ranked.evidenceSignalIds],
         promptVersion: synthesizer.promptVersion,
-        confidenceRationale: proposal.confidenceRationale,
+        ...(ranked.confidenceRationale ? { confidenceRationale: ranked.confidenceRationale } : {}),
       };
     } catch (error) {
       if (error instanceof ModelCostSettlementError || error instanceof StaleProcessingClaimError) {

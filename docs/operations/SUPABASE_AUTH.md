@@ -94,7 +94,9 @@ Use this PKCE-compatible Magic Link template:
 
 ```html
 <h2>Sign in to TrendsFast</h2>
-<p><a href="{{ .RedirectTo }}&token_hash={{ .TokenHash }}&type=email">Open TrendsFast</a></p>
+<p>
+  <a href="{{ .RedirectTo }}&amp;token_hash={{ .TokenHash }}&amp;type=email">Open TrendsFast</a>
+</p>
 ```
 
 `/auth/confirm` accepts only `type=email`, then calls `verifyOtp({ token_hash, type: "email" })`.
@@ -102,9 +104,13 @@ The token hash never enters analytics. This is the official server-side template
 [Supabase passwordless e-mail guidance](https://supabase.com/docs/guides/auth/auth-email-passwordless).
 Using `RedirectTo` is intentional: the application supplies the exact allow-listed
 `/auth/confirm?next=…` URL, so production and an explicitly configured preview return to the
-deployment and fixed dashboard destination that initiated sign-in. The template uses `&` because
-this route always supplies that bounded `next` query. Keep every permitted origin in Supabase's
-redirect allow list.
+deployment and fixed dashboard destination that initiated sign-in. The URL uses `&` query
+separators because this route always supplies that bounded `next` query, but the literal separators
+after `RedirectTo` must be HTML-escaped as `&amp;`. Brevo's transactional click rewriter otherwise
+treats those parameters as belonging to its tracking URL and drops `token_hash` and `type` from the
+recovered destination. After changing this template, request a fresh Magic Link; already delivered
+tracking links retain their original recovered destination. Keep every permitted origin in
+Supabase's redirect allow list.
 
 The token-hash link is also bound to the browser that requested it. Before sending, TrendsFast
 generates a separate 32-byte flow secret in a short-lived, `HttpOnly`, `Secure`, `SameSite=Lax`

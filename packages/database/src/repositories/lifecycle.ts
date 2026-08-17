@@ -1,4 +1,4 @@
-import { and, count, desc, eq, gte, lt, max, sql, sum } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, lt, max, sql, sum } from "drizzle-orm";
 
 import {
   createPrefixedId,
@@ -135,6 +135,7 @@ export type AdmitApiScanRequestResult =
   | { status: "CREATED"; request: ScanRequestRecord }
   | { status: "REUSED"; request: ScanRequestRecord }
   | { status: "IDEMPOTENCY_CONFLICT"; request: ScanRequestRecord }
+  | { status: "PROJECT_BUSY"; request: ScanRequestRecord }
   | { status: "PROJECT_MISMATCH" }
   | { status: "KEY_INACTIVE" }
   | {
@@ -470,6 +471,23 @@ export class ScanRepository {
         return resolved.idempotencyConflict
           ? { status: "IDEMPOTENCY_CONFLICT" as const, request: existing }
           : { status: "REUSED" as const, request: existing };
+      }
+
+      if (input.projectId) {
+        const [activeProjectRequest] = await tx
+          .select()
+          .from(scanRequests)
+          .where(
+            and(
+              eq(scanRequests.projectId, input.projectId),
+              inArray(scanRequests.state, ["QUEUED", "RUNNING"]),
+            ),
+          )
+          .orderBy(desc(scanRequests.submittedAt), desc(scanRequests.createdAt))
+          .limit(1);
+        if (activeProjectRequest) {
+          return { status: "PROJECT_BUSY" as const, request: activeProjectRequest };
+        }
       }
 
       const activeReservations = await tx

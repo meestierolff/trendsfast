@@ -2,6 +2,7 @@ import {
   BreakoutPotentialSchema,
   ContentBlueprintSchema,
   NEXT_MOVE_CONTRACT_VERSION,
+  ProjectContextSchema,
   VersionedNextMoveSchema,
   TrendWindowSchema,
   type ActionDetails,
@@ -22,8 +23,15 @@ import type {
   TrendSignalClass,
 } from "@trendsfast/scoring";
 import { formatHasEnabledCapability } from "./content-capability";
+import {
+  hasFinancialSafetyContext,
+  hasUnsafeContent,
+  SAFE_DISTRIBUTION_WAIT_PROSE,
+  UNSAFE_CONTENT_QUALITY_REASON,
+} from "./content-safety";
 
 const HOUR_MS = 3_600_000;
+const REPLY_TARGET_MAX_AGE_HOURS = 72;
 
 type SaturationLabel = "low" | "low_to_medium" | "medium" | "high" | "unknown";
 
@@ -44,6 +52,7 @@ export type DecisionContractInput = {
   components?: OpportunityScoreComponents;
   storedSignals: Signal[];
   evidenceSignalIds: string[];
+  timingSignalId?: string;
   qualityReasons: string[];
   coverage: Record<string, string>;
   generationLevel?: GenerationLevel;
@@ -64,6 +73,24 @@ function roundedDeadline(now: Date, hours: number): string {
 
 function observedTimestamp(signal: Signal): number {
   return new Date(signal.publishedAt ?? signal.observedAt).getTime();
+}
+
+function isCurrentReplySignal(signal: Signal, now: Date): boolean {
+  if (signal.source !== "x" && signal.source !== "hacker_news") return false;
+  if (signal.source === "x" && signal.publishedAt === undefined) return false;
+  const observedAt = new Date(signal.observedAt).getTime();
+  const retrievedAt = new Date(signal.provenance.retrievedAt).getTime();
+  if (
+    !Number.isFinite(observedAt) ||
+    observedAt > now.getTime() ||
+    !Number.isFinite(retrievedAt) ||
+    retrievedAt > now.getTime()
+  ) {
+    return false;
+  }
+  const timestamp = observedTimestamp(signal);
+  if (!Number.isFinite(timestamp) || timestamp > now.getTime()) return false;
+  return (now.getTime() - timestamp) / HOUR_MS <= REPLY_TARGET_MAX_AGE_HOURS;
 }
 
 function bindStoredEvidence(input: DecisionContractInput): Signal[] {
@@ -126,15 +153,41 @@ function timingRange(
 }
 
 function deriveTrendWindow(input: DecisionContractInput, boundSignals: Signal[]): TrendWindow {
+  const requestedTimingSignal =
+    input.timingSignalId === undefined
+      ? undefined
+      : boundSignals.find((signal) => signal.id === input.timingSignalId);
+  if (input.timingSignalId !== undefined && !requestedTimingSignal) {
+    throw new Error("Decision timing must reference one exact bound evidence signal");
+  }
+  const primaryReplySignal =
+    input.action === "REPLY"
+      ? boundSignals.find((signal) => isCurrentReplySignal(signal, input.now))
+      : undefined;
+  if (input.action === "REPLY" && !primaryReplySignal) {
+    throw new Error("REPLY timing requires a current exact X or Hacker News target");
+  }
+  if (
+    input.action === "REPLY" &&
+    requestedTimingSignal &&
+    requestedTimingSignal.id !== primaryReplySignal?.id
+  ) {
+    throw new Error("REPLY timing must match its exact primary conversation target");
+  }
+  const timingSignals = requestedTimingSignal
+    ? [requestedTimingSignal]
+    : primaryReplySignal
+      ? [primaryReplySignal]
+      : boundSignals;
   const basis = trendBasis(input.signalClass);
   const remaining = timingRange(input.action, basis);
   const saturation = input.components?.saturation ?? 0;
   const timing = input.components?.remainingWindow ?? 0;
-  const finiteObserved = boundSignals
+  const finiteObserved = timingSignals
     .map(observedTimestamp)
     .filter((value) => Number.isFinite(value));
   const observedSince = finiteObserved.length ? Math.min(...finiteObserved) : undefined;
-  const confirmed = boundSignals
+  const confirmed = timingSignals
     .map((signal) => new Date(signal.observedAt).getTime())
     .filter((value) => Number.isFinite(value));
   const lastConfirmed = confirmed.length ? Math.max(...confirmed) : input.now.getTime();
@@ -261,8 +314,19 @@ function productionOptions(
   return [...new Set(selected.length ? selected : ["FOUNDER_TEXT" as const])];
 }
 
+function credibleTopic(input: DecisionContractInput): string {
+  return input.context.credibleTopics[0] ?? input.context.category;
+}
+
+function groundedProductContribution(input: DecisionContractInput): string {
+  const claim = input.context.credibleClaims[0];
+  return claim
+    ? `The saved product context for ${input.context.name} supports this bounded contribution: “${claim}”.`
+    : `${input.context.name}'s contribution stays bounded to ${credibleTopic(input)}.`;
+}
+
 function deriveBlueprint(input: DecisionContractInput, sourceObserved: boolean): ContentBlueprint {
-  const credibleTopic = input.context.credibleTopics[0] ?? input.context.category;
+  const topic = credibleTopic(input);
   const production = productionOptions(input.context, input.contentCapabilities);
   const voiceTraits = input.voiceProfile?.traits.filter(Boolean) ?? [];
   const preferredPhrase = input.voiceProfile?.preferred_phrases[0];
@@ -283,9 +347,9 @@ function deriveBlueprint(input: DecisionContractInput, sourceObserved: boolean):
     }
   });
   return ContentBlueprintSchema.parse({
-    content_premise: `${input.context.name} can turn ${input.topic} into a concrete ${credibleTopic} lesson for ${input.context.audience}.`,
+    content_premise: `${input.context.name} can turn ${input.topic} into a concrete ${topic} lesson for ${input.context.audience}.`,
     audience_tension: `${input.context.audience} want ${input.context.desiredOutcome}, but ${input.context.problem}.`,
-    product_role: `Use ${input.context.name} only where its credible ${credibleTopic} experience clarifies the decision or demonstrates the method.`,
+    product_role: groundedProductContribution(input),
     format_family: input.format,
     format_basis: sourceObserved
       ? "SOURCE_OBSERVED"
@@ -313,7 +377,7 @@ function deriveBlueprint(input: DecisionContractInput, sourceObserved: boolean):
     asset_requirements: [...new Set(assetRequirements)],
     channel_instructions: [
       `Adapt the opening and length to ${input.channel}; preserve the evidence boundary and limitations.`,
-      "Do not describe the opportunity as guaranteed or automatically publish it.",
+      "Keep every factual claim within the stored evidence boundary and require founder approval.",
       ...(avoidPhrase ? [`Avoid the saved phrase: ${avoidPhrase}`] : []),
     ],
     production_options: production,
@@ -377,8 +441,16 @@ function deriveReplyTarget(
   signal: Signal,
   replyBy: string,
 ): Extract<ActionDetails, { action: "REPLY" }>["primary_target"] {
-  const credibleTopic = input.context.credibleTopics[0] ?? input.context.category;
+  const topic = credibleTopic(input);
   const factualTitle = exactTitleOrExcerpt(signal);
+  const contribution = groundedProductContribution(input);
+  const suggestedReply = [
+    `This discussion about ${input.topic} is useful when it changes a real decision for ${input.context.audience}.`,
+    `For ${input.context.audience}, ${input.context.problem} stands between the current situation and this outcome: ${input.context.desiredOutcome}.`,
+    contribution,
+    `That makes ${topic} a practical check: separate what the current evidence supports from what remains an assumption, then act only on what changes the next decision.`,
+    "Which part of the current evidence would change your next decision?",
+  ].join(" ");
   return {
     source: signal.source,
     url: signal.url,
@@ -387,13 +459,11 @@ function deriveReplyTarget(
     ...(signal.publishedAt === undefined ? {} : { published_at: signal.publishedAt }),
     observed_at: signal.observedAt,
     why_this_target: `This exact stored conversation is current, relevant to ${input.context.audience}, and part of the evidence set selected by the decision engine.`,
-    credibility_reason: `${input.context.name} can contribute a bounded ${credibleTopic} perspective without making unsupported claims.`,
-    reply_objective:
-      "Help the participants make the next decision with a concrete, evidence-aware framework.",
-    reply_angle: `Separate what the available evidence supports from assumptions, then connect it to ${input.context.desiredOutcome}.`,
-    suggested_reply: `A useful way to approach this is to separate the current evidence from the assumptions, then ask which finding actually changes the next decision. For ${input.context.audience}, I would make the trade-off explicit and add one reproducible example.`,
-    short_reply_variant:
-      "Separate the evidence from the assumptions, then show the one finding that changes the next decision.",
+    credibility_reason: `${input.context.name} can contribute a bounded ${topic} perspective using only its saved product context.`,
+    reply_objective: `Help ${input.context.audience} apply ${topic} to one concrete next decision.`,
+    reply_angle: `Connect ${input.topic} to ${topic} through ${input.context.name}'s saved, bounded product contribution.`,
+    suggested_reply: suggestedReply,
+    short_reply_variant: `${contribution} On ${input.topic}, what current evidence would change the next decision for ${input.context.audience}?`,
     tone: ["helpful", "specific", "non-promotional"],
     reply_by: replyBy,
   };
@@ -496,10 +566,10 @@ function deriveActionDetails(
       };
     case "REPLY": {
       const conversationSignals = boundSignals.filter((signal) =>
-        ["x", "hacker_news"].includes(signal.source),
+        isCurrentReplySignal(signal, input.now),
       );
       if (conversationSignals.length === 0) {
-        throw new Error("REPLY requires an exact stored X or Hacker News conversation target");
+        throw new Error("REPLY requires a current exact stored X or Hacker News target");
       }
       const targets = conversationSignals
         .slice(0, 3)
@@ -558,21 +628,140 @@ function deriveActionDetails(
   }
 }
 
-function draftFromBlueprint(action: "PUBLISH" | "REMIX", blueprint: ContentBlueprint): string {
-  const opening = blueprint.hook_variants.find((variant) => variant.style === "direct")!.text;
+function copyReadyDraft(
+  action: "PUBLISH" | "REMIX",
+  input: DecisionContractInput,
+  blueprint: ContentBlueprint,
+): string {
+  const topic = credibleTopic(input);
+  const decisionRule =
+    action === "REMIX"
+      ? `The recognizable pattern is simple: use ${topic} to separate supported evidence from assumptions, then rebuild the example around the decision ${input.context.audience} actually need to make.`
+      : `A practical rule is to use ${topic} to separate supported evidence from assumptions, then act only when the evidence changes the next decision.`;
   return [
-    opening,
+    blueprint.hook_variants.find((variant) => variant.style === "direct")!.text,
     "",
-    blueprint.audience_tension,
+    `For ${input.context.audience}, ${input.context.problem} stands between the current situation and this outcome: ${input.context.desiredOutcome}.`,
     "",
-    ...blueprint.structure.map((step) => `- ${step}`),
+    groundedProductContribution(input),
     "",
-    blueprint.product_role,
+    decisionRule,
     "",
-    blueprint.cta,
-    "",
-    `[${action} draft — founder approval required; do not auto-publish]`,
+    input.cta,
   ].join("\n");
+}
+
+function blueprintGeneratedProse(blueprint: ContentBlueprint): string[] {
+  return [
+    blueprint.content_premise,
+    blueprint.audience_tension,
+    blueprint.product_role,
+    blueprint.hook_family,
+    ...blueprint.hook_variants.map((variant) => variant.text),
+    ...blueprint.tone,
+    ...blueprint.structure,
+    blueprint.cta,
+    ...blueprint.asset_requirements,
+    // The exact avoid phrase is a safety guardrail, not candidate deliverable copy.
+    ...blueprint.channel_instructions.filter(
+      (instruction) => !instruction.startsWith("Avoid the saved phrase:"),
+    ),
+  ];
+}
+
+function generatedDeliverableProse(move: VersionedNextMove): string[] {
+  const common = [
+    move.topic,
+    move.angle,
+    move.hook,
+    ...move.outline,
+    move.cta,
+    move.trendWindow.explanation,
+    move.breakoutPotential.explanation,
+    ...(move.draftContent ? [move.draftContent] : []),
+  ];
+  switch (move.details.action) {
+    case "PUBLISH":
+      return [...common, ...blueprintGeneratedProse(move.details.blueprint)];
+    case "REPLY":
+      return [
+        ...common,
+        ...[move.details.primary_target, ...move.details.secondary_targets].flatMap((target) => [
+          target.why_this_target,
+          target.credibility_reason,
+          target.reply_objective,
+          target.reply_angle,
+          target.suggested_reply,
+          ...(target.short_reply_variant ? [target.short_reply_variant] : []),
+          ...target.tone,
+        ]),
+      ];
+    case "REMIX":
+      return [
+        ...common,
+        ...move.details.source_content.map((source) => source.relevance_reason),
+        ...move.details.preserve,
+        ...move.details.transform,
+        ...move.details.do_not_copy,
+        move.details.transformed_concept,
+        ...blueprintGeneratedProse(move.details.blueprint),
+      ];
+    case "WAIT":
+      return [
+        ...common,
+        move.details.considered_opportunity,
+        ...move.details.do_not_act_on,
+        ...move.details.watch_conditions,
+        ...(move.details.alternative ? [move.details.alternative] : []),
+      ];
+  }
+}
+
+export function hasUnsafeVersionedNextMoveContent(
+  move: VersionedNextMove,
+  context: ProjectContext,
+  additionalDisplayedProse: readonly string[] = [],
+): boolean {
+  const parsedMove = VersionedNextMoveSchema.parse(move);
+  const parsedContext = ProjectContextSchema.parse(context);
+  return hasUnsafeContent([...generatedDeliverableProse(parsedMove), ...additionalDisplayedProse], {
+    rejectAnyNumber: false,
+    financialContext: hasFinancialSafetyContext(parsedContext),
+  });
+}
+
+/**
+ * Final shared boundary for any path that can persist revised distribution
+ * copy. Callers must run this on the fully reconciled contract, because nested
+ * reply copy, blueprints, and draft content are derived from the editable
+ * top-level prose.
+ */
+export function assertVersionedNextMoveContentSafety(
+  move: VersionedNextMove,
+  context: ProjectContext,
+  additionalDisplayedProse: readonly string[] = [],
+): void {
+  if (hasUnsafeVersionedNextMoveContent(move, context, additionalDisplayedProse)) {
+    throw new Error("The reconciled Next Move failed the final content-safety boundary");
+  }
+}
+
+function safetyWaitInput(input: DecisionContractInput): DecisionContractInput {
+  const fallback: DecisionContractInput = {
+    ...input,
+    action: "WAIT",
+    topic: SAFE_DISTRIBUTION_WAIT_PROSE.topic,
+    angle: SAFE_DISTRIBUTION_WAIT_PROSE.angle,
+    format: input.format,
+    hook: SAFE_DISTRIBUTION_WAIT_PROSE.hook,
+    outline: [...SAFE_DISTRIBUTION_WAIT_PROSE.outline],
+    cta: SAFE_DISTRIBUTION_WAIT_PROSE.cta,
+    priority: 0,
+    confidence: 0.88,
+    qualityReasons: [...new Set([...input.qualityReasons, UNSAFE_CONTENT_QUALITY_REASON])],
+  };
+  delete fallback.timingSignalId;
+  return fallback;
 }
 
 /**
@@ -580,7 +769,7 @@ function draftFromBlueprint(action: "PUBLISH" | "REMIX", blueprint: ContentBluep
  * contract. Factual target/source fields are copied only from the exact stored
  * signal allowlist. The function has no provider or model access.
  */
-export function deriveVersionedNextMove(input: DecisionContractInput): VersionedNextMove {
+function buildVersionedNextMove(input: DecisionContractInput): VersionedNextMove {
   const boundSignals = bindStoredEvidence(input);
   const trendWindow = deriveTrendWindow(input, boundSignals);
   const breakoutPotential = deriveBreakoutPotential(input);
@@ -588,7 +777,7 @@ export function deriveVersionedNextMove(input: DecisionContractInput): Versioned
   const generationLevel = input.generationLevel ?? "brief";
   const draftContent =
     generationLevel === "draft" && (details.action === "PUBLISH" || details.action === "REMIX")
-      ? draftFromBlueprint(details.action, details.blueprint)
+      ? copyReadyDraft(details.action, input, details.blueprint)
       : undefined;
   return VersionedNextMoveSchema.parse({
     contractVersion: NEXT_MOVE_CONTRACT_VERSION,
@@ -609,6 +798,16 @@ export function deriveVersionedNextMove(input: DecisionContractInput): Versioned
     details,
     ...(draftContent === undefined ? {} : { draftContent }),
   });
+}
+
+export function deriveVersionedNextMove(input: DecisionContractInput): VersionedNextMove {
+  const candidate = buildVersionedNextMove(input);
+  if (!hasUnsafeVersionedNextMoveContent(candidate, input.context)) return candidate;
+  const fallback = buildVersionedNextMove(safetyWaitInput(input));
+  if (hasUnsafeVersionedNextMoveContent(fallback, input.context)) {
+    throw new Error("The fixed safety WAIT deliverable failed its content boundary");
+  }
+  return fallback;
 }
 
 export { assertActionDetailsBoundToStoredEvidence } from "@trendsfast/schemas";

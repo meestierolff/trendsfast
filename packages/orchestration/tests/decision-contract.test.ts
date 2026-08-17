@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   BreakoutPotentialSchema,
+  reconcileVersionedNextMove,
   VersionedNextMoveSchema,
   type ProjectContext,
   type Signal,
@@ -9,6 +10,7 @@ import type { OpportunityScoreComponents } from "@trendsfast/scoring";
 
 import {
   assertActionDetailsBoundToStoredEvidence,
+  assertVersionedNextMoveContentSafety,
   deriveVersionedNextMove,
   type DecisionContractInput,
 } from "../src/decision-contract";
@@ -109,6 +111,42 @@ function input(
 }
 
 describe("versioned deterministic decision contract", () => {
+  it("applies the shared final safety boundary to the fully reconciled nested deliverable", () => {
+    const original = deriveVersionedNextMove(input("PUBLISH", ["signal_x", "signal_hn"]));
+    if (original.details.action !== "PUBLISH") throw new Error("Expected PUBLISH details");
+    const unsafeStoredNestedCopy = VersionedNextMoveSchema.parse({
+      ...original,
+      details: {
+        ...original.details,
+        blueprint: {
+          ...original.details.blueprint,
+          audience_tension: "Guaranteed portfolio profits without risk.",
+        },
+      },
+    });
+    const reconciled = reconcileVersionedNextMove({
+      move: unsafeStoredNestedCopy,
+      prose: {
+        channel: original.channel,
+        topic: "A refined evidence-led topic",
+        angle: original.angle,
+        format: original.format,
+        hook: original.hook,
+        outline: original.outline,
+        cta: original.cta,
+      },
+    });
+
+    expect(() => assertVersionedNextMoveContentSafety(reconciled, context)).toThrow(
+      /final content-safety boundary/i,
+    );
+    expect(() =>
+      assertVersionedNextMoveContentSafety(original, context, [
+        "Guaranteed 500% returns without risk; buy TSLA immediately.",
+      ]),
+    ).toThrow(/final content-safety boundary/i);
+  });
+
   it("binds every REPLY factual field to the exact stored source records", () => {
     const move = deriveVersionedNextMove(input("REPLY", ["signal_x", "signal_hn"]));
 
@@ -134,6 +172,22 @@ describe("versioned deterministic decision contract", () => {
         storedSignals,
       }),
     ).not.toThrow();
+  });
+
+  it("never projects an X receipt without publishedAt as a secondary REPLY target", () => {
+    const xWithoutPublishedAt = { ...storedSignals[0]! };
+    delete xWithoutPublishedAt.publishedAt;
+    const move = deriveVersionedNextMove(
+      input("REPLY", ["signal_hn", "signal_x"], {
+        timingSignalId: "signal_hn",
+        storedSignals: [storedSignals[1]!, xWithoutPublishedAt],
+      }),
+    );
+
+    expect(move.action).toBe("REPLY");
+    if (move.action !== "REPLY") throw new Error("Expected REPLY details");
+    expect(move.details.primary_target.url).toBe(storedSignals[1]!.url);
+    expect(move.details.secondary_targets).toEqual([]);
   });
 
   it("keeps broader mixed-cluster evidence while targeting only stored conversations", () => {
@@ -299,7 +353,10 @@ describe("versioned deterministic decision contract", () => {
     );
 
     expect(brief.draftContent).toBeUndefined();
-    expect(draft.draftContent).toMatch(/founder approval required/i);
+    expect(draft.draftContent).toContain("Evidence-led distribution is becoming more important");
+    expect(draft.draftContent).toContain("Example");
+    expect(draft.draftContent).toContain("uses evidence receipts");
+    expect(draft.draftContent).not.toMatch(/founder approval required|^- |open with|show the/imu);
     expect({ ...draft, generationLevel: "brief", draftContent: undefined }).toEqual({
       ...brief,
       draftContent: undefined,
@@ -340,6 +397,7 @@ describe("versioned deterministic decision contract", () => {
     );
     expect(move.details.blueprint.hook_variants[0]?.text).toMatch(/^Here is the decision rule/);
     expect(move.details.blueprint.channel_instructions.join(" ")).toContain("guaranteed growth");
+    expect(move.draftContent).not.toContain("guaranteed growth");
     expect(move.draftContent).toContain("Here is the decision rule");
   });
 
@@ -356,7 +414,108 @@ describe("versioned deterministic decision contract", () => {
     expect(brief.details.primary_target.suggested_reply).toBe(
       draft.details.primary_target.suggested_reply,
     );
+    expect(draft.details.primary_target.suggested_reply).toContain(
+      "Evidence-led distribution is becoming more important",
+    );
+    expect(draft.details.primary_target.suggested_reply).toContain("Example");
+    expect(draft.details.primary_target.suggested_reply).toContain("uses evidence receipts");
+    expect(draft.details.primary_target.suggested_reply).toContain("technical founders");
+    expect(draft.details.primary_target.suggested_reply).not.toContain("https://");
     expect(draft.draftContent).toBeUndefined();
+  });
+
+  it("emits finished product-specific PUBLISH and REMIX copy instead of production instructions", () => {
+    const publish = deriveVersionedNextMove(
+      input("PUBLISH", ["signal_x", "signal_hn"], { generationLevel: "draft" }),
+    );
+    const remix = deriveVersionedNextMove(
+      input("REMIX", ["signal_yt", "signal_x"], { generationLevel: "draft" }),
+    );
+
+    for (const move of [publish, remix]) {
+      expect(move.draftContent).toContain("Example");
+      expect(move.draftContent).toContain("uses evidence receipts");
+      expect(move.draftContent).toContain("Evidence-led distribution is becoming more important");
+      expect(move.draftContent).toContain("distribution research takes too long");
+      expect(move.draftContent).not.toMatch(
+        /founder approval required|do not auto-publish|^- |open with|show the strongest|close with/imu,
+      );
+    }
+    expect(publish.action).toBe("PUBLISH");
+    expect(remix.action).toBe("REMIX");
+  });
+
+  it("keeps TrendsFast and Halio draft copy materially product-specific", () => {
+    const trendsFastContext: ProjectContext = {
+      ...context,
+      name: "TrendsFast",
+      category: "distribution intelligence",
+      audience: "technical founders building APIs",
+      problem: "live distribution research takes too long",
+      desiredOutcome: "choose one evidence-backed distribution move",
+      credibleClaims: ["immutable evidence receipts"],
+      credibleTopics: ["evidence-led distribution"],
+    };
+    const halioContext: ProjectContext = {
+      ...context,
+      name: "Halio",
+      category: "portfolio clarity",
+      audience: "Dutch self-directed investors",
+      problem: "portfolio data is fragmented and hard to interpret",
+      desiredOutcome: "understand portfolio concentration without trading permissions",
+      credibleClaims: ["read-only portfolio clarity"],
+      credibleTopics: ["portfolio clarity"],
+      assumptions: ["No buy or sell advice."],
+    };
+    const trendsFast = deriveVersionedNextMove(
+      input("PUBLISH", ["signal_x", "signal_hn"], {
+        context: trendsFastContext,
+        topic: "Evidence receipts for distribution decisions",
+        generationLevel: "draft",
+      }),
+    );
+    const halio = deriveVersionedNextMove(
+      input("PUBLISH", ["signal_x", "signal_hn"], {
+        context: halioContext,
+        topic: "Read-only portfolio clarity",
+        generationLevel: "draft",
+      }),
+    );
+
+    expect(trendsFast.draftContent).toContain("TrendsFast");
+    expect(trendsFast.draftContent).toContain("immutable evidence receipts");
+    expect(trendsFast.draftContent).not.toContain("Halio");
+    expect(halio.draftContent).toContain("Halio");
+    expect(halio.draftContent).toContain("read-only portfolio clarity");
+    expect(halio.draftContent).not.toContain("TrendsFast");
+    expect(trendsFast.draftContent).not.toBe(halio.draftContent);
+  });
+
+  it("forces an unsafe derived product contribution to a no-draft WAIT", () => {
+    const move = deriveVersionedNextMove(
+      input("PUBLISH", ["signal_x", "signal_hn"], {
+        context: {
+          ...context,
+          audience: "self-directed investors",
+          credibleClaims: ["guaranteed returns"],
+        },
+        generationLevel: "draft",
+      }),
+    );
+
+    expect(move).toMatchObject({
+      action: "WAIT",
+      topic: "No safe distribution claim is available yet",
+      priority: 0,
+      details: { action: "WAIT", failure_reasons: expect.arrayContaining(["LOW_CREDIBILITY"]) },
+    });
+    expect(move.draftContent).toBeUndefined();
+  });
+
+  it("never creates fake draft content for a draft-level WAIT", () => {
+    const wait = deriveVersionedNextMove(input("WAIT", ["signal_x"], { generationLevel: "draft" }));
+    expect(wait.action).toBe("WAIT");
+    expect(wait.draftContent).toBeUndefined();
   });
 
   it("rejects a missing stored evidence identifier and probability-shaped output", () => {

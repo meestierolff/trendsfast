@@ -315,6 +315,7 @@ export function OpsActionControls({
   retryEnabled,
   editableMove,
   editableContext,
+  decisionSupportReceiptIds = [],
 }: {
   scanId: string;
   csrfToken: string;
@@ -327,6 +328,7 @@ export function OpsActionControls({
   retryEnabled: boolean;
   editableMove?: EditableMove;
   editableContext?: EditableContext;
+  decisionSupportReceiptIds?: readonly string[];
 }) {
   const router = useRouter();
   const action = useOpsAction(scanId, csrfToken);
@@ -389,6 +391,8 @@ export function OpsActionControls({
       limitations: lines(form, "limitations"),
       validUntil: utcDateTimeValueToIso(String(form.get("validUntil") ?? "")),
       confidenceRationale: form.get("confidenceRationale"),
+      evidenceReceiptIds: decisionSupportReceiptIds,
+      exactEvidenceReviewed: form.get("exactEvidenceReviewed") === "on",
     });
   }
 
@@ -474,7 +478,8 @@ export function OpsActionControls({
             <form onSubmit={editAndApprove}>
               <p>
                 Action, evidence, truth class, score, source count, metrics, providers, and cost
-                stay immutable. Saving validates the current version and approves the edited copy.
+                stay immutable. Saving reconciles and safety-checks the complete output, then
+                approves only with a fresh attestation of the exact decision-support receipts.
               </p>
               <label htmlFor="edit-topic">Topic</label>
               <input
@@ -569,8 +574,12 @@ export function OpsActionControls({
                 type="datetime-local"
                 step="0.001"
                 defaultValue={isoToUtcDateTimeValue(editableMove.validUntil)}
+                max={isoToUtcDateTimeValue(editableMove.validUntil)}
                 required
               />
+              <p>
+                The validity boundary may stay unchanged or become earlier; it cannot move later.
+              </p>
               <label htmlFor="edit-reason">Edit reason</label>
               <textarea
                 id="edit-reason"
@@ -580,6 +589,10 @@ export function OpsActionControls({
                 maxLength={4_000}
                 rows={3}
               />
+              <label>
+                <input name="exactEvidenceReviewed" type="checkbox" required />I re-opened and
+                reviewed the exact decision-support receipts above against this edited copy.
+              </label>
               <button type="submit" disabled={action.pending !== null}>
                 {action.pending === "edit-and-approve" ? "Validating…" : "Edit and approve"}
               </button>

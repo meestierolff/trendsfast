@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { MemberProjectBusyError } from "@trendsfast/database";
+
 vi.mock("server-only", () => ({}));
 
 const mocks = vi.hoisted(() => ({
@@ -261,6 +263,35 @@ describe("member dashboard authorization and policy routes", () => {
     expect(mocks.updateProjectUrl).toHaveBeenCalledTimes(1);
   });
 
+  it("returns a bounded conflict instead of mutating context or URL during an active scan", async () => {
+    mocks.getProjectDashboard.mockResolvedValue({
+      context: {
+        contextProvenance: { observed_facts: [], inferred_context: [], assumptions: [] },
+      },
+    });
+    mocks.updateProjectContext.mockRejectedValue(new MemberProjectBusyError());
+    const contextResponse = await updateContext(
+      jsonRequest(`/api/dashboard/projects/${projectA}/context`, contextBody()),
+      { params: Promise.resolve({ projectId: projectA }) },
+    );
+    expect(contextResponse.status).toBe(409);
+    expect(await contextResponse.json()).toEqual({
+      error: "Wait for the current proposal run to finish before editing context.",
+    });
+
+    mocks.updateProjectUrl.mockRejectedValue(new MemberProjectBusyError());
+    const urlResponse = await updateProjectUrl(
+      jsonRequest(`/api/dashboard/projects/${projectA}/url`, {
+        url: "https://new.example/product",
+      }),
+      { params: Promise.resolve({ projectId: projectA }) },
+    );
+    expect(urlResponse.status).toBe(409);
+    expect(await urlResponse.json()).toEqual({
+      error: "Wait for the current proposal run to finish before changing URL.",
+    });
+  });
+
   it("issues one-time raw keys with server-derived policy and rejects browser policy fields", async () => {
     mocks.issueProjectApiKey.mockResolvedValue({
       record: {
@@ -344,127 +375,14 @@ describe("member dashboard authorization and policy routes", () => {
     });
   });
 
-  it("uses the project-level refresh allowance and ignores no browser-supplied money", async () => {
-    mocks.requestProjectRefresh.mockResolvedValue({
-      status: "CREATED",
-      publicId: "scan_project_refresh",
-    });
-    mocks.after.mockImplementation((callback: () => Promise<void>) => void callback());
-    const response = await refreshProject(
-      jsonRequest(`/api/dashboard/projects/${projectA}/refresh`, {
-        idempotencyKey: "55555555-5555-4555-8555-555555555555",
-        objective: "Reach technical founders",
-        preferredChannels: ["x", "linkedin"],
-        contentCapabilities: ["founder_text"],
-        generationLevel: "brief",
-      }),
-      { params: Promise.resolve({ projectId: projectA }) },
-    );
-    expect(response.status).toBe(202);
-    expect(mocks.requestProjectRefresh).toHaveBeenCalledWith(
-      expect.objectContaining({
-        authUserId,
-        projectId: projectA,
-        costReservationUsd: 0.317,
-      }),
-    );
-
-    const forged = await refreshProject(
-      jsonRequest(`/api/dashboard/projects/${projectA}/refresh`, {
-        idempotencyKey: "66666666-6666-4666-8666-666666666666",
-        costReservationUsd: 0,
-      }),
-      { params: Promise.resolve({ projectId: projectA }) },
-    );
-    expect(forged.status).toBe(400);
-  });
-
-  it("keeps member refresh independent of the external v1 creation rollout gate", async () => {
-    mocks.loadEnv.mockReturnValue({
-      LIVE_API_CREATION_ENABLED: false,
-      PROVIDER_CREDENTIAL_MODE: "managed",
-      PROVIDER_CALLS_ENABLED: true,
-    });
-    mocks.requestProjectRefresh.mockResolvedValue({
-      status: "REUSED",
-      publicId: "scan_member_refresh",
-    });
-    const response = await refreshProject(
-      jsonRequest(`/api/dashboard/projects/${projectA}/refresh`, {
-        idempotencyKey: "12121212-1212-4212-8212-121212121212",
-        objective: "Reach technical founders",
-      }),
-      { params: Promise.resolve({ projectId: projectA }) },
-    );
-    expect(response.status).toBe(200);
-    expect(mocks.requestProjectRefresh).toHaveBeenCalledOnce();
-  });
-
-  it("enforces the claimed-project contract's 100-character objective bound", async () => {
-    const response = await refreshProject(
-      jsonRequest(`/api/dashboard/projects/${projectA}/refresh`, {
-        idempotencyKey: "13131313-1313-4313-8313-131313131313",
-        objective: "x".repeat(101),
-      }),
-      { params: Promise.resolve({ projectId: projectA }) },
-    );
-    expect(response.status).toBe(400);
+  it("retires the competing member refresh execution path", async () => {
+    const response = await refreshProject();
+    expect(response.status).toBe(410);
+    expect((await response.json()).error).toContain("POST /v1/projects/{project_id}/next-move");
     expect(mocks.requestProjectRefresh).not.toHaveBeenCalled();
-  });
-
-  it("does not schedule a reused refresh and preserves the caller's stable UUID", async () => {
-    const idempotencyKey = "99999999-9999-4999-8999-999999999999";
-    mocks.requestProjectRefresh.mockResolvedValue({
-      status: "REUSED",
-      publicId: "scan_existing_refresh",
-    });
-    const response = await refreshProject(
-      jsonRequest(`/api/dashboard/projects/${projectA}/refresh`, {
-        idempotencyKey,
-        generationLevel: "brief",
-      }),
-      { params: Promise.resolve({ projectId: projectA }) },
-    );
-    expect(response.status).toBe(200);
-    expect(mocks.requestProjectRefresh).toHaveBeenCalledWith(
-      expect.objectContaining({ idempotencyKey }),
-    );
     expect(mocks.after).not.toHaveBeenCalled();
     expect(mocks.runPersistedScan).not.toHaveBeenCalled();
   });
-
-  it.each([
-    {
-      result: { status: "USAGE_LIMITED", reason: "ON_DEMAND_MONTHLY_LIMIT" },
-      expectedStatus: 403,
-      message: "ten on-demand refreshes",
-    },
-    {
-      result: { status: "USAGE_LIMITED", reason: "ENTITLEMENT_INACTIVE" },
-      expectedStatus: 403,
-      message: "active Founder entitlement",
-    },
-    {
-      result: { status: "IDEMPOTENCY_CONFLICT" },
-      expectedStatus: 409,
-      message: "already used for another request",
-    },
-  ])(
-    "returns an honest refresh error for $result.status/$result.reason",
-    async ({ result, expectedStatus, message }) => {
-      mocks.requestProjectRefresh.mockResolvedValue(result);
-      const response = await refreshProject(
-        jsonRequest(`/api/dashboard/projects/${projectA}/refresh`, {
-          idempotencyKey: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-          generationLevel: "brief",
-        }),
-        { params: Promise.resolve({ projectId: projectA }) },
-      );
-      expect(response.status).toBe(expectedStatus);
-      expect((await response.json()).error).toContain(message);
-      expect(mocks.after).not.toHaveBeenCalled();
-    },
-  );
 
   it("rejects dashboard mutations without a verified Auth subject", async () => {
     mocks.getVerifiedAuthSubject.mockResolvedValue(null);
@@ -476,6 +394,19 @@ describe("member dashboard authorization and policy routes", () => {
       { params: Promise.resolve({ projectId: projectA }) },
     );
     expect(response.status).toBe(401);
+    expect(mocks.recordProjectOutcome).not.toHaveBeenCalled();
+  });
+
+  it("rejects SKIPPED on the post-READY outcomes route", async () => {
+    const response = await recordOutcome(
+      jsonRequest(`/api/dashboard/projects/${projectA}/outcomes`, {
+        nextMoveId: "77777777-7777-4777-8777-777777777777",
+        kind: "SKIPPED",
+      }),
+      { params: Promise.resolve({ projectId: projectA }) },
+    );
+
+    expect(response.status).toBe(400);
     expect(mocks.recordProjectOutcome).not.toHaveBeenCalled();
   });
 });

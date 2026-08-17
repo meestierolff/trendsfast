@@ -25,6 +25,140 @@ export type ProjectContextProfile = {
   contentCapabilities: ContentCapabilities;
 };
 
+type WebsiteClues = {
+  descriptions: string[];
+  openGraph: string[];
+  structuredData: string[];
+  headings: string[];
+  primaryCtas: string[];
+  faqPrompts: string[];
+  pageText: string[];
+};
+
+function uniqueBounded(values: readonly string[], maximum = 12, length = 500): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))]
+    .slice(0, maximum)
+    .map((value) => value.slice(0, length));
+}
+
+function valuesAfterPrefix(excerpt: string | undefined, prefix: string): string[] {
+  if (!excerpt) return [];
+  const line = excerpt
+    .split("\n")
+    .find((candidate) => candidate.toLowerCase().startsWith(prefix.toLowerCase()));
+  if (!line) return [];
+  return line
+    .slice(prefix.length)
+    .split(" | ")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function websiteClues(signals: readonly Signal[]): WebsiteClues {
+  const pages = signals.filter((signal) => signal.source === "website").slice(0, 5);
+  return {
+    descriptions: uniqueBounded(
+      pages.flatMap((signal) => valuesAfterPrefix(signal.textExcerpt, "Description: ")),
+    ),
+    openGraph: uniqueBounded(
+      pages.flatMap((signal) => valuesAfterPrefix(signal.textExcerpt, "Open Graph: ")),
+    ),
+    structuredData: uniqueBounded(
+      pages.flatMap((signal) => valuesAfterPrefix(signal.textExcerpt, "Structured data: ")),
+    ),
+    headings: uniqueBounded(
+      pages.flatMap((signal) => valuesAfterPrefix(signal.textExcerpt, "Headings: ")),
+    ),
+    primaryCtas: uniqueBounded(
+      pages.flatMap((signal) => valuesAfterPrefix(signal.textExcerpt, "Primary CTAs: ")),
+    ),
+    faqPrompts: uniqueBounded(
+      pages.flatMap((signal) => valuesAfterPrefix(signal.textExcerpt, "FAQ prompts: ")),
+    ),
+    pageText: uniqueBounded(
+      pages.flatMap((signal) => valuesAfterPrefix(signal.textExcerpt, "Page text: ")),
+      12,
+      1_500,
+    ),
+  };
+}
+
+function languageAndMarket(url: URL, corpus: string) {
+  const dutchTerms =
+    corpus.match(/\b(de|het|een|voor|met|beleggen|belegger|beleggers|vermogen|portefeuille)\b/gi)
+      ?.length ?? 0;
+  const dutch = url.hostname.endsWith(".nl") || dutchTerms >= 3;
+  return {
+    language: dutch ? "nl" : "en",
+    markets: dutch ? ["Netherlands"] : [],
+    clue: dutch
+      ? "The public hostname or visible copy indicates a Dutch-language or Netherlands-market focus."
+      : "The bounded public copy is predominantly compatible with English; exact markets require founder confirmation.",
+  };
+}
+
+function deterministicCategory(corpus: string): {
+  category: string;
+  audience: string;
+  problem: string;
+  desiredOutcome: string;
+  topics: string[];
+} {
+  if (
+    /\b(belegger|beleggen|investment|investor|portfolio|portefeuille|broker|aandelen|stocks?|etf)\b/i.test(
+      corpus,
+    )
+  ) {
+    return {
+      category: "investment portfolio software",
+      audience: "Self-directed investors evaluating clearer, read-only portfolio insight",
+      problem:
+        "Investment information and portfolio context can be fragmented or difficult to interpret.",
+      desiredOutcome:
+        "Help investors understand their portfolio and investment context more clearly.",
+      topics: ["portfolio clarity", "investment research workflow", "read-only investor tooling"],
+    };
+  }
+  if (/\b(distribution|trend intelligence|social signal|content opportunity)\b/i.test(corpus)) {
+    return {
+      category: "distribution intelligence software",
+      audience: "Founders and small product teams responsible for distribution",
+      problem:
+        "Current distribution opportunities are difficult to research and prioritize quickly.",
+      desiredOutcome: "Choose one evidence-backed distribution action while it is still useful.",
+      topics: ["distribution intelligence", "evidence-backed content", "founder workflow"],
+    };
+  }
+  if (/\b(api|developer|sdk|github|code|documentation)\b/i.test(corpus)) {
+    return {
+      category: "developer software product",
+      audience: "Developers and technical teams evaluating a more efficient workflow",
+      problem:
+        "A technical workflow appears to require unnecessary manual effort or fragmented tools.",
+      desiredOutcome: "Help technical users complete the visible workflow more efficiently.",
+      topics: ["developer workflow", "product integration", "technical product adoption"],
+    };
+  }
+  if (/\b(ai|artificial intelligence|machine learning|llm)\b/i.test(corpus)) {
+    return {
+      category: "AI software product",
+      audience: "People evaluating an AI-assisted workflow",
+      problem:
+        "The visible workflow appears to involve work that could be made faster or clearer with software.",
+      desiredOutcome: "Help users complete the visible workflow with clearer AI-assisted support.",
+      topics: ["AI-assisted workflow", "product adoption", "responsible automation"],
+    };
+  }
+  return {
+    category: "software product",
+    audience: "People evaluating the product shown on its public website",
+    problem: "The exact primary customer problem requires founder confirmation.",
+    desiredOutcome:
+      "Help the intended user achieve the outcome described by the public product copy.",
+    topics: ["product workflow", "customer problem", "product adoption"],
+  };
+}
+
 function inferredEntityType(context: ProjectContext): ProjectEntityType {
   const category = context.category.toLowerCase();
   if (category.includes("creator") || category.includes("founder-led")) {
@@ -47,27 +181,56 @@ export function deriveProjectContextProfile(
   context: ProjectContext,
   websiteSignals: readonly Signal[],
 ): ProjectContextProfile {
-  const pages = websiteSignals.filter((signal) => signal.source === "website").slice(0, 12);
-  const observedFacts = pages.flatMap((signal) => {
-    const facts: ContextProvenance["observed_facts"] = [];
-    if (signal.title?.trim()) {
-      facts.push({ field: "page_title", value: signal.title.trim(), source_url: signal.url });
-    }
-    if (signal.textExcerpt?.trim()) {
-      facts.push({
-        field: "page_excerpt",
-        value: signal.textExcerpt.trim().slice(0, 1_500),
-        source_url: signal.url,
-      });
-    }
-    return facts;
-  });
+  const pages = websiteSignals.filter((signal) => signal.source === "website").slice(0, 5);
+  const primary = pages[0];
+  const observedFacts: ContextProvenance["observed_facts"] = primary
+    ? [{ field: "product_url", value: primary.url, source_url: primary.url }]
+    : [];
+  observedFacts.push(
+    ...pages.flatMap((signal) => {
+      const facts: ContextProvenance["observed_facts"] = [];
+      if (signal.title?.trim()) {
+        facts.push({ field: "page_title", value: signal.title.trim(), source_url: signal.url });
+      }
+      if (signal.textExcerpt?.trim()) {
+        facts.push({
+          field: "page_excerpt",
+          value: signal.textExcerpt.trim().slice(0, 1_500),
+          source_url: signal.url,
+        });
+      }
+      const addSignalClues = (field: string, prefixes: readonly string[]) => {
+        const values = uniqueBounded(
+          prefixes.flatMap((prefix) => valuesAfterPrefix(signal.textExcerpt, prefix)),
+          4,
+        );
+        facts.push(...values.map((value) => ({ field, value, source_url: signal.url })));
+      };
+      addSignalClues("visible_proposition", ["Description: ", "Open Graph: "]);
+      addSignalClues("visible_offer", ["Structured data: ", "Primary CTAs: "]);
+      addSignalClues("visible_use_case", ["Headings: ", "FAQ prompts: "]);
+      addSignalClues("credible_topic_clue", ["Headings: "]);
+      return facts;
+    }),
+  );
+  if (primary) {
+    const primaryCorpus = `${primary.title ?? ""} ${valuesAfterPrefix(primary.textExcerpt, "Page text: ").join(" ")}`;
+    observedFacts.push({
+      field: "language_market_clue",
+      value: languageAndMarket(new URL(primary.url), primaryCorpus).clue,
+      source_url: primary.url,
+    });
+  }
   const inferredCandidates: Array<[string, string]> = [
+    ["name", context.name],
     ["entity_type", inferredEntityType(context)],
     ["category", context.category],
     ["audience", context.audience],
     ["problem", context.problem],
     ["desired_outcome", context.desiredOutcome],
+    ["language", context.language],
+    ["markets", context.markets.join(", ")],
+    ["credible_topics", context.credibleTopics.join(", ")],
     ["suitable_channels", context.suitableChannels.join(", ")],
     ["available_formats", context.availableFormats.join(", ")],
   ];
@@ -100,6 +263,56 @@ export function deriveProjectContextProfile(
     voiceProfile,
     contentCapabilities: inferredCapabilities(context),
   };
+}
+
+/**
+ * Produces a conservative, editable context draft from bounded website signals
+ * only. It deliberately makes no model or paid-provider call and treats every
+ * category/audience conclusion as founder-confirmable inference.
+ */
+export function inferWebsiteOnlyProjectContext(
+  urlValue: string,
+  websiteSignals: readonly Signal[],
+): ProjectContext {
+  const url = new URL(urlValue);
+  const normalizedUrl = url.toString();
+  const pages = websiteSignals.filter((signal) => signal.source === "website").slice(0, 5);
+  if (pages.length === 0) throw new Error("Website context requires at least one observed page");
+  const clues = websiteClues(pages);
+  const corpus = [
+    ...pages.map((page) => page.title ?? ""),
+    ...clues.descriptions,
+    ...clues.openGraph,
+    ...clues.structuredData,
+    ...clues.headings,
+    ...clues.primaryCtas,
+    ...clues.faqPrompts,
+    ...clues.pageText,
+  ].join(" ");
+  const category = deterministicCategory(corpus);
+  const locale = languageAndMarket(url, corpus);
+  const name = titleName(pages[0]?.title, url.hostname);
+
+  return ProjectContextSchema.parse({
+    name,
+    url: normalizedUrl,
+    category: category.category,
+    audience: category.audience,
+    problem: category.problem,
+    desiredOutcome: category.desiredOutcome,
+    credibleClaims: [],
+    alternatives: [],
+    competitors: [],
+    markets: locale.markets,
+    language: locale.language,
+    suitableChannels: ["linkedin", "x", "youtube", "blog"],
+    availableFormats: ["founder_text", "screen_recording"],
+    credibleTopics: uniqueBounded(category.topics, 8, 200),
+    assumptions: [
+      "Category, audience, primary pain, desired outcome, markets, and suitable channels are conservative inferences that require founder confirmation.",
+      "Visible website claims are provenance-bound observations, not independently verified performance claims.",
+    ],
+  });
 }
 
 function titleName(title: string | undefined, hostname: string): string {

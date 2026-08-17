@@ -614,22 +614,17 @@ function reconcileBlueprint(
   });
 }
 
-function draftFromReconciledBlueprint(
-  action: "PUBLISH" | "REMIX",
-  blueprint: ContentBlueprint,
-): string {
+function draftFromReconciledBlueprint(blueprint: ContentBlueprint): string {
   return [
     blueprint.hook_variants[0]!.text,
     "",
-    blueprint.audience_tension,
+    blueprint.content_premise,
     "",
-    ...blueprint.structure.map((step) => `- ${step}`),
+    blueprint.audience_tension,
     "",
     blueprint.product_role,
     "",
     blueprint.cta,
-    "",
-    `[${action} draft — founder approval required; do not auto-publish]`,
   ].join("\n");
 }
 
@@ -649,6 +644,18 @@ export function reconcileVersionedNextMove(input: {
       : input.validUntil instanceof Date
         ? input.validUntil.toISOString()
         : IsoDateTimeSchema.parse(input.validUntil);
+  if (new Date(validUntil).getTime() > new Date(move.validUntil).getTime()) {
+    throw new Error("A reconciled Next Move may preserve or shorten validity, but never extend it");
+  }
+  const proseIsExact =
+    input.prose.channel === move.channel &&
+    input.prose.topic === move.topic &&
+    input.prose.angle === move.angle &&
+    input.prose.format === move.format &&
+    input.prose.hook === move.hook &&
+    sameStringList(input.prose.outline, move.outline) &&
+    input.prose.cta === move.cta;
+  if (proseIsExact && validUntil === move.validUntil) return move;
   const recheckAt =
     new Date(move.trendWindow.recheck_at).getTime() <= new Date(validUntil).getTime()
       ? move.trendWindow.recheck_at
@@ -676,8 +683,8 @@ export function reconcileVersionedNextMove(input: {
       const reconcileTarget = (target: ReplyTarget): ReplyTarget => ({
         ...target,
         reply_angle: input.prose.angle,
-        suggested_reply: `${input.prose.hook}\n\n${input.prose.angle}`,
-        short_reply_variant: input.prose.hook,
+        suggested_reply: `On ${input.prose.topic}: ${input.prose.hook}\n\n${input.prose.angle}\n\n${target.credibility_reason}\n\n${input.prose.cta}`,
+        short_reply_variant: `${input.prose.hook} ${target.credibility_reason}`,
         reply_by: validUntil,
       });
       details = {
@@ -708,7 +715,7 @@ export function reconcileVersionedNextMove(input: {
   }
   const draftContent =
     move.generationLevel === "draft" && (details.action === "PUBLISH" || details.action === "REMIX")
-      ? draftFromReconciledBlueprint(details.action, details.blueprint)
+      ? draftFromReconciledBlueprint(details.blueprint)
       : undefined;
   return VersionedNextMoveSchema.parse({
     ...move,
@@ -855,7 +862,7 @@ export const ProjectNextMoveRequestSchema = z
     objective: z.string().trim().min(1).max(100).optional(),
     preferred_channels: StringListSchema.optional(),
     content_capabilities: z.array(ContentCapabilityNameSchema).min(1).max(7).optional(),
-    generation_level: GenerationLevelSchema.default("brief"),
+    generation_level: z.literal("draft").default("draft"),
   })
   .strict();
 export type ProjectNextMoveRequest = z.input<typeof ProjectNextMoveRequestSchema>;

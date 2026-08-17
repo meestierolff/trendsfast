@@ -116,6 +116,7 @@ describe("browser-bound magic-link flow", () => {
 describe("post-auth redirect allow list", () => {
   it("allows only fixed dashboard routes", () => {
     expect(safeDashboardDestination("/dashboard/today")).toBe("/dashboard/today");
+    expect(safeDashboardDestination("/dashboard/new")).toBe("/dashboard/new");
     expect(safeDashboardDestination("https://attacker.example/steal")).toBe("/dashboard");
     expect(safeDashboardDestination("//attacker.example")).toBe("/dashboard");
     expect(safeDashboardDestination("/dashboard/today?project=other")).toBe("/dashboard");

@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 const BodySchema = z
   .object({
     nextMoveId: z.string().uuid(),
-    kind: z.enum(["USED", "PUBLISHED", "REPLIED", "REMIXED", "SKIPPED"]),
+    kind: z.enum(["USED", "PUBLISHED", "REPLIED", "REMIXED"]),
     notes: z.string().trim().max(2_000).optional(),
   })
   .strict();

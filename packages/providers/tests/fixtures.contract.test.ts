@@ -151,6 +151,8 @@ describe("fixture provider contract", () => {
       },
       runtime,
     );
+    expect(first.signals[0]?.title).toBe("Trendsfast — fixture product context");
+    expect(second.signals[0]?.title).toBe("Halio — fixture product context");
     expect(first.signals[0]?.title).not.toBe(second.signals[0]?.title);
     expect(second.signals[0]?.textExcerpt).toContain("halio.nl");
   });

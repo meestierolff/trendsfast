@@ -21,6 +21,7 @@ vi.mock("../../lib/server-database", () => ({
 }));
 
 import { ReviewVersionConflictError } from "@trendsfast/database";
+import { assertVersionedNextMoveContentSafety } from "@trendsfast/orchestration";
 
 import { POST } from "../../app/api/ops/scans/[scanId]/actions/[action]/route";
 import { createCsrfToken, issueOpsSession } from "../../lib/ops-session";
@@ -128,6 +129,8 @@ describe("ops edit-and-approve route", () => {
         limitations: ["Bounded to the stored evidence window."],
         validUntil: "2026-08-14T10:00:00.000Z",
         confidenceRationale: "The score passed and evidence identity is unchanged.",
+        evidenceReceiptIds: ["00000000-0000-4000-8000-000000000041"],
+        exactEvidenceReviewed: true,
       }),
     });
 
@@ -140,7 +143,11 @@ describe("ops edit-and-approve route", () => {
       error: expect.stringMatching(/changed.*reload/i),
     });
     expect(mocks.editAndApprove).toHaveBeenCalledWith(
-      expect.objectContaining({ expectedVersion: 3 }),
+      expect.objectContaining({
+        expectedVersion: 3,
+        renewedEvidenceReceiptIds: ["00000000-0000-4000-8000-000000000041"],
+        assertFinalContentSafety: assertVersionedNextMoveContentSafety,
+      }),
     );
   });
 

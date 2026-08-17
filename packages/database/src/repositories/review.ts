@@ -23,6 +23,7 @@ import {
   nextMoveRevisions,
   opportunities,
   projectContextVersions,
+  projectMemberships,
   projects,
   reviewEvents,
   scanRequests,
@@ -30,6 +31,7 @@ import {
   signals,
   sourceRuns,
   deliveryTokens,
+  userProfiles,
 } from "../schema";
 import { requireDecisionEvidenceQuality } from "./review-evidence";
 
@@ -46,6 +48,12 @@ type EditableMoveFields = {
   validUntil: Date;
   confidenceRationale: string;
 };
+
+type FinalContentSafetyCheck = (
+  move: VersionedNextMove,
+  context: ProjectContext,
+  additionalDisplayedProse?: readonly string[],
+) => void;
 
 type RecomputedDraft = {
   move: NextMove;
@@ -207,6 +215,12 @@ function assertVersionedCoreMatchesDraft(versioned: VersionedNextMove, draft: Ne
 
 function sameJson(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  const expected = new Set(left);
+  return expected.size === left.length && right.every((value) => expected.has(value));
 }
 
 function projectReviewLockKey(projectId: string): string {
@@ -406,6 +420,8 @@ export class ReviewRepository {
     expectedVersion: number;
     reason: string;
     edits: EditableMoveFields;
+    renewedEvidenceReceiptIds: string[];
+    assertFinalContentSafety: FinalContentSafetyCheck;
   }) {
     const reviewerId = requiredReviewer(input.reviewerId);
     const reason = requiredReason(input.reason);
@@ -414,6 +430,15 @@ export class ReviewRepository {
     }
     if (Number.isNaN(input.edits.validUntil.getTime()) || input.edits.validUntil <= new Date()) {
       throw new Error("An edited Next Move requires a future validity window");
+    }
+    if (
+      input.renewedEvidenceReceiptIds.length > 50 ||
+      new Set(input.renewedEvidenceReceiptIds).size !== input.renewedEvidenceReceiptIds.length
+    ) {
+      throw new Error("Renewed evidence review requires a bounded unique receipt set");
+    }
+    if (typeof input.assertFinalContentSafety !== "function") {
+      throw new Error("Edit-and-approve requires the shared final content-safety boundary");
     }
 
     return this.db.transaction(async (tx) => {
@@ -481,6 +506,9 @@ export class ReviewRepository {
         )
         .limit(1);
       if (!currentContextVersion) throw new ReviewVersionConflictError();
+      if (input.edits.validUntil.getTime() > move.validUntil.getTime()) {
+        throw new Error("Founder edits may preserve or shorten validity, but never extend it");
+      }
 
       const parsedMove = NextMoveSchema.parse({
         action: move.action,
@@ -530,6 +558,11 @@ export class ReviewRepository {
         4_000,
         "Confidence rationale",
       );
+      input.assertFinalContentSafety(reconciledVersionedMove, context, [
+        whyNow,
+        ...limitations,
+        confidenceRationale,
+      ]);
       const before = moveSnapshot(move);
       const editableBefore = {
         topic: move.topic,
@@ -570,6 +603,22 @@ export class ReviewRepository {
             eq(evidenceReceipts.moveVersion, move.reviewVersion),
           ),
         );
+      const supportReceipts = receipts.filter(
+        (receipt) => receipt.bindingRole === "DECISION_SUPPORT",
+      );
+      if (
+        !sameStringSet(
+          supportReceipts.map((receipt) => receipt.id),
+          input.renewedEvidenceReceiptIds,
+        )
+      ) {
+        throw new Error(
+          "Edit-and-approve requires renewed review of the exact decision-support receipt set",
+        );
+      }
+      if (supportReceipts.some((receipt) => receipt.availability !== "AVAILABLE")) {
+        throw new Error("Renewed evidence review cannot attest unavailable decision support");
+      }
       if (
         reconciledVersionedMove.details.action === "REPLY" ||
         reconciledVersionedMove.details.action === "REMIX"
@@ -589,6 +638,7 @@ export class ReviewRepository {
               .where(
                 and(
                   eq(sourceRuns.scanRunId, move.scanRunId),
+                  eq(sourceRuns.state, "SUCCEEDED"),
                   inArray(signals.id, supportSignalIds),
                 ),
               )
@@ -602,11 +652,21 @@ export class ReviewRepository {
           storedSignals: supportSignals.map(({ signal }) => evidenceBindingSignal(signal)),
         });
       }
-      requireRenewedEvidenceReview(move.reviewVersion, receipts);
+      const now = new Date();
+      const renewedReceipts = receipts.map((receipt) => {
+        const renewed = receipt.bindingRole === "DECISION_SUPPORT";
+        return {
+          ...receipt,
+          verified: renewed,
+          reviewedBy: renewed ? reviewerId : null,
+          verifiedAt: renewed ? now : null,
+        };
+      });
+      requireRenewedEvidenceReview(move.reviewVersion + 1, renewedReceipts);
       const quality = requireDecisionEvidenceQuality({
         action: move.action,
         signalClass: move.signalClass,
-        receipts,
+        receipts: renewedReceipts,
       });
       if (move.action !== "WAIT") {
         const [opportunity] = move.opportunityId
@@ -621,7 +681,6 @@ export class ReviewRepository {
         }
       }
 
-      const now = new Date();
       const nextVersion = move.reviewVersion + 1;
       const [updated] = await tx
         .update(nextMoves)
@@ -659,7 +718,7 @@ export class ReviewRepository {
 
       if (receipts.length) {
         await tx.insert(evidenceReceipts).values(
-          receipts.map((receipt) => ({
+          renewedReceipts.map((receipt) => ({
             nextMoveId: move.id,
             moveVersion: nextVersion,
             signalId: receipt.signalId,
@@ -789,6 +848,11 @@ export class ReviewRepository {
       ) {
         throw new Error("Only a current founder review draft can be recomputed");
       }
+      if (new Date(draftMove.validUntil).getTime() > move.validUntil.getTime()) {
+        throw new Error(
+          "Stored-evidence recompute may preserve or shorten validity, but never extend it",
+        );
+      }
       await tx.execute(
         sql`SELECT pg_advisory_xact_lock(hashtextextended(${projectReviewLockKey(locked.project.id)}, 0))`,
       );
@@ -860,11 +924,17 @@ export class ReviewRepository {
             .from(signals)
             .innerJoin(sourceRuns, eq(sourceRuns.id, signals.sourceRunId))
             .where(
-              and(eq(sourceRuns.scanRunId, move.scanRunId), inArray(signals.id, evidenceSignalIds)),
+              and(
+                eq(sourceRuns.scanRunId, move.scanRunId),
+                eq(sourceRuns.state, "SUCCEEDED"),
+                inArray(signals.id, evidenceSignalIds),
+              ),
             )
         : [];
       if (signalRows.length !== evidenceSignalIds.length) {
-        throw new Error("Every recomputed evidence signal must belong to the same stored scan run");
+        throw new Error(
+          "Every recomputed evidence signal must belong to a SUCCEEDED source in the same stored scan run",
+        );
       }
       const signalById = new Map(signalRows.map(({ signal }) => [signal.id, signal]));
       const orderedSignals = evidenceSignalIds.map((id) => signalById.get(id)!);
@@ -1172,6 +1242,7 @@ export class ReviewRepository {
     reviewerId: string;
     expectedVersion: number;
     note?: string;
+    ownerAuthorization?: { authUserId: string; projectId: string };
   }) {
     const reviewerId = requiredReviewer(input.reviewerId);
     if (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 1) {
@@ -1184,6 +1255,26 @@ export class ReviewRepository {
         .where(eq(nextMoves.id, input.nextMoveId))
         .limit(1);
       if (!identity) throw new Error("Next Move was not found");
+      if (input.ownerAuthorization) {
+        const [owner] = await tx
+          .select({ projectId: scanRequests.projectId })
+          .from(nextMoves)
+          .innerJoin(scanRequests, eq(scanRequests.id, nextMoves.scanRequestId))
+          .innerJoin(projectMemberships, eq(projectMemberships.projectId, scanRequests.projectId))
+          .innerJoin(userProfiles, eq(userProfiles.id, projectMemberships.userProfileId))
+          .where(
+            and(
+              eq(nextMoves.id, identity.id),
+              eq(scanRequests.projectId, input.ownerAuthorization.projectId),
+              eq(userProfiles.authUserId, input.ownerAuthorization.authUserId),
+              eq(projectMemberships.role, "OWNER"),
+            ),
+          )
+          .limit(1);
+        if (!owner || owner.projectId !== input.ownerAuthorization.projectId) {
+          throw new Error("Project owner authorization is required for member approval");
+        }
+      }
       await tx.execute(
         sql`SELECT id FROM scan_requests WHERE id = ${identity.scanRequestId} FOR UPDATE`,
       );
@@ -1258,8 +1349,11 @@ export class ReviewRepository {
         signalClass: move.signalClass,
         receipts,
       });
-
       const now = new Date();
+      if (move.validUntil <= now) {
+        throw new Error("The Next Move expired before approval");
+      }
+
       const [approved] = await tx
         .update(nextMoves)
         .set({

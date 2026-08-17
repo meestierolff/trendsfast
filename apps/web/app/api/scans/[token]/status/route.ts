@@ -9,8 +9,12 @@ export const dynamic = "force-dynamic";
 export async function GET(_request: Request, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const status = await getScanStatusByToken(token);
+  const polling = status.found && ["QUEUED", "RUNNING", "REVIEW_REQUIRED"].includes(status.state);
   return NextResponse.json(status, {
     status: status.found ? 200 : 404,
-    headers: PRIVATE_RESPONSE_HEADERS,
+    headers: {
+      ...PRIVATE_RESPONSE_HEADERS,
+      ...(polling ? { "Retry-After": "30" } : {}),
+    },
   });
 }

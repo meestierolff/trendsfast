@@ -51,7 +51,7 @@ export const DOGFOOD_FIXTURES: readonly DogfoodFixture[] = [
       problem:
         "Founders spend hours comparing fragmented signals but still do not know what to distribute now.",
       desiredOutcome: "Choose one timely, credible distribution action with original evidence.",
-      credibleClaims: ["Returns PUBLISH, REPLY, REMIX, or WAIT", "No auto-posting"],
+      credibleClaims: ["Decision output is PUBLISH, REPLY, REMIX, or WAIT", "No auto-posting"],
       alternatives: ["manual platform research", "generic LLM ideation"],
       competitors: ["social listening dashboards"],
       markets: ["US", "EU"],

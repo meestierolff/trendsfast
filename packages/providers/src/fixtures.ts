@@ -24,7 +24,10 @@ const METADATA: Record<ProviderSlug, ProviderMetadata> = {
     capabilities: ["CONTEXT"],
     requiredEnvironmentVariables: [],
     timeoutMs: 15_000,
-    retryPolicy: RETRY_POLICY,
+    // One website attempt is already a bounded five-page crawl. Reserving the
+    // full call ceiling twice would make an executor-level retry impossible;
+    // caller admission provides the durable retry boundary instead.
+    retryPolicy: { ...RETRY_POLICY, maxAttempts: 1 },
     maxCallsPerScan: 5,
     maxResultsPerScan: 5,
   },
@@ -150,6 +153,11 @@ function fixtureMetrics(source: ProviderSlug, index: number): SignalMetrics {
   }
 }
 
+function fixtureProductName(hostname: string): string {
+  const label = hostname.split(".")[0]?.replace(/[-_]+/g, " ").trim() || "fixture product";
+  return label.replace(/\b[a-z]/g, (character) => character.toUpperCase());
+}
+
 function makeSignal(
   source: ProviderSlug,
   query: ProviderQuery,
@@ -166,9 +174,10 @@ function makeSignal(
       return "fixture product";
     }
   })();
+  const fixtureName = fixtureProductName(fixtureHost);
   const publishedAt = new Date(context.now().getTime() - (2 + index * 3) * 3_600_000).toISOString();
   const titles: Record<ProviderSlug, string> = {
-    website: `${fixtureHost} — fixture product context`,
+    website: `${fixtureName} — fixture product context`,
     google_trends: `Search interest is rising for “${query.query}”`,
     hacker_news: `Ask HN: how do technical founders validate ${query.query}?`,
     github: `Developers are adopting tools around ${query.query}`,

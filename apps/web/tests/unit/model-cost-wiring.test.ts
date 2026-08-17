@@ -2,11 +2,42 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { parseEnv } from "@trendsfast/config";
+import { parseEnv, type Environment } from "@trendsfast/config";
 
-import { createConfiguredModelClient } from "../../lib/scan-processing";
+import {
+  createConfiguredModelClient,
+  synthesisModelIsProductionVerified,
+} from "../../lib/scan-processing";
 
 describe("live model cost wiring", () => {
+  it("permits synthesis only through the exact verified xAI source model", () => {
+    const env = {
+      PROVIDER_CREDENTIAL_MODE: "managed",
+      PROVIDER_CALLS_ENABLED: true,
+      LLM_PROVIDER: "xai",
+      LLM_MODEL: "grok-exact",
+      XAI_MODEL: "grok-exact",
+      XAI_API_KEY: "xai-key",
+    } as unknown as Environment;
+    const verified = new Map([["x", { eligible: true }]] as const);
+    const unverified = new Map([["x", { eligible: false }]] as const);
+
+    expect(synthesisModelIsProductionVerified(env, verified)).toBe(true);
+    expect(synthesisModelIsProductionVerified(env, unverified)).toBe(false);
+    expect(
+      synthesisModelIsProductionVerified(
+        { ...env, LLM_MODEL: "different-unverified-model" },
+        verified,
+      ),
+    ).toBe(false);
+    expect(
+      synthesisModelIsProductionVerified(
+        { ...env, LLM_PROVIDER: "openai", OPENAI_API_KEY: "openai-key" },
+        verified,
+      ),
+    ).toBe(false);
+  });
+
   it("reserves operator-priced worst-case spend before the model network call", async () => {
     const events: string[] = [];
     const fetcher = vi.fn<typeof fetch>(async () => {

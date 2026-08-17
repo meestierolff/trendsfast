@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { NextMoveReadyResponseSchema } from "@trendsfast/schemas";
 import { InProcessInvalidApiKeyLimiter } from "../../lib/api-auth-guard";
-import { createV1Api, type V1ApiDependencies } from "../../lib/v1-api";
+import { ApiServiceError, createV1Api, type V1ApiDependencies } from "../../lib/v1-api";
 
 const TEST_KEY = "tf_test_prefix12.abcdefghijklmnopqrstuvwxyz123456";
 const LIVE_KEY = "tf_live_prefix12.abcdefghijklmnopqrstuvwxyz123456";
@@ -127,6 +127,18 @@ describe("v1 Next Move API", () => {
             };
           };
         };
+        "/v1/projects/{project_id}/next-move"?: {
+          post?: {
+            requestBody?: {
+              content?: { "application/json"?: { example?: { generation_level?: string } } };
+            };
+            responses?: {
+              "200"?: {
+                content?: { "application/json"?: { example?: unknown } };
+              };
+            };
+          };
+        };
       };
       components?: {
         schemas?: Record<string, { required?: string[] }>;
@@ -146,6 +158,21 @@ describe("v1 Next Move API", () => {
     expect(document.components?.schemas).toHaveProperty("ProjectNextMoveRequest");
     expect(document.components?.schemas?.NextMoveRequest?.required).toEqual(["product_url"]);
     expect(document.components?.schemas?.ProjectNextMoveRequest?.required).toBeUndefined();
+    expect(
+      document.paths?.["/v1/projects/{project_id}/next-move"]?.post?.requestBody?.content?.[
+        "application/json"
+      ]?.example?.generation_level,
+    ).toBe("draft");
+    const projectReadyExample =
+      document.paths?.["/v1/projects/{project_id}/next-move"]?.post?.responses?.["200"]?.content?.[
+        "application/json"
+      ]?.example;
+    expect(NextMoveReadyResponseSchema.parse(projectReadyExample)).toMatchObject({
+      contract_version: "next-move-v1",
+      generation_level: "draft",
+      action_details: { action: "WAIT" },
+      auto_publish: false,
+    });
     const documentedExample = example as {
       why_now?: { independent_source_count?: number };
       evidence?: unknown[];
@@ -448,7 +475,7 @@ describe("v1 Next Move API", () => {
           apiKeyId: "key_project",
           projectId,
           environment: "test" as const,
-          scopes: ["next_move:write"],
+          scopes: ["next_move:write", "next_move:read"],
         })),
         createOrReuseForProject,
       }),
@@ -464,7 +491,6 @@ describe("v1 Next Move API", () => {
       body: JSON.stringify({
         objective: "Grow among technical founders",
         content_capabilities: ["founder_text"],
-        generation_level: "draft",
       }),
     });
 
@@ -489,6 +515,18 @@ describe("v1 Next Move API", () => {
       },
     });
 
+    const brief = await app.request(`/v1/projects/${projectId}/next-move`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${TEST_KEY}`,
+        "idempotency-key": crypto.randomUUID(),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ generation_level: "brief" }),
+    });
+    expect(brief.status).toBe(422);
+    expect(createOrReuseForProject).toHaveBeenCalledTimes(1);
+
     const wrongProject = await app.request(
       "/v1/projects/3dfa8d10-f3ed-427a-993c-280243a329e6/next-move",
       {
@@ -503,6 +541,208 @@ describe("v1 Next Move API", () => {
     );
     expect(wrongProject.status).toBe(403);
     expect(createOrReuseForProject).toHaveBeenCalledTimes(1);
+  });
+
+  it("requires read plus write scope on the dashboard-compatible project workflow", async () => {
+    const projectId = "21437295-6781-41a0-a42b-e6db11c553b2";
+    const createOrReuseForProject = vi.fn();
+    const response = await createV1Api(
+      dependencies({
+        authenticate: vi.fn(async () => ({
+          apiKeyId: "key_project",
+          projectId,
+          environment: "test" as const,
+          scopes: ["next_move:write"],
+        })),
+        createOrReuseForProject,
+      }),
+    ).request(`/v1/projects/${projectId}/next-move`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${TEST_KEY}`,
+        "idempotency-key": crypto.randomUUID(),
+        "content-type": "application/json",
+      },
+      body: "{}",
+    });
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "FORBIDDEN",
+        message: "The project workflow requires both next_move:write and next_move:read scopes.",
+      },
+    });
+    expect(createOrReuseForProject).not.toHaveBeenCalled();
+  });
+
+  it("keeps the LIVE_API creation gate in front of the preferred project route", async () => {
+    const projectId = "21437295-6781-41a0-a42b-e6db11c553b2";
+    const authenticate = vi.fn();
+    const createOrReuseForProject = vi.fn();
+    const response = await createV1Api(
+      dependencies({
+        liveApiCreationEnabled: false,
+        authenticate,
+        createOrReuseForProject,
+      }),
+    ).request(`/v1/projects/${projectId}/next-move`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${TEST_KEY}`,
+        "idempotency-key": crypto.randomUUID(),
+        "content-type": "application/json",
+      },
+      body: "{}",
+    });
+
+    expect(response.status).toBe(503);
+    expect(authenticate).not.toHaveBeenCalled();
+    expect(createOrReuseForProject).not.toHaveBeenCalled();
+  });
+
+  it("returns terminal READY as 200 without polling headers on the preferred project route", async () => {
+    const projectId = "21437295-6781-41a0-a42b-e6db11c553b2";
+    const openApiResponse = await createV1Api(dependencies()).request("/v1/openapi.json");
+    const document = (await openApiResponse.json()) as {
+      paths?: {
+        "/v1/next-move"?: {
+          post?: {
+            responses?: {
+              "200"?: { content?: { "application/json"?: { example?: unknown } } };
+            };
+          };
+        };
+      };
+    };
+    const example =
+      document.paths?.["/v1/next-move"]?.post?.responses?.["200"]?.content?.["application/json"]
+        ?.example;
+    const ready = NextMoveReadyResponseSchema.parse({
+      ...(typeof example === "object" && example !== null ? example : {}),
+      generation_level: "draft",
+    });
+    const response = await createV1Api(
+      dependencies({
+        authenticate: vi.fn(async () => ({
+          apiKeyId: "key_project",
+          projectId,
+          environment: "test" as const,
+          scopes: ["next_move:write", "next_move:read"],
+        })),
+        createOrReuseForProject: vi.fn(async () => ready),
+      }),
+    ).request(`/v1/projects/${projectId}/next-move`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${TEST_KEY}`,
+        "idempotency-key": crypto.randomUUID(),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ generation_level: "draft" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("location")).toBeNull();
+    expect(response.headers.get("retry-after")).toBeNull();
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual(ready);
+  });
+
+  it("returns 401 for an invalid bearer key on the preferred claimed-project route", async () => {
+    const projectId = "21437295-6781-41a0-a42b-e6db11c553b2";
+    const createOrReuseForProject = vi.fn();
+    const response = await createV1Api(dependencies({ createOrReuseForProject })).request(
+      `/v1/projects/${projectId}/next-move`,
+      {
+        method: "POST",
+        headers: {
+          authorization: "Bearer tf_test_unknown1.abcdefghijklmnopqrstuvwxyz123456",
+          "idempotency-key": crypto.randomUUID(),
+          "content-type": "application/json",
+          "x-forwarded-for": "203.0.113.101",
+        },
+        body: JSON.stringify({ generation_level: "draft" }),
+      },
+    );
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({
+      error: { code: "UNAUTHORIZED", message: "The API key is invalid or revoked." },
+    });
+    expect(createOrReuseForProject).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      label: "incompatible idempotency replay",
+      code: "CONFLICT" as const,
+      message: "The Idempotency-Key was already used for a different request.",
+      status: 409,
+      address: "203.0.113.102",
+    },
+    {
+      label: "request rate admission",
+      code: "RATE_LIMITED" as const,
+      message: "The API key hourly request limit was reached.",
+      status: 429,
+      address: "203.0.113.103",
+    },
+    {
+      label: "provider-cost admission",
+      code: "COST_LIMITED" as const,
+      message: "The API key provider-cost limit would be exceeded.",
+      status: 429,
+      address: "203.0.113.104",
+    },
+    {
+      label: "Founder usage admission",
+      code: "USAGE_LIMITED" as const,
+      message: "The Founder plan request limit was reached.",
+      status: 429,
+      address: "203.0.113.105",
+    },
+    {
+      label: "disabled provider work",
+      code: "UNAVAILABLE" as const,
+      message: "Provider-backed scan creation is disabled by deployment policy.",
+      status: 503,
+      address: "203.0.113.106",
+    },
+  ])("maps $label safely on the preferred project route", async (testCase) => {
+    const projectId = "21437295-6781-41a0-a42b-e6db11c553b2";
+    const createOrReuseForProject = vi.fn(async () => {
+      throw new ApiServiceError(testCase.code, testCase.message);
+    });
+    const response = await createV1Api(
+      dependencies({
+        providerCredentialMode: "managed",
+        authenticate: vi.fn(async () => ({
+          apiKeyId: "key_project",
+          projectId,
+          environment: "live" as const,
+          scopes: ["next_move:write", "next_move:read"],
+        })),
+        createOrReuseForProject,
+      }),
+    ).request(`/v1/projects/${projectId}/next-move`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${LIVE_KEY}`,
+        "idempotency-key": crypto.randomUUID(),
+        "content-type": "application/json",
+        "x-forwarded-for": testCase.address,
+      },
+      body: JSON.stringify({ generation_level: "draft" }),
+    });
+
+    expect(response.status).toBe(testCase.status);
+    expect(response.headers.get("retry-after")).toBe(testCase.status === 429 ? "3600" : null);
+    const body = await response.json();
+    expect(body).toEqual({ error: { code: testCase.code, message: testCase.message } });
+    expect(JSON.stringify(body)).not.toMatch(
+      /91\.333|7\.25|costReservation|actualCost|stack|postgres|database/i,
+    );
   });
 
   it.each(["QUEUED", "RUNNING", "REVIEW_REQUIRED"] as const)(

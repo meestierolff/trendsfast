@@ -193,6 +193,7 @@ export function clusterSignals(
       id: `cluster_${scoringHash(memberIds.join(":"))}`,
       memberIds,
       signals: members,
+      representativeSignalId: representative.id,
       representativeTitle: representative.title ?? representative.textExcerpt ?? representative.url,
       topicFingerprint,
       independenceKeys,

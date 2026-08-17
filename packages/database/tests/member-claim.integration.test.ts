@@ -11,6 +11,7 @@ import {
   projectClaims,
   projectContextVersions,
   projectMemberships,
+  projects,
   scanRequests,
   scanRuns,
   userProfiles,
@@ -442,7 +443,105 @@ databaseDescribe("verified member project claims", () => {
     ).resolves.toMatchObject({ project: { id: projectB.project.id } });
   });
 
-  it("re-infers a claimed project after a URL change clears its saved context", async () => {
+  it("creates or reuses exactly one owner-bound authenticated project", async () => {
+    const url = `https://member-entry-${randomUUID()}.example`;
+    urls.push(`${url}/`);
+    const owner = {
+      authUserId: randomUUID(),
+      email: `entry-${randomUUID()}@example.com`,
+      projectEntryEligible: true,
+    };
+
+    const [first, second] = await Promise.all([
+      repositories.members.createOrReuseOwnedProject({ identity: owner, url }),
+      repositories.members.createOrReuseOwnedProject({ identity: owner, url }),
+    ]);
+
+    expect(new Set([first.project.id, second.project.id])).toEqual(new Set([first.project.id]));
+    expect([first.created, second.created].sort()).toEqual([false, true]);
+    await expect(
+      repositories.members.createOrReuseOwnedProject({
+        identity: {
+          authUserId: randomUUID(),
+          email: `foreign-${randomUUID()}@example.com`,
+        },
+        url,
+      }),
+    ).rejects.toMatchObject({ name: "ProjectOwnershipConflictError" });
+  });
+
+  it("blocks an ineligible URL reservation and atomically caps eligible project entry", async () => {
+    const blockedUrl = `https://member-entry-blocked-${randomUUID()}.example`;
+    urls.push(`${blockedUrl}/`);
+    await expect(
+      repositories.members.createOrReuseOwnedProject({
+        identity: {
+          authUserId: randomUUID(),
+          email: `ineligible-${randomUUID()}@example.com`,
+        },
+        url: blockedUrl,
+      }),
+    ).rejects.toMatchObject({
+      name: "MemberProjectEntryAdmissionError",
+      code: "DESIGN_PARTNER_REQUIRED",
+    });
+
+    const bootstrap = await readyDelivery("member-entry-cap-bootstrap");
+    const owner = {
+      authUserId: randomUUID(),
+      email: `entry-cap-${randomUUID()}@example.com`,
+    };
+    await claimProject(bootstrap, owner);
+    const now = new Date();
+    await repositories.founderGrants.issueDesignPartnerGrant({
+      projectId: bootstrap.project.id,
+      issuedBy: "test:member-entry-cap",
+      expiresAt: new Date(now.getTime() + 24 * 60 * 60_000),
+      now,
+    });
+    await client.db
+      .update(projects)
+      .set({ createdAt: new Date(now.getTime() - 2 * 24 * 60 * 60_000) })
+      .where(eq(projects.id, bootstrap.project.id));
+
+    const urlsForCap = Array.from(
+      { length: 4 },
+      () => `https://member-entry-cap-${randomUUID()}.example`,
+    );
+    urls.push(...urlsForCap.map((value) => `${value}/`));
+    const admissions = await Promise.allSettled(
+      urlsForCap.map((url) =>
+        repositories.members.createOrReuseOwnedProject({ identity: owner, url }),
+      ),
+    );
+    expect(admissions.filter((result) => result.status === "fulfilled")).toHaveLength(3);
+    const rejected = admissions.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]?.reason).toMatchObject({
+      name: "MemberProjectEntryAdmissionError",
+      code: "DAILY_LIMIT",
+      retryAfterSeconds: expect.any(Number),
+    });
+
+    const created = admissions.find(
+      (
+        result,
+      ): result is PromiseFulfilledResult<
+        Awaited<ReturnType<typeof repositories.members.createOrReuseOwnedProject>>
+      > => result.status === "fulfilled",
+    );
+    if (!created) throw new Error("Expected one admitted member project");
+    await expect(
+      repositories.members.createOrReuseOwnedProject({
+        identity: owner,
+        url: created.value.project.url,
+      }),
+    ).resolves.toMatchObject({ created: false, project: { id: created.value.project.id } });
+  });
+
+  it("requires saved website context and explicit founder confirmation after a URL change", async () => {
     const fixture = await readyDelivery("member-reinfer");
     const owner = {
       authUserId: randomUUID(),
@@ -475,11 +574,95 @@ databaseDescribe("verified member project claims", () => {
       );
     expect(currentBefore).toEqual([]);
 
+    const context = {
+      name: "Member re-infer fixture",
+      url: `${nextUrl}/`,
+      category: "software product",
+      audience: "Founder operators",
+      problem: "Choosing a current distribution action",
+      desiredOutcome: "Act on one reviewed move",
+      credibleClaims: [],
+      alternatives: [],
+      competitors: [],
+      markets: [],
+      language: "en",
+      suitableChannels: ["x"],
+      availableFormats: ["founder_text"],
+      credibleTopics: ["distribution"],
+      assumptions: ["Founder confirmation required"],
+    };
+    const profile = {
+      entityType: "PRODUCT" as const,
+      contextProvenance: {
+        observed_facts: [{ field: "product_url", value: `${nextUrl}/`, source_url: `${nextUrl}/` }],
+        inferred_context: [],
+        assumptions: context.assumptions,
+      },
+      voiceProfile: {
+        traits: [],
+        preferred_phrases: [],
+        avoid_phrases: [],
+        sample_texts: [],
+        sample_urls: [],
+      },
+      contentCapabilities: {
+        founder_text: true,
+        founder_on_camera: false,
+        screen_recording: false,
+        ai_avatar: false,
+        carousel: false,
+        product_demo: false,
+        long_form: false,
+      },
+    };
+    const website = await repositories.members.saveOwnedWebsiteContext({
+      authUserId: owner.authUserId,
+      projectId: fixture.project.id,
+      context,
+      ...profile,
+      sourceContentHash: "a".repeat(64),
+    });
+    expect(website.contextVersion.createdBy).toBe("system:website-context");
+    await client.db
+      .update(projectContextVersions)
+      .set({ model: "website-context-model-test" })
+      .where(eq(projectContextVersions.id, website.contextVersion.id));
+    await expect(
+      repositories.members.requestProjectRefresh({
+        authUserId: owner.authUserId,
+        projectId: fixture.project.id,
+        idempotencyKey: randomUUID(),
+        generationLevel: "draft",
+        costReservationUsd: 0,
+        now: new Date(now.getTime() + 500),
+      }),
+    ).rejects.toThrow("requires founder confirmation");
+
+    const confirmed = await repositories.members.updateProjectContext({
+      authUserId: owner.authUserId,
+      projectId: fixture.project.id,
+      context,
+      ...profile,
+    });
+    expect(confirmed.createdBy).toMatch(/^member:/);
+    expect(confirmed).toMatchObject({
+      sourceContentHash: "a".repeat(64),
+      promptVersion: "website-context-v1",
+      model: "website-context-model-test",
+      contextProvenance: {
+        observed_facts: profile.contextProvenance.observed_facts,
+        assumptions: context.assumptions,
+      },
+    });
+    expect(
+      confirmed.contextProvenance.inferred_context.find((entry) => entry.field === "audience"),
+    ).toMatchObject({ value: context.audience });
+
     const result = await repositories.members.requestProjectRefresh({
       authUserId: owner.authUserId,
       projectId: fixture.project.id,
       idempotencyKey: randomUUID(),
-      generationLevel: "brief",
+      generationLevel: "draft",
       costReservationUsd: 0,
       now: new Date(now.getTime() + 1_000),
     });
@@ -497,8 +680,31 @@ databaseDescribe("verified member project claims", () => {
     expect(request).toMatchObject({
       submittedUrl: `${nextUrl}/`,
       normalizedUrl: `${nextUrl}/`,
-      requestedContentCapabilities: null,
+      requestedContentCapabilities: ["founder_text"],
     });
-    expect(run?.projectContextVersionId).toBeNull();
+    expect(run?.projectContextVersionId).toBe(confirmed.id);
+    await expect(
+      repositories.members.getProjectDashboard({
+        authUserId: owner.authUserId,
+        projectId: fixture.project.id,
+      }),
+    ).resolves.toMatchObject({
+      pendingRequest: { id: request.id, state: "QUEUED" },
+    });
+    await expect(
+      repositories.members.updateProjectContext({
+        authUserId: owner.authUserId,
+        projectId: fixture.project.id,
+        context,
+        ...profile,
+      }),
+    ).rejects.toMatchObject({ name: "MemberProjectBusyError" });
+    await expect(
+      repositories.members.updateProjectUrl({
+        authUserId: owner.authUserId,
+        projectId: fixture.project.id,
+        url: `https://member-reinfer-busy-${randomUUID()}.example`,
+      }),
+    ).rejects.toMatchObject({ name: "MemberProjectBusyError" });
   });
 });

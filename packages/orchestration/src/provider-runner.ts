@@ -7,7 +7,7 @@ import {
   type ProviderQuery,
   type ProviderSlug,
 } from "@trendsfast/providers";
-import type { ProviderRunner } from "./state-machine";
+import type { ProviderExecutionEligibility, ProviderRunner } from "./state-machine";
 
 export const DEFAULT_PROVIDER_ORDER: ProviderSlug[] = [
   "website",
@@ -36,18 +36,43 @@ function request(
 export function createProviderRunner(input: {
   registry: ReadonlyMap<ProviderSlug, ProviderAdapter>;
   context: ProviderExecutionContext;
+  eligibility?: ReadonlyMap<ProviderSlug, ProviderExecutionEligibility>;
   circuitBreaker?: ProviderCircuitBreaker;
 }): ProviderRunner {
+  if (input.context.credentialMode !== "fixture") {
+    if (!input.eligibility) throw new Error("LIVE_PROVIDER_ELIGIBILITY_REQUIRED");
+    for (const provider of input.registry.keys()) {
+      if (!input.eligibility.has(provider)) {
+        throw new Error(`LIVE_PROVIDER_ELIGIBILITY_MISSING:${provider}`);
+      }
+    }
+  }
   const circuitBreaker = input.circuitBreaker ?? new ProviderCircuitBreaker();
+  const eligibility = (provider: ProviderSlug): ProviderExecutionEligibility => {
+    const projected = input.eligibility?.get(provider);
+    if (projected) return projected;
+    return input.context.credentialMode === "fixture"
+      ? { eligible: true }
+      : {
+          eligible: false,
+          code: "PROVIDER_VERIFICATION_UNAVAILABLE",
+          message: "Source skipped because exact production provider verification is unavailable.",
+        };
+  };
   return {
     order: DEFAULT_PROVIDER_ORDER.filter((slug) => input.registry.has(slug)),
+    requiresFreshRunEvidence: input.context.credentialMode !== "fixture",
+    eligibility,
     estimate(provider, queries) {
+      if (!eligibility(provider).eligible) return 0;
       const adapter = input.registry.get(provider);
       if (!adapter) return 0;
       return adapter.estimate(request(provider, "estimate", undefined, queries), input.context)
         .estimatedUsd;
     },
     async execute(provider, work, budget) {
+      const projected = eligibility(provider);
+      if (!projected.eligible) throw new Error(projected.code);
       const adapter = input.registry.get(provider);
       if (!adapter) throw new Error(`Provider adapter ${provider} is not registered`);
       const remainingMs = Math.max(1, budget.deadline.getTime() - input.context.now().getTime());

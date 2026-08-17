@@ -23,6 +23,8 @@ const EditAndApproveSchema = z
     limitations: z.array(z.string().trim().min(1).max(1_000)).max(50),
     validUntil: z.string().datetime({ offset: true }),
     confidenceRationale: LongTextSchema,
+    evidenceReceiptIds: z.array(EvidenceIdSchema).max(50),
+    exactEvidenceReviewed: z.literal(true),
   })
   .strict();
 
