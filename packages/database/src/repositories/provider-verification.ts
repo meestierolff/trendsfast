@@ -24,7 +24,9 @@ export class ProviderVerificationAttemptConflictError extends Error {
 
 type ProviderVerificationRecord = typeof providerVerificationRecords.$inferSelect;
 
-type PublicProviderVerificationRow = {
+type RawPublicProviderVerificationTimestamp = Date | string | null;
+
+type RawPublicProviderVerificationRow = {
   source: SourceSlug;
   provider: string;
   state: ProviderVerificationState;
@@ -34,9 +36,30 @@ type PublicProviderVerificationRow = {
   readback_verified: boolean;
   canonical_url_count: number;
   latency_ms: number | null;
-  checked_at: Date | null;
-  completed_at: Date | null;
+  checked_at: RawPublicProviderVerificationTimestamp;
+  completed_at: RawPublicProviderVerificationTimestamp;
 };
+
+function parsePublicProviderVerificationTimestamp(
+  value: RawPublicProviderVerificationTimestamp,
+  field: "checked_at" | "completed_at",
+): Date | null {
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "string" && !(value instanceof Date)) {
+    throw new Error(`Public provider verification ${field} timestamp is invalid`);
+  }
+  if (typeof value === "string" && (!value.trim() || value !== value.trim())) {
+    throw new Error(`Public provider verification ${field} timestamp is invalid`);
+  }
+
+  const timestamp = new Date(value);
+  if (!Number.isFinite(timestamp.getTime())) {
+    throw new Error(`Public provider verification ${field} timestamp is invalid`);
+  }
+  return timestamp;
+}
 
 function requestHashMarker(value: string): string {
   const normalized = value.trim().toLowerCase();
@@ -414,7 +437,7 @@ export class ProviderVerificationRepository {
     deploymentHost: string;
     deploymentId: string;
   }) {
-    const result = await this.db.execute<PublicProviderVerificationRow>(sql`
+    const result = await this.db.execute<RawPublicProviderVerificationRow>(sql`
       select source,
              provider,
              state,
@@ -442,8 +465,8 @@ export class ProviderVerificationRepository {
       readbackVerified: record.readback_verified,
       canonicalUrlCount: record.canonical_url_count,
       latencyMs: record.latency_ms,
-      checkedAt: record.checked_at,
-      completedAt: record.completed_at,
+      checkedAt: parsePublicProviderVerificationTimestamp(record.checked_at, "checked_at"),
+      completedAt: parsePublicProviderVerificationTimestamp(record.completed_at, "completed_at"),
     }));
   }
 
