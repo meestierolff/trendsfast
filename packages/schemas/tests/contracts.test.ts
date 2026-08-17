@@ -4,6 +4,7 @@ import {
   NextMoveAcceptedResponseSchema,
   NextMoveReadyResponseSchema,
   NextMoveRequestSchema,
+  ProjectNextMoveRequestSchema,
   ProjectContextSchema,
   QueryPlanSchema,
   ScanStateSchema,
@@ -99,6 +100,11 @@ describe("project, query, and next-move API contracts", () => {
       generation_level: "brief",
     });
     expect(() => NextMoveRequestSchema.parse({})).toThrow();
+  });
+
+  it("defaults the claimed-project contract to draft and rejects brief output", () => {
+    expect(ProjectNextMoveRequestSchema.parse({})).toEqual({ generation_level: "draft" });
+    expect(() => ProjectNextMoveRequestSchema.parse({ generation_level: "brief" })).toThrow();
   });
 
   it("accepts honest 202 and ready response shapes", () => {

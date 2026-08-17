@@ -27,6 +27,7 @@ vi.mock("@/lib/private-scan-api", () => ({
 vi.mock("@/lib/auth-flow", () => ({ authRedirect: mocks.authRedirect }));
 
 import { POST as logout } from "../../app/auth/logout/route";
+import { getVerifiedAuthIdentity } from "../../lib/auth-session";
 import { refreshSupabaseAuthSession } from "../../lib/supabase/proxy";
 
 describe("Supabase session lifecycle", () => {
@@ -106,5 +107,42 @@ describe("Supabase session lifecycle", () => {
     );
     expect(mocks.signOut).not.toHaveBeenCalled();
     expect(response.headers.get("location")).toBe("/login?error=request_rejected");
+  });
+
+  it("derives private-alpha project entry only from server-trusted app metadata", async () => {
+    const subject = "11111111-1111-4111-8111-111111111111";
+    const getClaims = vi.fn(async () => ({ data: { claims: { sub: subject } }, error: null }));
+    const getUser = vi
+      .fn()
+      .mockResolvedValueOnce({
+        data: {
+          user: {
+            id: subject,
+            email: "Founder@Example.com",
+            app_metadata: { trendsfast_project_entry: "FOUNDER" },
+            user_metadata: {},
+          },
+        },
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        data: {
+          user: {
+            id: subject,
+            email: "Founder@Example.com",
+            app_metadata: {},
+            user_metadata: { trendsfast_project_entry: "FOUNDER" },
+          },
+        },
+        error: null,
+      });
+    mocks.createSupabaseServerClient.mockResolvedValue({ auth: { getClaims, getUser } });
+
+    await expect(getVerifiedAuthIdentity()).resolves.toMatchObject({
+      authUserId: subject,
+      email: "founder@example.com",
+      projectEntryEligible: true,
+    });
+    await expect(getVerifiedAuthIdentity()).resolves.not.toHaveProperty("projectEntryEligible");
   });
 });

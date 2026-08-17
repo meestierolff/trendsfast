@@ -2,6 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
+const environment = vi.hoisted(() => ({ credentialMode: "fixture" }));
+vi.mock("@trendsfast/config", () => ({
+  loadEnv: () => ({ PROVIDER_CREDENTIAL_MODE: environment.credentialMode }),
+}));
+
 const orchestration = vi.hoisted(() => ({
   decide: vi.fn(async (input: { signals: Array<{ id: string }> }) => ({
     move: {
@@ -27,7 +32,9 @@ const orchestration = vi.hoisted(() => ({
     independentSourceCount: 0,
   })),
   storedSignal: vi.fn((row: { signal: { id: string } }) => ({ id: row.signal.id })),
-  measurementFragment: vi.fn(() => []),
+  measurementFragment: vi.fn(
+    (value: { measurements?: Array<{ id: string }> } | null) => value?.measurements ?? [],
+  ),
 }));
 
 vi.mock("@trendsfast/orchestration", () => ({
@@ -57,7 +64,10 @@ const context = {
 };
 
 describe("stored-evidence recompute truth boundary", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    environment.credentialMode = "fixture";
+  });
 
   it("excludes a current-version founder-rejected signal without excluding unbound stored signals", async () => {
     const persist = vi.fn(async (input) => input);
@@ -66,20 +76,43 @@ describe("stored-evidence recompute truth boundary", () => {
         getStatusByPublicId: vi.fn(async () => ({
           request: { state: "REVIEW_REQUIRED" },
           run: { id: "run_1" },
-          move: { id: "move_1", reviewVersion: 4 },
+          move: {
+            id: "move_1",
+            reviewVersion: 4,
+            validUntil: new Date("2026-08-16T12:00:00.000Z"),
+          },
           context,
           project: { id: "project_1" },
         })),
       },
       scanData: {
         listSignalsForRun: vi.fn(async () => [
-          { signal: { id: "signal_rejected" } },
-          { signal: { id: "signal_historically_rejected" } },
-          { signal: { id: "signal_retained" } },
-          { signal: { id: "signal_unbound" } },
+          {
+            signal: { id: "signal_rejected" },
+            sourceRun: { id: "source_succeeded", state: "SUCCEEDED" },
+          },
+          {
+            signal: { id: "signal_historically_rejected" },
+            sourceRun: { id: "source_succeeded", state: "SUCCEEDED" },
+          },
+          {
+            signal: { id: "signal_retained" },
+            sourceRun: { id: "source_succeeded", state: "SUCCEEDED" },
+          },
+          {
+            signal: { id: "signal_unbound" },
+            sourceRun: { id: "source_succeeded", state: "SUCCEEDED" },
+          },
         ]),
         listHistoricalMetricSnapshotsForRun: vi.fn(async () => []),
-        listSourceRuns: vi.fn(async () => []),
+        listSourceRuns: vi.fn(async () => [
+          {
+            id: "source_succeeded",
+            source: "hacker_news",
+            state: "SUCCEEDED",
+            providerPayloadFragment: null,
+          },
+        ]),
         getCurrentProjectProfile: vi.fn(async () => null),
       },
       reviews: {
@@ -115,6 +148,91 @@ describe("stored-evidence recompute truth boundary", () => {
       expect.objectContaining({
         draft: expect.objectContaining({
           evidenceSignalIds: ["signal_retained", "signal_unbound"],
+        }),
+      }),
+    );
+  });
+
+  it("matches managed live eligibility by excluding degraded evidence, measurements, and historical snapshots", async () => {
+    environment.credentialMode = "managed";
+    const persist = vi.fn(async (input) => input);
+    const historicalSnapshots = vi.fn(async () => [
+      {
+        signalId: "signal_succeeded",
+        observedAt: new Date("2026-08-11T12:00:00.000Z"),
+        metrics: { points: 10 },
+      },
+    ]);
+    const repositories = {
+      scans: {
+        getStatusByPublicId: vi.fn(async () => ({
+          request: { state: "REVIEW_REQUIRED", goal: null, generationLevel: "brief" },
+          run: { id: "run_1" },
+          move: {
+            id: "move_1",
+            reviewVersion: 4,
+            validUntil: new Date("2026-08-14T12:00:00.000Z"),
+          },
+          context,
+          project: { id: "project_1" },
+        })),
+      },
+      scanData: {
+        listSignalsForRun: vi.fn(async () => [
+          {
+            signal: { id: "signal_succeeded" },
+            sourceRun: { id: "source_succeeded", state: "SUCCEEDED" },
+          },
+          {
+            signal: { id: "signal_degraded" },
+            sourceRun: { id: "source_degraded", state: "DEGRADED" },
+          },
+        ]),
+        listHistoricalMetricSnapshotsForRun: historicalSnapshots,
+        listSourceRuns: vi.fn(async () => [
+          {
+            id: "source_succeeded",
+            source: "hacker_news",
+            state: "SUCCEEDED",
+            providerPayloadFragment: { measurements: [{ id: "measurement_succeeded" }] },
+          },
+          {
+            id: "source_degraded",
+            source: "x",
+            state: "DEGRADED",
+            providerPayloadFragment: { measurements: [{ id: "measurement_degraded" }] },
+          },
+        ]),
+        getCurrentProjectProfile: vi.fn(async () => null),
+      },
+      reviews: {
+        listEvidenceHistory: vi.fn(async () => []),
+        recomputeFromStoredEvidence: persist,
+      },
+    };
+
+    await recomputeStoredReview(repositories as never, {
+      scanPublicId: "scan_public_1",
+      nextMoveId: "move_1",
+      reviewerId: "founder:reviewer",
+      expectedVersion: 4,
+      reason: "Recompute against exact live-eligible current-run evidence only.",
+      now: new Date("2026-08-12T12:00:00.000Z"),
+    });
+
+    expect(historicalSnapshots).not.toHaveBeenCalled();
+    expect(orchestration.decide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        signals: [{ id: "signal_succeeded" }],
+        snapshots: [],
+        measurements: [{ id: "measurement_succeeded" }],
+        coverage: { hacker_news: "SUCCEEDED", x: "DEGRADED" },
+      }),
+    );
+    expect(persist).toHaveBeenCalledWith(
+      expect.objectContaining({
+        draft: expect.objectContaining({
+          move: expect.objectContaining({ validUntil: "2026-08-14T12:00:00.000Z" }),
         }),
       }),
     );

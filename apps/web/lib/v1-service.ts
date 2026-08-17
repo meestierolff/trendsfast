@@ -1,7 +1,7 @@
 import "server-only";
 
 import { loadEnv, resolveApiRateLimit, resolveProviderCosts } from "@trendsfast/config";
-import { normalizeProductUrl } from "@trendsfast/database";
+import { isMemberConfirmedProjectContext, normalizeProductUrl } from "@trendsfast/database";
 import { assertActionDetailsBoundToStoredEvidence, storedSignal } from "@trendsfast/orchestration";
 import {
   ActionDetailsSchema,
@@ -43,7 +43,13 @@ async function responseFor(
 ): Promise<NextMoveStatusResponse | null> {
   if (id.length < 1 || id.length > 160) return null;
   const status = await getRepositories().scans.getPublicStatusByPublicId(id);
-  if (!status || status.request.apiKeyId !== principal.apiKeyId) return null;
+  if (!status) return null;
+  const exactApiKey = status.request.apiKeyId === principal.apiKeyId;
+  const ownerDashboardRequest =
+    status.request.apiKeyId === null &&
+    principal.projectId !== undefined &&
+    status.request.projectId === principal.projectId;
+  if (!exactApiKey && !ownerDashboardRequest) return null;
   if (principal.projectId && status.request.projectId !== principal.projectId) return null;
   if (principal.environment === "live") {
     if (
@@ -403,6 +409,12 @@ export function createV1Service(input: { schedule(publicId: string): void }): V1
           "The saved project URL changed before this request could be admitted.",
         );
       }
+      if (admitted.status === "PROJECT_BUSY") {
+        throw new ApiServiceError(
+          "CONFLICT",
+          "Another Next Move request is already queued or running for this project.",
+        );
+      }
       if (admitted.status === "USAGE_LIMITED") {
         throw new ApiServiceError(
           "USAGE_LIMITED",
@@ -445,6 +457,12 @@ export function createV1Service(input: { schedule(publicId: string): void }): V1
           "The claimed project has no active saved context profile.",
         );
       }
+      if (!isMemberConfirmedProjectContext(profile.contextVersion.createdBy)) {
+        throw new ApiServiceError(
+          "CONFLICT",
+          "The saved project context requires founder confirmation before generation.",
+        );
+      }
       const context = ProjectContextSchema.parse(profile.contextVersion.context);
       const savedCapabilityNames = ContentCapabilityNameSchema.options.filter(
         (name) => profile.contextVersion.contentCapabilities[name],
@@ -466,7 +484,7 @@ export function createV1Service(input: { schedule(publicId: string): void }): V1
         projectContextVersionId: profile.contextVersion.id,
         request: {
           product_url: profile.project.url,
-          ...(requested.objective === undefined ? {} : { objective: requested.objective }),
+          objective: requested.objective ?? context.desiredOutcome,
           ...(context.markets[0] === undefined ? {} : { market: context.markets[0] }),
           language: context.language,
           preferred_channels: requested.preferred_channels ?? context.suitableChannels,

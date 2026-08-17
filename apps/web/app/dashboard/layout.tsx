@@ -26,7 +26,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
           <h1>{projects[0]?.project.name ?? "Your TrendsFast dashboard"}</h1>
         </div>
         <div className="dashboard-header-actions">
-          <Link href="/#scan">New product scan</Link>
+          <Link href="/dashboard/new">Add product</Link>
           <form action="/auth/logout" method="post">
             <button type="submit">Sign out</button>
           </form>

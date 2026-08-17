@@ -1,4 +1,5 @@
 import { PublicHttpUrlSchema } from "@trendsfast/schemas";
+import { MemberProjectBusyError } from "@trendsfast/database";
 import { z } from "zod";
 
 import { getVerifiedAuthSubject } from "@/lib/auth-session";
@@ -53,6 +54,12 @@ export async function POST(
       requiresRefresh: result.changed,
     });
   } catch (error) {
+    if (error instanceof MemberProjectBusyError) {
+      return json(
+        { error: "Wait for the current proposal run to finish before changing URL." },
+        409,
+      );
+    }
     if (error instanceof Error && error.message.includes("already owned by another project")) {
       return json({ error: "That URL already belongs to another claimed project." }, 409);
     }

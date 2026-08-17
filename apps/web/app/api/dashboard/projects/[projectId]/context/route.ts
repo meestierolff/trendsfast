@@ -5,6 +5,7 @@ import {
   ProjectEntityTypeSchema,
   VoiceProfileSchema,
 } from "@trendsfast/schemas";
+import { MemberProjectBusyError } from "@trendsfast/database";
 import { z } from "zod";
 
 import { getVerifiedAuthSubject } from "@/lib/auth-session";
@@ -67,7 +68,13 @@ export async function POST(
       },
     });
     return json({ ok: true, contextVersion: created.version }, 201);
-  } catch {
+  } catch (error) {
+    if (error instanceof MemberProjectBusyError) {
+      return json(
+        { error: "Wait for the current proposal run to finish before editing context." },
+        409,
+      );
+    }
     return json({ error: "The project context could not be saved." }, 403);
   }
 }

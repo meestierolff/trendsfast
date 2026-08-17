@@ -2,6 +2,7 @@ import { after } from "next/server";
 
 import { loadEnv } from "@trendsfast/config";
 import { ReviewVersionConflictError } from "@trendsfast/database";
+import { assertVersionedNextMoveContentSafety } from "@trendsfast/orchestration";
 
 import { readBoundedJsonBody } from "../../../../../../../lib/bounded-json";
 import { getOpsRepositories } from "../../../../../../../lib/server-database";
@@ -127,6 +128,8 @@ export async function POST(
           reviewerId: authorization.reviewerId,
           expectedVersion: parsed.data.expectedVersion,
           reason: parsed.data.reason,
+          renewedEvidenceReceiptIds: parsed.data.evidenceReceiptIds,
+          assertFinalContentSafety: assertVersionedNextMoveContentSafety,
           edits: {
             topic: parsed.data.topic,
             angle: parsed.data.angle,

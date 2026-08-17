@@ -114,6 +114,8 @@ describe("ops action validation", () => {
     limitations: ["The recommendation is bounded to the stored evidence window."],
     validUntil: "2026-08-14T10:00:00.000Z",
     confidenceRationale: "The deterministic score passed and the receipts remain unchanged.",
+    evidenceReceiptIds: ["00000000-0000-4000-8000-000000000041"],
+    exactEvidenceReviewed: true,
   };
 
   it("accepts only bounded delivery expiry options", () => {
@@ -179,6 +181,9 @@ describe("ops action validation", () => {
     ).toMatchObject({ success: false });
     expect(
       parseOpsAction("edit-and-approve", { ...editableMove, expectedVersion: 0 }),
+    ).toMatchObject({ success: false });
+    expect(
+      parseOpsAction("edit-and-approve", { ...editableMove, exactEvidenceReviewed: false }),
     ).toMatchObject({ success: false });
   });
 

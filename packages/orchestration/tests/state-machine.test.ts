@@ -3,6 +3,7 @@ import type { ProjectContext } from "@trendsfast/schemas";
 import type { ProviderRunResult, ProviderSlug, QueryPlan } from "@trendsfast/providers";
 import {
   processScan,
+  ProviderEvidenceProvenanceError,
   ProviderOutcomeUnknownError,
   ScanDeadlineError,
   StaleProcessingClaimError,
@@ -55,6 +56,8 @@ const plan: QueryPlan = {
     },
   ],
 };
+
+const allowProvider: ProviderRunner["eligibility"] = () => ({ eligible: true });
 
 function result(provider: ProviderSlug, cost = 0, actualCost = cost): ProviderRunResult {
   return {
@@ -237,6 +240,7 @@ describe("resumable scan state machine", () => {
       planQueries: vi.fn(() => plan),
       providers: {
         order: ["hacker_news", "github"],
+        eligibility: allowProvider,
         estimate: vi.fn(() => 0),
         execute: vi.fn(async (provider, _work, budget) => accountedResult(provider, budget)),
       },
@@ -258,6 +262,147 @@ describe("resumable scan state machine", () => {
       "draft",
       "review",
     ]);
+  });
+
+  it("durably skips ineligible planned and no-query sources before provider work", async () => {
+    const { fixture } = store();
+    vi.mocked(fixture.claim).mockResolvedValue({
+      requestId: "request_1",
+      runId: "run_1",
+      processingFence: "fence_1",
+      state: "RUNNING",
+      sourceStates: {},
+      context: project,
+      contextVersionId: "context_1",
+    });
+    const estimate = vi.fn(() => 0);
+    const execute = vi.fn();
+
+    await processScan("scan_1", {
+      store: fixture,
+      inferContext: vi.fn(),
+      planQueries: vi.fn(() => plan),
+      providers: {
+        order: ["hacker_news", "manual"],
+        eligibility: (provider) =>
+          provider === "hacker_news" || provider === "manual"
+            ? {
+                eligible: false,
+                code:
+                  provider === "manual"
+                    ? "PROVIDER_MANUAL_INPUT_REQUIRED"
+                    : "PROVIDER_NOT_PRODUCTION_VERIFIED",
+                message: "Source is not eligible for this exact deployment.",
+              }
+            : { eligible: true },
+        estimate,
+        execute,
+      },
+      decide: vi.fn(async () => waitDraft()),
+      maxCostUsd: 0.317,
+      maxDurationMs: 60_000,
+      now: () => new Date("2026-08-11T12:00:00.000Z"),
+    });
+
+    expect(fixture.failProvider).toHaveBeenCalledWith(
+      "hacker_news",
+      expect.anything(),
+      expect.objectContaining({ code: "PROVIDER_NOT_PRODUCTION_VERIFIED", skipped: true }),
+    );
+    expect(fixture.failProvider).toHaveBeenCalledWith(
+      "manual",
+      expect.anything(),
+      expect.objectContaining({ code: "PROVIDER_MANUAL_INPUT_REQUIRED", skipped: true }),
+    );
+    expect(estimate).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("runs eligible website evidence once when a confirmed context was already saved", async () => {
+    const { fixture, events } = store();
+    vi.mocked(fixture.claim).mockResolvedValue({
+      requestId: "request_1",
+      runId: "run_1",
+      processingFence: "fence_1",
+      state: "RUNNING",
+      sourceStates: {},
+      context: project,
+      contextVersionId: "context_1",
+    });
+    const execute = vi.fn(async (provider: ProviderSlug, _work, budget) =>
+      accountedResult(provider, budget),
+    );
+    const websitePlan: QueryPlan = {
+      ...plan,
+      entries: [
+        {
+          id: "query_website",
+          provider: "website",
+          role: "product_context",
+          query: "https://example.com",
+          limit: 1,
+        },
+      ],
+    };
+
+    await processScan("scan_1", {
+      store: fixture,
+      inferContext: vi.fn(),
+      planQueries: vi.fn(() => websitePlan),
+      providers: {
+        order: ["website"],
+        eligibility: allowProvider,
+        estimate: vi.fn(() => 0),
+        execute,
+      },
+      decide: vi.fn(async () => waitDraft()),
+      maxCostUsd: 0.317,
+      maxDurationMs: 60_000,
+      now: () => new Date("2026-08-11T12:00:00.000Z"),
+    });
+
+    expect(execute).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenCalledWith("website", expect.anything(), expect.anything());
+    expect(events).toEqual(expect.arrayContaining(["begin:website", "complete:website"]));
+  });
+
+  it("records an ineligible required website before failing context acquisition", async () => {
+    const { fixture } = store();
+    const inferContext = vi.fn();
+    const execute = vi.fn();
+
+    await expect(
+      processScan("scan_1", {
+        store: fixture,
+        inferContext,
+        planQueries: vi.fn(() => plan),
+        providers: {
+          order: [],
+          eligibility: (provider) =>
+            provider === "website"
+              ? {
+                  eligible: false,
+                  code: "PROVIDER_NOT_PRODUCTION_VERIFIED",
+                  message: "Website is not verified for this exact deployment.",
+                }
+              : { eligible: true },
+          estimate: vi.fn(() => 0),
+          execute,
+        },
+        decide: vi.fn(),
+        maxCostUsd: 0.317,
+        maxDurationMs: 60_000,
+        now: () => new Date("2026-08-11T12:00:00.000Z"),
+      }),
+    ).rejects.toThrow(/verified product website context is unavailable/i);
+
+    expect(fixture.failProvider).toHaveBeenCalledWith(
+      "website",
+      expect.anything(),
+      expect.objectContaining({ code: "PROVIDER_NOT_PRODUCTION_VERIFIED", skipped: true }),
+    );
+    expect(inferContext).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it("honors requested channels and intersects legacy format preferences with saved capabilities", async () => {
@@ -292,7 +437,12 @@ describe("resumable scan state machine", () => {
       store: fixture,
       inferContext: vi.fn(),
       planQueries: vi.fn(() => plan),
-      providers: { order: [], estimate: vi.fn(() => 0), execute: vi.fn() },
+      providers: {
+        order: [],
+        eligibility: allowProvider,
+        estimate: vi.fn(() => 0),
+        execute: vi.fn(),
+      },
       decide,
       maxCostUsd: 0.317,
       maxDurationMs: 60_000,
@@ -322,6 +472,7 @@ describe("resumable scan state machine", () => {
       planQueries: vi.fn(() => plan),
       providers: {
         order: [],
+        eligibility: allowProvider,
         estimate: vi.fn(() => 0),
         execute: vi.fn(async (provider, _work, budget) => accountedResult(provider, budget)),
       },
@@ -356,7 +507,12 @@ describe("resumable scan state machine", () => {
       store: fixture,
       inferContext: vi.fn(async () => project),
       planQueries: vi.fn(() => plan),
-      providers: { order: ["hacker_news", "github"], estimate: vi.fn(() => 0), execute },
+      providers: {
+        order: ["hacker_news", "github"],
+        eligibility: allowProvider,
+        estimate: vi.fn(() => 0),
+        execute,
+      },
       decide: vi.fn(async () => waitDraft("Wait")),
       maxCostUsd: 0.317,
       maxDurationMs: 60_000,
@@ -364,6 +520,51 @@ describe("resumable scan state machine", () => {
     });
     expect(execute).toHaveBeenCalledTimes(1);
     expect(execute).toHaveBeenCalledWith("github", expect.anything(), expect.anything());
+  });
+
+  it("rejects inherited live output that is not bound to the current verification gate", async () => {
+    const sourceStates = { website: "SUCCEEDED", hacker_news: "SUCCEEDED" } as const;
+    const { fixture, events } = store(sourceStates);
+    const execute = vi.fn();
+    const eligibility = vi.fn<ProviderRunner["eligibility"]>((provider) =>
+      provider === "hacker_news"
+        ? {
+            eligible: false,
+            code: "PROVIDER_NOT_PRODUCTION_VERIFIED",
+            message: "This inherited source is not eligible for the current deployment.",
+          }
+        : { eligible: true },
+    );
+
+    await expect(
+      processScan("scan_1", {
+        store: fixture,
+        inferContext: vi.fn(async () => project),
+        planQueries: vi.fn(() => plan),
+        providers: {
+          order: ["hacker_news", "github"],
+          requiresFreshRunEvidence: true,
+          eligibility,
+          estimate: vi.fn(() => 0),
+          execute,
+        },
+        decide: vi.fn(async () => waitDraft("Wait")),
+        maxCostUsd: 0.317,
+        maxDurationMs: 60_000,
+        now: () => new Date("2026-08-11T12:00:00.000Z"),
+      }),
+    ).rejects.toBeInstanceOf(ProviderEvidenceProvenanceError);
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(eligibility).not.toHaveBeenCalled();
+    expect(fixture.failProvider).not.toHaveBeenCalled();
+    expect(sourceStates).toEqual({ website: "SUCCEEDED", hacker_news: "SUCCEEDED" });
+    expect(fixture.failScan).toHaveBeenCalledWith(
+      expect.anything(),
+      "PROVIDER_EVIDENCE_NOT_CURRENT",
+      expect.stringMatching(/fresh scan run/i),
+    );
+    expect(events).toEqual(["scan-failed:PROVIDER_EVIDENCE_NOT_CURRENT"]);
   });
 
   it("skips work that would cross the hard cost ceiling", async () => {
@@ -374,6 +575,7 @@ describe("resumable scan state machine", () => {
       planQueries: vi.fn(() => plan),
       providers: {
         order: ["hacker_news", "github"],
+        eligibility: allowProvider,
         estimate: vi.fn(() => 0.2),
         execute: vi.fn(async (provider, _work, budget) =>
           accountedResult(provider, budget, result(provider, 0.2)),
@@ -396,6 +598,7 @@ describe("resumable scan state machine", () => {
       planQueries: vi.fn(() => plan),
       providers: {
         order: ["hacker_news", "github"],
+        eligibility: allowProvider,
         estimate: vi.fn((provider) =>
           provider === "hacker_news" ? 0.2 : provider === "github" ? 0.1 : 0,
         ),
@@ -430,7 +633,12 @@ describe("resumable scan state machine", () => {
       store: fixture,
       inferContext: vi.fn(),
       planQueries: vi.fn(),
-      providers: { order: [], estimate: vi.fn(), execute: vi.fn() },
+      providers: {
+        order: [],
+        eligibility: allowProvider,
+        estimate: vi.fn(),
+        execute: vi.fn(),
+      },
       decide: vi.fn(),
       maxCostUsd: 0.317,
       maxDurationMs: 60_000,
@@ -447,7 +655,12 @@ describe("resumable scan state machine", () => {
         store: fixture,
         inferContext: vi.fn(async () => project),
         planQueries: vi.fn(() => plan),
-        providers: { order: ["hacker_news"], estimate: vi.fn(() => 0), execute: vi.fn() },
+        providers: {
+          order: ["hacker_news"],
+          eligibility: allowProvider,
+          estimate: vi.fn(() => 0),
+          execute: vi.fn(),
+        },
         decide: vi.fn(),
         maxCostUsd: 0.317,
         maxDurationMs: 60_000,
@@ -478,7 +691,12 @@ describe("resumable scan state machine", () => {
         store: fixture,
         inferContext: vi.fn(async () => project),
         planQueries: vi.fn(() => plan),
-        providers: { order: ["website"], estimate: vi.fn(() => 0), execute },
+        providers: {
+          order: ["website"],
+          eligibility: allowProvider,
+          estimate: vi.fn(() => 0),
+          execute,
+        },
         decide: vi.fn(async () => waitDraft()),
         maxCostUsd: 0.317,
         maxDurationMs: 60_000,
@@ -510,7 +728,12 @@ describe("resumable scan state machine", () => {
         store: fixture,
         inferContext: vi.fn(async () => project),
         planQueries: vi.fn(() => plan),
-        providers: { order: ["hacker_news"], estimate: vi.fn(() => 0), execute: vi.fn() },
+        providers: {
+          order: ["hacker_news"],
+          eligibility: allowProvider,
+          estimate: vi.fn(() => 0),
+          execute: vi.fn(),
+        },
         decide: vi.fn(async () => waitDraft()),
         maxCostUsd: 0.317,
         maxDurationMs: 60_000,
@@ -545,7 +768,12 @@ describe("resumable scan state machine", () => {
         store: fixture,
         inferContext: vi.fn(async () => project),
         planQueries: vi.fn(() => plan),
-        providers: { order: ["hacker_news", "github"], estimate: vi.fn(() => 0), execute },
+        providers: {
+          order: ["hacker_news", "github"],
+          eligibility: allowProvider,
+          estimate: vi.fn(() => 0),
+          execute,
+        },
         decide: vi.fn(async () => waitDraft()),
         maxCostUsd: 0.317,
         maxDurationMs: 60_000,
@@ -576,6 +804,7 @@ describe("resumable scan state machine", () => {
       planQueries: vi.fn(() => plan),
       providers: {
         order: ["hacker_news"],
+        eligibility: allowProvider,
         estimate: vi.fn(() => 0),
         execute: vi.fn(async (provider, _work, budget) => accountedResult(provider, budget)),
       },
@@ -607,7 +836,12 @@ describe("resumable scan state machine", () => {
         store: fixture,
         inferContext: vi.fn(async () => project),
         planQueries: vi.fn(() => plan),
-        providers: { order: ["hacker_news", "github"], estimate: vi.fn(() => 0.02), execute },
+        providers: {
+          order: ["hacker_news", "github"],
+          eligibility: allowProvider,
+          estimate: vi.fn(() => 0.02),
+          execute,
+        },
         decide: vi.fn(async () => waitDraft()),
         maxCostUsd: 0.317,
         maxDurationMs: 60_000,
@@ -640,7 +874,12 @@ describe("resumable scan state machine", () => {
           return project;
         }),
         planQueries: vi.fn(() => plan),
-        providers: { order: [], estimate: vi.fn(() => 0), execute: vi.fn() },
+        providers: {
+          order: [],
+          eligibility: allowProvider,
+          estimate: vi.fn(() => 0),
+          execute: vi.fn(),
+        },
         decide: vi.fn(async () => waitDraft()),
         maxCostUsd: 0.317,
         maxDurationMs: 60_000,

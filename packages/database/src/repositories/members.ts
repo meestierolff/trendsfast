@@ -1,6 +1,7 @@
-import { and, desc, eq, gt, inArray, isNull, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
 
 import {
+  createPrefixedId,
   createPublicScanToken,
   digestNextMoveRequestWithContext,
   hashOpaqueToken,
@@ -8,7 +9,6 @@ import {
 import {
   ContentCapabilitiesSchema,
   ContextProvenanceSchema,
-  GenerationLevelSchema,
   ProjectNextMoveRequestSchema,
   ProjectContextSchema,
   ProjectEntityTypeSchema,
@@ -22,6 +22,7 @@ import {
 } from "@trendsfast/schemas";
 
 import type { TrendsFastDatabase } from "../client";
+import { reconcileMemberContextProvenance } from "../member-context-provenance";
 import {
   deliveryTokens,
   evidenceReceipts,
@@ -52,6 +53,7 @@ export type VerifiedMemberIdentity = {
   email: string;
   displayName?: string | null;
   avatarUrl?: string | null;
+  projectEntryEligible?: boolean;
 };
 
 export type ProjectAuthorization = {
@@ -70,10 +72,63 @@ export type MemberRefreshResult =
   | { status: "IDEMPOTENCY_CONFLICT" }
   | { status: "USAGE_LIMITED"; reason: "ENTITLEMENT_INACTIVE" | "ON_DEMAND_MONTHLY_LIMIT" };
 
+export class ProjectOwnershipConflictError extends Error {
+  constructor() {
+    super("The product URL is unavailable for this account");
+    this.name = "ProjectOwnershipConflictError";
+  }
+}
+
+export class MemberProjectEntryAdmissionError extends Error {
+  constructor(
+    readonly code: "DESIGN_PARTNER_REQUIRED" | "DAILY_LIMIT" | "TOTAL_CAPACITY",
+    readonly retryAfterSeconds?: number,
+  ) {
+    super(
+      code === "DESIGN_PARTNER_REQUIRED"
+        ? "Authenticated project entry requires approved Founder access, an active entitlement, or a design-partner grant"
+        : code === "DAILY_LIMIT"
+          ? "The authenticated project-entry daily limit has been reached"
+          : "The authenticated project capacity has been reached",
+    );
+    this.name = "MemberProjectEntryAdmissionError";
+  }
+}
+
+export class MemberProjectBusyError extends Error {
+  constructor() {
+    super("The project context cannot change while a scan is queued or running");
+    this.name = "MemberProjectBusyError";
+  }
+}
+
+const MEMBER_PROJECT_DAILY_CREATE_LIMIT = 3;
+const MEMBER_PROJECT_TOTAL_CAPACITY = 10;
+const MEMBER_PROJECT_CREATE_WINDOW_MS = 24 * 60 * 60 * 1_000;
+
+export function isMemberConfirmedProjectContext(createdBy: string): boolean {
+  const normalized = createdBy.trim();
+  return normalized.startsWith("member:") && UUID.test(normalized.slice("member:".length));
+}
+
 function requiredUuid(value: string, label: string): string {
   const normalized = value.trim();
   if (!UUID.test(normalized)) throw new Error(`${label} is invalid`);
   return normalized;
+}
+
+async function assertProjectHasNoActiveScan(db: TrendsFastDatabase, projectId: string) {
+  const [active] = await db
+    .select({ id: scanRequests.id })
+    .from(scanRequests)
+    .where(
+      and(
+        eq(scanRequests.projectId, projectId),
+        inArray(scanRequests.state, ["QUEUED", "RUNNING"]),
+      ),
+    )
+    .limit(1);
+  if (active) throw new MemberProjectBusyError();
 }
 
 function normalizedIdentity(input: VerifiedMemberIdentity): Required<VerifiedMemberIdentity> {
@@ -90,7 +145,13 @@ function normalizedIdentity(input: VerifiedMemberIdentity): Required<VerifiedMem
       throw new Error("Verified profile avatar URL is invalid");
     }
   }
-  return { authUserId, email, displayName, avatarUrl };
+  return {
+    authUserId,
+    email,
+    displayName,
+    avatarUrl,
+    projectEntryEligible: input.projectEntryEligible === true,
+  };
 }
 
 async function authorizationIn(
@@ -381,6 +442,251 @@ export class MemberRepository {
     return authorizationIn(this.db, input.authUserId, input.projectId);
   }
 
+  /**
+   * Creates one authenticated project identity or reuses the exact project
+   * already owned by this verified member. Existing unowned or foreign-owned
+   * projects remain behind the delivery-bound claim flow.
+   */
+  async createOrReuseOwnedProject(input: { identity: VerifiedMemberIdentity; url: string }) {
+    const identity = normalizedIdentity(input.identity);
+    let parsed: URL;
+    try {
+      parsed = new URL(input.url.trim());
+    } catch {
+      throw new Error("Project URL is invalid");
+    }
+    if (
+      !["http:", "https:"].includes(parsed.protocol) ||
+      parsed.username ||
+      parsed.password ||
+      !parsed.hostname ||
+      input.url.length > 2_048
+    ) {
+      throw new Error("Project URL is invalid");
+    }
+    const normalizedUrl = normalizeProductUrl(parsed.toString());
+    return this.db.transaction(async (tx) => {
+      const now = new Date();
+      const [profile] = await tx
+        .insert(userProfiles)
+        .values({
+          authUserId: identity.authUserId,
+          email: identity.email,
+          displayName: identity.displayName || null,
+          avatarUrl: identity.avatarUrl || null,
+          updatedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: userProfiles.authUserId,
+          set: {
+            email: identity.email,
+            displayName: identity.displayName || null,
+            avatarUrl: identity.avatarUrl || null,
+            updatedAt: now,
+          },
+        })
+        .returning({ id: userProfiles.id });
+      if (!profile) throw new Error("Could not create the application user profile");
+
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`trendsfast:member-project-entry:${profile.id}`}, 0))`,
+      );
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`trendsfast:member-project:${normalizedUrl}`}, 0))`,
+      );
+      const [existing] = await tx
+        .select()
+        .from(projects)
+        .where(eq(projects.normalizedUrl, normalizedUrl))
+        .limit(1)
+        .for("update");
+      if (existing) {
+        const [owner] = await tx
+          .select({ userProfileId: projectMemberships.userProfileId })
+          .from(projectMemberships)
+          .where(
+            and(
+              eq(projectMemberships.projectId, existing.id),
+              eq(projectMemberships.role, "OWNER"),
+            ),
+          )
+          .limit(1);
+        if (existing.status !== "ACTIVE" || !owner || owner.userProfileId !== profile.id) {
+          throw new ProjectOwnershipConflictError();
+        }
+        const [contextVersion] = await tx
+          .select()
+          .from(projectContextVersions)
+          .where(
+            and(
+              eq(projectContextVersions.projectId, existing.id),
+              eq(projectContextVersions.isCurrent, true),
+            ),
+          )
+          .limit(1);
+        return {
+          project: existing,
+          contextVersion: contextVersion ?? null,
+          created: false as const,
+        };
+      }
+
+      const ownedProjects = await tx
+        .select({
+          id: projects.id,
+          createdAt: projects.createdAt,
+        })
+        .from(projectMemberships)
+        .innerJoin(projects, eq(projects.id, projectMemberships.projectId))
+        .where(
+          and(
+            eq(projectMemberships.userProfileId, profile.id),
+            eq(projectMemberships.role, "OWNER"),
+          ),
+        )
+        .orderBy(desc(projects.createdAt))
+        .limit(MEMBER_PROJECT_TOTAL_CAPACITY + 1);
+      if (!identity.projectEntryEligible) {
+        if (ownedProjects.length === 0) {
+          throw new MemberProjectEntryAdmissionError("DESIGN_PARTNER_REQUIRED");
+        }
+        const ownedProjectIds = ownedProjects.map((project) => project.id);
+        const [[grant], [entitlement]] = await Promise.all([
+          tx
+            .select({ id: founderEntitlementGrants.id })
+            .from(founderEntitlementGrants)
+            .where(
+              and(
+                inArray(founderEntitlementGrants.projectId, ownedProjectIds),
+                isNull(founderEntitlementGrants.revokedAt),
+                lte(founderEntitlementGrants.createdAt, now),
+                gt(founderEntitlementGrants.expiresAt, now),
+              ),
+            )
+            .limit(1),
+          tx
+            .select({ projectId: projectEntitlements.projectId })
+            .from(projectEntitlements)
+            .where(
+              and(
+                inArray(projectEntitlements.projectId, ownedProjectIds),
+                eq(projectEntitlements.active, true),
+                lte(projectEntitlements.periodStart, now),
+                gt(projectEntitlements.periodEnd, now),
+              ),
+            )
+            .limit(1),
+        ]);
+        if (!grant && !entitlement) {
+          throw new MemberProjectEntryAdmissionError("DESIGN_PARTNER_REQUIRED");
+        }
+      }
+      if (ownedProjects.length >= MEMBER_PROJECT_TOTAL_CAPACITY) {
+        throw new MemberProjectEntryAdmissionError("TOTAL_CAPACITY");
+      }
+      const windowStart = new Date(now.getTime() - MEMBER_PROJECT_CREATE_WINDOW_MS);
+      const createdInWindow = ownedProjects.filter((project) => project.createdAt >= windowStart);
+      if (createdInWindow.length >= MEMBER_PROJECT_DAILY_CREATE_LIMIT) {
+        const earliest = createdInWindow.at(-1)!.createdAt;
+        throw new MemberProjectEntryAdmissionError(
+          "DAILY_LIMIT",
+          Math.max(
+            1,
+            Math.ceil(
+              (earliest.getTime() + MEMBER_PROJECT_CREATE_WINDOW_MS - now.getTime()) / 1_000,
+            ),
+          ),
+        );
+      }
+
+      const inferredName = parsed.hostname.replace(/^www\./i, "").split(".")[0] ?? "Product";
+      const [project] = await tx
+        .insert(projects)
+        .values({
+          publicId: createPrefixedId("project"),
+          name: inferredName
+            .replace(/[-_]+/g, " ")
+            .replace(/\b\w/g, (letter) => letter.toUpperCase()),
+          url: normalizedUrl,
+          normalizedUrl,
+        })
+        .returning();
+      if (!project) throw new Error("Could not create the authenticated project");
+      await tx.insert(projectMemberships).values({
+        projectId: project.id,
+        userProfileId: profile.id,
+        role: "OWNER",
+      });
+      return { project, contextVersion: null, created: true as const };
+    });
+  }
+
+  async saveOwnedWebsiteContext(input: {
+    authUserId: string;
+    projectId: string;
+    context: ProjectContext;
+    entityType: ProjectEntityType;
+    contextProvenance: ContextProvenance;
+    voiceProfile: VoiceProfile;
+    contentCapabilities: ContentCapabilities;
+    sourceContentHash: string;
+  }) {
+    const context = ProjectContextSchema.parse(input.context);
+    const entityType = ProjectEntityTypeSchema.parse(input.entityType);
+    const contextProvenance = ContextProvenanceSchema.parse(input.contextProvenance);
+    const voiceProfile = VoiceProfileSchema.parse(input.voiceProfile);
+    const contentCapabilities = ContentCapabilitiesSchema.parse(input.contentCapabilities);
+    if (!/^[0-9a-f]{64}$/.test(input.sourceContentHash)) {
+      throw new Error("Website context hash is invalid");
+    }
+    return this.db.transaction(async (tx) => {
+      const transactional = tx as unknown as TrendsFastDatabase;
+      await requireOwner(transactional, input.authUserId, input.projectId);
+      await tx.execute(sql`SELECT id FROM projects WHERE id = ${input.projectId} FOR UPDATE`);
+      const [project] = await tx
+        .select({ normalizedUrl: projects.normalizedUrl })
+        .from(projects)
+        .where(and(eq(projects.id, input.projectId), eq(projects.status, "ACTIVE")))
+        .limit(1);
+      if (!project || project.normalizedUrl !== normalizeProductUrl(context.url)) {
+        throw new Error("Website context no longer matches the current project URL");
+      }
+      const existing = await tx
+        .select()
+        .from(projectContextVersions)
+        .where(eq(projectContextVersions.projectId, input.projectId))
+        .orderBy(desc(projectContextVersions.version));
+      const current = existing.find((candidate) => candidate.isCurrent);
+      if (current) return { contextVersion: current, created: false as const };
+      const [contextVersion] = await tx
+        .insert(projectContextVersions)
+        .values({
+          projectId: input.projectId,
+          version: (existing[0]?.version ?? 0) + 1,
+          isCurrent: true,
+          inferredName: context.name,
+          category: context.category,
+          audience: context.audience,
+          problem: context.problem,
+          language: context.language,
+          credibleTopics: context.credibleTopics,
+          assumptions: context.assumptions,
+          context,
+          entityType,
+          contextProvenance,
+          voiceProfile,
+          contentCapabilities,
+          sourceContentHash: input.sourceContentHash,
+          promptVersion: "website-context-v1",
+          model: null,
+          createdBy: "system:website-context",
+        })
+        .returning();
+      if (!contextVersion) throw new Error("Could not save the website context");
+      return { contextVersion, created: true as const };
+    });
+  }
+
   async listOwnedProjects(authUserId: string) {
     return this.db
       .select({ project: projects, role: projectMemberships.role })
@@ -399,7 +705,7 @@ export class MemberRepository {
 
   async getProjectDashboard(input: { authUserId: string; projectId: string }) {
     await requireOwner(this.db, input.authUserId, input.projectId);
-    const [[project], [context], [move]] = await Promise.all([
+    const [[project], [context], [move], [pendingRequest]] = await Promise.all([
       this.db.select().from(projects).where(eq(projects.id, input.projectId)).limit(1),
       this.db
         .select()
@@ -415,15 +721,51 @@ export class MemberRepository {
         .select({ move: nextMoves, request: scanRequests })
         .from(nextMoves)
         .innerJoin(scanRequests, eq(scanRequests.id, nextMoves.scanRequestId))
+        .innerJoin(scanRuns, eq(scanRuns.id, nextMoves.scanRunId))
+        .innerJoin(
+          projectContextVersions,
+          eq(projectContextVersions.id, nextMoves.projectContextVersionId),
+        )
         .where(
           and(
             eq(scanRequests.projectId, input.projectId),
-            eq(nextMoves.state, "READY"),
-            eq(nextMoves.founderReviewed, true),
             eq(nextMoves.autoPublish, false),
+            eq(nextMoves.proposalStale, false),
+            eq(projectContextVersions.isCurrent, true),
+            or(
+              and(
+                eq(scanRequests.state, "REVIEW_REQUIRED"),
+                eq(scanRuns.state, "REVIEW_REQUIRED"),
+                eq(nextMoves.state, "DRAFT"),
+                eq(nextMoves.founderReviewed, false),
+              ),
+              and(
+                eq(scanRequests.state, "REVIEW_REQUIRED"),
+                eq(scanRuns.state, "REVIEW_REQUIRED"),
+                eq(nextMoves.state, "APPROVED"),
+                eq(nextMoves.founderReviewed, true),
+              ),
+              and(
+                eq(scanRequests.state, "READY"),
+                eq(scanRuns.state, "READY"),
+                eq(nextMoves.state, "READY"),
+                eq(nextMoves.founderReviewed, true),
+              ),
+            ),
           ),
         )
-        .orderBy(desc(nextMoves.deliveredAt), desc(nextMoves.createdAt))
+        .orderBy(desc(nextMoves.createdAt))
+        .limit(1),
+      this.db
+        .select()
+        .from(scanRequests)
+        .where(
+          and(
+            eq(scanRequests.projectId, input.projectId),
+            inArray(scanRequests.state, ["QUEUED", "RUNNING"]),
+          ),
+        )
+        .orderBy(desc(scanRequests.submittedAt), desc(scanRequests.createdAt))
         .limit(1),
     ]);
     if (!project) return null;
@@ -438,7 +780,21 @@ export class MemberRepository {
             ),
           )
       : [];
-    return { project, context: context ?? null, latest: move ?? null, evidence };
+    const recordedOutcomes = move
+      ? await this.db
+          .select()
+          .from(outcomes)
+          .where(eq(outcomes.nextMoveId, move.move.id))
+          .orderBy(desc(outcomes.reportedAt))
+      : [];
+    return {
+      project,
+      context: context ?? null,
+      latest: move ?? null,
+      pendingRequest: pendingRequest ?? null,
+      evidence,
+      outcomes: recordedOutcomes,
+    };
   }
 
   async listProjectHistory(input: { authUserId: string; projectId: string; limit?: number }) {
@@ -496,6 +852,7 @@ export class MemberRepository {
       const authorization = await requireOwner(transactional, input.authUserId, input.projectId);
       await lockProjectEntitlementScope(transactional, input.projectId);
       await tx.execute(sql`SELECT id FROM projects WHERE id = ${input.projectId} FOR UPDATE`);
+      await assertProjectHasNoActiveScan(transactional, input.projectId);
       const [project] = await tx
         .select({ normalizedUrl: projects.normalizedUrl })
         .from(projects)
@@ -509,7 +866,12 @@ export class MemberRepository {
           id: projectContextVersions.id,
           version: projectContextVersions.version,
           isCurrent: projectContextVersions.isCurrent,
+          context: projectContextVersions.context,
+          entityType: projectContextVersions.entityType,
           contextProvenance: projectContextVersions.contextProvenance,
+          sourceContentHash: projectContextVersions.sourceContentHash,
+          promptVersion: projectContextVersions.promptVersion,
+          model: projectContextVersions.model,
         })
         .from(projectContextVersions)
         .where(eq(projectContextVersions.projectId, input.projectId))
@@ -518,10 +880,13 @@ export class MemberRepository {
       if (!current) {
         throw new Error("A fresh scan must infer context before member corrections can be saved");
       }
-      const observedFacts = current.contextProvenance.observed_facts;
-      const contextProvenance = ContextProvenanceSchema.parse({
-        ...requestedContextProvenance,
-        observed_facts: observedFacts,
+      const contextProvenance = reconcileMemberContextProvenance({
+        previousContext: current.context,
+        previousEntityType: current.entityType,
+        nextContext: context,
+        nextEntityType: entityType,
+        currentProvenance: current.contextProvenance,
+        requestedProvenance: requestedContextProvenance,
       });
       const version = (existing[0]?.version ?? 0) + 1;
       await tx
@@ -546,6 +911,9 @@ export class MemberRepository {
           contextProvenance,
           voiceProfile,
           contentCapabilities,
+          sourceContentHash: current.sourceContentHash,
+          promptVersion: current.promptVersion,
+          model: current.model,
           createdBy: `member:${authorization.userProfileId}`,
         })
         .returning();
@@ -606,6 +974,7 @@ export class MemberRepository {
         .limit(1)
         .for("update");
       if (!project) throw new Error("Project was not found");
+      await assertProjectHasNoActiveScan(transactional, input.projectId);
       if (project.normalizedUrl === normalizedUrl) {
         const [unchanged] = await tx
           .select()
@@ -669,21 +1038,48 @@ export class MemberRepository {
     authUserId: string;
     projectId: string;
     nextMoveId: string;
-    kind: "USED" | "PUBLISHED" | "REPLIED" | "REMIXED" | "SKIPPED";
+    kind: "USED" | "PUBLISHED" | "REPLIED" | "REMIXED";
     notes?: string;
   }) {
     await requireOwner(this.db, input.authUserId, input.projectId);
     const [move] = await this.db
-      .select({ id: nextMoves.id, action: nextMoves.action })
+      .select({
+        id: nextMoves.id,
+        action: nextMoves.action,
+        state: nextMoves.state,
+        founderReviewed: nextMoves.founderReviewed,
+        autoPublish: nextMoves.autoPublish,
+        proposalStale: nextMoves.proposalStale,
+        requestState: scanRequests.state,
+        runState: scanRuns.state,
+        contextProjectId: projectContextVersions.projectId,
+        contextIsCurrent: projectContextVersions.isCurrent,
+      })
       .from(nextMoves)
       .innerJoin(scanRequests, eq(scanRequests.id, nextMoves.scanRequestId))
+      .innerJoin(scanRuns, eq(scanRuns.id, nextMoves.scanRunId))
+      .innerJoin(
+        projectContextVersions,
+        eq(projectContextVersions.id, nextMoves.projectContextVersionId),
+      )
       .where(and(eq(nextMoves.id, input.nextMoveId), eq(scanRequests.projectId, input.projectId)))
       .limit(1);
     if (!move) throw new Error("Next Move was not found for this project");
+    if (
+      move.state !== "READY" ||
+      move.requestState !== "READY" ||
+      move.runState !== "READY" ||
+      move.contextProjectId !== input.projectId ||
+      !move.contextIsCurrent ||
+      !move.founderReviewed ||
+      move.autoPublish ||
+      move.proposalStale
+    ) {
+      throw new Error("Outcomes require a current founder-reviewed READY proposal");
+    }
     const actionKind = { PUBLISH: "PUBLISHED", REPLY: "REPLIED", REMIX: "REMIXED" } as const;
     if (
       input.kind !== "USED" &&
-      input.kind !== "SKIPPED" &&
       (move.action === "WAIT" || actionKind[move.action] !== input.kind)
     ) {
       throw new Error("Outcome kind does not match the Next Move action");
@@ -706,7 +1102,7 @@ export class MemberRepository {
     objective?: string;
     preferredChannels?: string[];
     contentCapabilities?: ContentCapabilityName[];
-    generationLevel?: "brief" | "draft";
+    generationLevel?: "draft";
     costReservationUsd: number;
     now?: Date;
   }): Promise<MemberRefreshResult> {
@@ -725,7 +1121,7 @@ export class MemberRepository {
       ...(input.contentCapabilities === undefined || input.contentCapabilities.length === 0
         ? {}
         : { content_capabilities: input.contentCapabilities }),
-      generation_level: GenerationLevelSchema.parse(input.generationLevel ?? "brief"),
+      generation_level: input.generationLevel ?? "draft",
     });
 
     return this.db.transaction(async (tx) => {
@@ -743,6 +1139,7 @@ export class MemberRepository {
         .select({
           id: projectContextVersions.id,
           contentCapabilities: projectContextVersions.contentCapabilities,
+          createdBy: projectContextVersions.createdBy,
         })
         .from(projectContextVersions)
         .where(
@@ -753,8 +1150,8 @@ export class MemberRepository {
         )
         .limit(1)
         .for("update");
-      if (!currentContext && requested.content_capabilities !== undefined) {
-        throw new Error("Content capabilities require a current saved context profile");
+      if (!currentContext || !isMemberConfirmedProjectContext(currentContext.createdBy)) {
+        throw new Error("Project context requires founder confirmation before generation");
       }
       const requestedCapabilities = currentContext
         ? (requested.content_capabilities ??

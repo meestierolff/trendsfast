@@ -55,6 +55,7 @@ function oneSignalCluster(item: ScoringSignal): SignalCluster {
     id: "cluster_1",
     memberIds: [item.id],
     signals: [item],
+    representativeSignalId: item.id,
     representativeTitle: item.title ?? "",
     topicFingerprint: ["distribution"],
     independenceKeys: [item.source],

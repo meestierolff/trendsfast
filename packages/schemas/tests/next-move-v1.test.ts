@@ -241,7 +241,7 @@ describe("Next Move v1 schemas", () => {
         outline: ["New tension", "Stored evidence", "Bounded conclusion"],
         cta: "Try the refined rule.",
       },
-      validUntil: "2026-08-15T22:00:00.000Z",
+      validUntil: "2026-08-14T20:00:00.000Z",
     });
 
     expect(reconciled).toMatchObject({
@@ -250,12 +250,12 @@ describe("Next Move v1 schemas", () => {
       confidence: original.confidence,
       breakoutPotential: original.breakoutPotential,
       topic: "A refined evidence-led topic",
-      validUntil: "2026-08-15T22:00:00.000Z",
-      trendWindow: { valid_until: "2026-08-15T22:00:00.000Z" },
+      validUntil: "2026-08-14T20:00:00.000Z",
+      trendWindow: { valid_until: "2026-08-14T20:00:00.000Z" },
       details: {
         action: "PUBLISH",
         content_type: "long_form",
-        publish_by: "2026-08-15T22:00:00.000Z",
+        publish_by: "2026-08-14T20:00:00.000Z",
         blueprint: {
           content_premise: "A refined evidence-led topic: Use the refined decision rule.",
           format_family: "long_form",
@@ -266,6 +266,45 @@ describe("Next Move v1 schemas", () => {
     });
     expect(reconciled.draftContent).toContain("A refined hook.");
     expect(reconciled.draftContent).not.toBe(original.draftContent);
+  });
+
+  it("never extends a reconciled action or reply timing boundary", () => {
+    const original = draftPublishMove();
+    expect(() =>
+      reconcileVersionedNextMove({
+        move: original,
+        prose: {
+          channel: original.channel,
+          topic: original.topic,
+          angle: original.angle,
+          format: original.format,
+          hook: original.hook,
+          outline: original.outline,
+          cta: original.cta,
+        },
+        validUntil: "2026-08-15T22:00:00.000Z",
+      }),
+    ).toThrow(/never extend/i);
+  });
+
+  it("preserves finished nested copy when reconciliation receives an exact prose echo", () => {
+    const original = draftPublishMove();
+    const reconciled = reconcileVersionedNextMove({
+      move: original,
+      prose: {
+        channel: original.channel,
+        topic: original.topic,
+        angle: original.angle,
+        format: original.format,
+        hook: original.hook,
+        outline: original.outline,
+        cta: original.cta,
+      },
+      validUntil: original.validUntil,
+    });
+
+    expect(reconciled).toEqual(original);
+    expect(reconciled.draftContent).toBe(original.draftContent);
   });
 
   it("converts an enhanced proposal to a fully synchronized WAIT contract", () => {

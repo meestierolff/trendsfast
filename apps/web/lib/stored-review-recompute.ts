@@ -1,5 +1,6 @@
 import "server-only";
 
+import { loadEnv } from "@trendsfast/config";
 import { type createRepositories } from "@trendsfast/database";
 import {
   decideDeterministically,
@@ -9,6 +10,7 @@ import {
 import {
   ProjectContextSchema,
   contentCapabilitiesFromNames,
+  reconcileVersionedNextMove,
   type ProjectContext,
 } from "@trendsfast/schemas";
 
@@ -72,10 +74,13 @@ export async function recomputeStoredReview(
   const context = input.contextCorrection
     ? correctedContext(detail.context, input.contextCorrection)
     : ProjectContextSchema.parse(detail.context);
+  const includeHistoricalMetricSnapshots = loadEnv().PROVIDER_CREDENTIAL_MODE === "fixture";
   const [signalRows, snapshotRows, sourceRuns, evidenceHistory, projectProfile] = await Promise.all(
     [
       repositories.scanData.listSignalsForRun(detail.run.id),
-      repositories.scanData.listHistoricalMetricSnapshotsForRun(detail.run.id),
+      includeHistoricalMetricSnapshots
+        ? repositories.scanData.listHistoricalMetricSnapshotsForRun(detail.run.id)
+        : Promise.resolve([]),
       repositories.scanData.listSourceRuns(detail.run.id),
       repositories.reviews.listEvidenceHistory(detail.move.id),
       detail.project
@@ -95,18 +100,33 @@ export async function recomputeStoredReview(
       .filter((receipt) => receipt.availability === "REJECTED")
       .map((receipt) => receipt.signalId),
   );
-  const eligibleSignalRows = signalRows.filter(({ signal }) => !rejectedSignalIds.has(signal.id));
+  const succeededSourceRunIds = new Set(
+    sourceRuns.filter((run) => run.state === "SUCCEEDED").map((run) => run.id),
+  );
+  const eligibleSignalRows = signalRows.filter(
+    ({ signal, sourceRun }) =>
+      sourceRun.state === "SUCCEEDED" &&
+      succeededSourceRunIds.has(sourceRun.id) &&
+      !rejectedSignalIds.has(signal.id),
+  );
+  const eligibleSignalIds = new Set(eligibleSignalRows.map(({ signal }) => signal.id));
+  const eligibleSourceRuns = sourceRuns.filter((run) => run.state === "SUCCEEDED");
   const draft = await decideDeterministically({
     context,
     signals: eligibleSignalRows.map(storedSignal),
     snapshots: snapshotRows
-      .filter((snapshot) => !rejectedSignalIds.has(snapshot.signalId))
+      .filter(
+        (snapshot) =>
+          eligibleSignalIds.has(snapshot.signalId) && !rejectedSignalIds.has(snapshot.signalId),
+      )
       .map((snapshot) => ({
         signalId: snapshot.signalId,
         observedAt: snapshot.observedAt.toISOString(),
         metrics: snapshot.metrics,
       })),
-    measurements: sourceRuns.flatMap((run) => measurementFragment(run.providerPayloadFragment)),
+    measurements: eligibleSourceRuns.flatMap((run) =>
+      measurementFragment(run.providerPayloadFragment),
+    ),
     coverage: Object.fromEntries(sourceRuns.map((run) => [run.source, run.state])),
     ...(detail.request.goal === null ? {} : { objective: detail.request.goal }),
     generationLevel: detail.request.generationLevel,
@@ -122,16 +142,41 @@ export async function recomputeStoredReview(
     ...(projectProfile ? { voiceProfile: projectProfile.contextVersion.voiceProfile } : {}),
     now: input.now ?? new Date(),
   });
+  const currentValidity = new Date(detail.move.validUntil).toISOString();
+  const boundedDraft =
+    new Date(draft.move.validUntil).getTime() <= new Date(currentValidity).getTime()
+      ? draft
+      : {
+          ...draft,
+          move: { ...draft.move, validUntil: currentValidity },
+          ...(draft.versionedMove
+            ? {
+                versionedMove: reconcileVersionedNextMove({
+                  move: draft.versionedMove,
+                  prose: {
+                    channel: draft.versionedMove.channel,
+                    topic: draft.versionedMove.topic,
+                    angle: draft.versionedMove.angle,
+                    format: draft.versionedMove.format,
+                    hook: draft.versionedMove.hook,
+                    outline: draft.versionedMove.outline,
+                    cta: draft.versionedMove.cta,
+                  },
+                  validUntil: currentValidity,
+                }),
+              }
+            : {}),
+        };
   return repositories.reviews.recomputeFromStoredEvidence({
     nextMoveId: input.nextMoveId,
     reviewerId: input.reviewerId,
     expectedVersion: input.expectedVersion,
     reason: input.reason,
     draft: {
-      ...draft,
+      ...boundedDraft,
       limitations: [
         ...new Set([
-          ...draft.limitations,
+          ...boundedDraft.limitations,
           "Recomputed solely from stored evidence; no new provider readback was performed.",
         ]),
       ],

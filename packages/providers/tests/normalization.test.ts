@@ -7,6 +7,7 @@ import {
   normalizeTavilyResult,
   normalizeXaiXSearchResponse,
   normalizeYouTubeVideo,
+  xStatusPublishedAt,
 } from "../src/index";
 
 const normalizedAt = "2026-08-11T08:00:00.000Z";
@@ -116,10 +117,23 @@ describe("live provider normalization", () => {
 
     expect(result.signals).toHaveLength(2);
     expect(result.signals[0]?.url).toMatch(/^https:\/\/(x|twitter)\.com\//);
+    expect(result.signals[0]?.publishedAt).toBe("2025-03-13T01:44:34.949Z");
+    expect(result.signals[1]?.publishedAt).toBe("2025-03-13T01:44:34.949Z");
     expect(result.signals[0]?.textExcerpt).toBeUndefined();
     expect(result.signals.map((signal) => signal.title)).not.toContain(
       "A model-written summary that must not become evidence.",
     );
+    const futureStatusId = String(
+      (BigInt(new Date(normalizedAt).getTime() + 60_000) - 1_288_834_974_657n) << 22n,
+    );
+    expect(xStatusPublishedAt(futureStatusId, normalizedAt)).toBeUndefined();
+    expect(
+      normalizeXaiXSearchResponse(
+        { citations: [`https://x.com/founder/status/${futureStatusId}`] },
+        "query_future_x",
+        normalizedAt,
+      ).signals,
+    ).toEqual([]);
   });
 
   it("preserves Tavily original URLs and publication metadata", () => {
@@ -206,5 +220,37 @@ describe("live provider normalization", () => {
       label: "distribution intelligence",
     });
     expect(result.measurements[0]?.points).toHaveLength(2);
+  });
+
+  it("omits Google Trends graph data when DataForSEO supplies no canonical check URL", () => {
+    const result = normalizeDataForSeoGoogleTrends(
+      {
+        cost: 0.004,
+        tasks: [
+          {
+            id: "task-without-check-url",
+            cost: 0.004,
+            status_code: 20000,
+            result: [
+              {
+                keywords: ["distribution intelligence"],
+                items: [
+                  {
+                    type: "google_trends_graph",
+                    data: [{ timestamp: 1785801600, values: [31], missing_data: false }],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      [{ id: "query_trends", query: "distribution intelligence" }],
+      normalizedAt,
+    );
+
+    expect(result.actualCostUsd).toBe(0.004);
+    expect(result.signals).toEqual([]);
+    expect(result.measurements).toEqual([]);
   });
 });

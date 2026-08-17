@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  createGoogleTrendsAdapter,
   createManualEvidenceAdapter,
   createProviderContext,
   createWebsiteAdapter,
   verifyProviderReadback,
+  type FetchLike,
   type ProviderAdapter,
 } from "../src/index";
 
@@ -186,6 +188,123 @@ describe("provider read-back verification", () => {
     expect(result.limitations).toContain(
       "The source read-back returned canonical URLs, but provider health was degraded.",
     );
+  });
+
+  it("keeps credential-only Google Trends verification degraded but verifies a graph read-back", async () => {
+    let includeCanonicalCheckUrl = true;
+    const fetch = vi.fn<FetchLike>(async (input) => {
+      if (String(input).endsWith("/appendix/user_data")) {
+        return new Response(JSON.stringify({ tasks: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          cost: 0.01,
+          tasks: [
+            {
+              id: "task-verification",
+              status_code: 20000,
+              cost: 0.01,
+              result: [
+                {
+                  ...(includeCanonicalCheckUrl
+                    ? { check_url: "https://trends.google.com/trends/explore?q=TrendsFast" }
+                    : {}),
+                  keywords: ["TrendsFast"],
+                  items: [
+                    {
+                      type: "google_trends_graph",
+                      data: [
+                        { timestamp: 1785801600, values: [20] },
+                        { timestamp: 1786406400, values: [40] },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    const adapter = createGoogleTrendsAdapter();
+    const context = createProviderContext({
+      credentialMode: "managed",
+      env: {
+        DATAFORSEO_LOGIN: "configured-login",
+        DATAFORSEO_PASSWORD: "configured-password",
+        DATAFORSEO_ESTIMATED_COST_USD_PER_TASK: "0.01",
+      },
+      fetch,
+      now: () => now,
+    });
+
+    const credentialsOnly = await verifyProviderReadback({
+      adapter,
+      context,
+      maximumCostUsd: 0.317,
+      deadline: new Date(now.getTime() + 1_000),
+    });
+    expect(credentialsOnly).toMatchObject({
+      state: "DEGRADED",
+      healthStatus: "HEALTHY",
+      readbackVerified: false,
+      canonicalUrls: [],
+    });
+
+    const graphReadback = await verifyProviderReadback({
+      adapter,
+      context,
+      request: {
+        scanId: "verify_google_trends",
+        queries: [
+          {
+            id: "query_google_trends",
+            provider: "google_trends",
+            role: "search_demand",
+            query: "TrendsFast",
+            limit: 1,
+          },
+        ],
+      },
+      maximumCostUsd: 0.317,
+      deadline: new Date(now.getTime() + 1_000),
+    });
+    expect(graphReadback).toMatchObject({
+      state: "VERIFIED",
+      healthStatus: "HEALTHY",
+      readbackVerified: true,
+      canonicalUrls: ["https://trends.google.com/trends/explore?q=TrendsFast"],
+    });
+
+    includeCanonicalCheckUrl = false;
+    const unboundGraphReadback = await verifyProviderReadback({
+      adapter,
+      context,
+      request: {
+        scanId: "verify_google_trends_without_check_url",
+        queries: [
+          {
+            id: "query_google_trends_without_check_url",
+            provider: "google_trends",
+            role: "search_demand",
+            query: "TrendsFast",
+            limit: 1,
+          },
+        ],
+      },
+      maximumCostUsd: 0.317,
+      deadline: new Date(now.getTime() + 1_000),
+    });
+    expect(unboundGraphReadback).toMatchObject({
+      state: "DEGRADED",
+      healthStatus: "HEALTHY",
+      readbackVerified: false,
+      canonicalUrls: [],
+    });
   });
 
   it("can verify a bounded website read-back after the safety preflight is healthy", async () => {

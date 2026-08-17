@@ -142,6 +142,14 @@ export type ProcessingStore = {
 
 export type ProviderRunner = {
   order: ProviderSlug[];
+  /**
+   * Live runs may not inherit source output created before the current
+   * exact-deployment verification gate was evaluated. A fresh scan run is the
+   * only safe retry boundary because provider-attempt ledger keys are scoped to
+   * the existing source run and deliberately cannot be replayed.
+   */
+  requiresFreshRunEvidence?: boolean;
+  eligibility(provider: ProviderSlug): ProviderExecutionEligibility;
   estimate(provider: ProviderSlug, queries: QueryPlan["entries"]): number;
   execute(
     provider: ProviderSlug,
@@ -155,9 +163,23 @@ export type ProviderRunner = {
   ): Promise<ProviderRunResult>;
 };
 
+export type ProviderExecutionEligibility =
+  | { eligible: true }
+  | {
+      eligible: false;
+      code:
+        | "PROVIDER_UNCONFIGURED"
+        | "PROVIDER_DEPLOYMENT_IDENTITY_UNAVAILABLE"
+        | "PROVIDER_VERIFICATION_UNAVAILABLE"
+        | "PROVIDER_NOT_PRODUCTION_VERIFIED"
+        | "PROVIDER_MANUAL_INPUT_REQUIRED";
+      message: string;
+    };
+
 export class ScanDeadlineError extends Error {}
 export class ScanAlreadyClaimedError extends Error {}
 export class ProviderOutcomeUnknownError extends Error {}
+export class ProviderEvidenceProvenanceError extends Error {}
 export class StaleProcessingClaimError extends Error {}
 
 function completed(state: string | undefined): boolean {
@@ -243,6 +265,14 @@ export async function processScan(
         `${interruptedProvider} stopped before its external effect could be durably confirmed. Automatic replay is disabled.`,
       );
     }
+    const inheritedProviderEvidence = Object.entries(claim.sourceStates).find(([, state]) =>
+      ["SUCCEEDED", "DEGRADED"].includes(state),
+    )?.[0];
+    if (dependencies.providers.requiresFreshRunEvidence && inheritedProviderEvidence) {
+      throw new ProviderEvidenceProvenanceError(
+        `${inheritedProviderEvidence} output belongs to an earlier processing claim and is not bound to the current exact-deployment verification gate. Start a fresh scan run.`,
+      );
+    }
     if (now() >= deadline)
       throw new ScanDeadlineError("The scan exceeded its hard duration ceiling.");
     const ids: ProcessingClaimIdentity = {
@@ -296,9 +326,28 @@ export async function processScan(
         );
       }
     };
+    const deniedProviders = new Set<ProviderSlug>();
+    for (const provider of [
+      ...new Set<ProviderSlug>(["website", ...dependencies.providers.order]),
+    ]) {
+      const eligibility = dependencies.providers.eligibility(provider);
+      if (eligibility.eligible) continue;
+      deniedProviders.add(provider);
+      if (claim.sourceStates[provider] !== "SKIPPED") {
+        await dependencies.store.failProvider(provider, ids, {
+          code: eligibility.code,
+          message: eligibility.message,
+          skipped: true,
+        });
+      }
+      claim.sourceStates[provider] = "SKIPPED";
+    }
     let context = claim.context;
     let contextVersionId = claim.contextVersionId;
     if (!context || !contextVersionId) {
+      if (deniedProviders.has("website")) {
+        throw new Error("Verified product website context is unavailable for this scan.");
+      }
       if (!completed(claim.sourceStates.website)) {
         if (now() >= deadline)
           throw new ScanDeadlineError("The scan exceeded its hard duration ceiling.");
@@ -386,7 +435,6 @@ export async function processScan(
     if (!claim.queryPlan) await dependencies.store.saveQueryPlan(ids, plan);
 
     for (const provider of dependencies.providers.order) {
-      if (provider === "website") continue;
       if (completed(claim.sourceStates[provider])) continue;
       if (now() >= deadline)
         throw new ScanDeadlineError("The scan exceeded its hard duration ceiling.");
@@ -485,7 +533,9 @@ export async function processScan(
           ? "MODEL_OUTCOME_UNKNOWN"
           : error instanceof ProviderOutcomeUnknownError
             ? "PROVIDER_OUTCOME_UNKNOWN"
-            : "SCAN_PROCESSING_FAILED";
+            : error instanceof ProviderEvidenceProvenanceError
+              ? "PROVIDER_EVIDENCE_NOT_CURRENT"
+              : "SCAN_PROCESSING_FAILED";
     await dependencies.store.failScan(
       claim
         ? {

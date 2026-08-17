@@ -18,6 +18,7 @@ import { MonitoringRepository } from "./monitoring";
 import { OperationsRepository } from "./operations";
 import { ProviderVerificationRepository } from "./provider-verification";
 import { MemberRepository } from "./members";
+import { MemberReviewRepository } from "./member-review";
 
 export * from "./analytics";
 export * from "./auth-admission";
@@ -40,6 +41,7 @@ export * from "./privacy";
 export * from "./manual-evidence";
 export * from "./provider-verification";
 export * from "./members";
+export * from "./member-review";
 
 export function createRepositories(
   db: TrendsFastDatabase,
@@ -58,6 +60,7 @@ export function createRepositories(
     founderUsage: new FounderUsageRepository(db),
     manualEvidence: new ManualEvidenceRepository(db),
     members: new MemberRepository(db, options.apiKeyPepper),
+    memberReviews: new MemberReviewRepository(db),
     monitoring: new MonitoringRepository(db),
     operations: new OperationsRepository(db),
     privacy: new PrivacyRepository(db),

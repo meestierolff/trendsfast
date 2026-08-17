@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { hasFinancialSafetyContext } from "../src/content-safety";
 import { DOGFOOD_FIXTURES, fixtureDecision } from "../src/dogfood";
 
 describe("dogfood fixture differentiation", () => {
@@ -26,5 +27,14 @@ describe("dogfood fixture differentiation", () => {
     expect(new Set(decisions.map((decision) => decision.move.action)).size).toBeGreaterThanOrEqual(
       3,
     );
+  });
+
+  it("keeps decision-output language distinct from financial performance context", () => {
+    const trendsFast = DOGFOOD_FIXTURES.find((fixture) => fixture.slug === "trendsfast");
+    const halio = DOGFOOD_FIXTURES.find((fixture) => fixture.slug === "halio");
+    if (!trendsFast || !halio) throw new Error("Required dogfood fixtures are missing");
+
+    expect(hasFinancialSafetyContext(trendsFast.context)).toBe(false);
+    expect(hasFinancialSafetyContext(halio.context)).toBe(true);
   });
 });

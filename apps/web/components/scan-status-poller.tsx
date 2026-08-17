@@ -4,6 +4,13 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import {
+  DEFAULT_SCAN_POLL_AFTER_MS,
+  retryAfterMilliseconds,
+  scanRefreshCopy,
+  type ScanRefreshState,
+} from "@/lib/retry-after";
+
 export type ScanSourcePlanItem = {
   name: string;
   status: string;
@@ -139,7 +146,8 @@ export function ScanStatusPoller({
 }) {
   const router = useRouter();
   const [status, setStatus] = useState(initialStatus);
-  const [refreshState, setRefreshState] = useState<"idle" | "refreshing" | "paused">("idle");
+  const [refreshState, setRefreshState] = useState<ScanRefreshState>("idle");
+  const [pollAfterMs, setPollAfterMs] = useState(DEFAULT_SCAN_POLL_AFTER_MS);
 
   const refresh = useCallback(async () => {
     setRefreshState("refreshing");
@@ -150,13 +158,18 @@ export function ScanStatusPoller({
         cache: "no-store",
         headers: { Accept: "application/json" },
       });
+      const nextPollAfterMs = retryAfterMilliseconds(response.headers.get("retry-after"));
+      setPollAfterMs(nextPollAfterMs);
       if (!response.ok) throw new Error("Status request failed");
       const nextStatus = unwrapStatusPayload(await response.json());
       if (!nextStatus) throw new Error("Invalid status response");
       setStatus(nextStatus);
       setRefreshState("idle");
+      return nextPollAfterMs;
     } catch {
-      setRefreshState("paused");
+      setPollAfterMs(DEFAULT_SCAN_POLL_AFTER_MS);
+      setRefreshState("retrying");
+      return DEFAULT_SCAN_POLL_AFTER_MS;
     }
   }, [token]);
 
@@ -167,9 +180,18 @@ export function ScanStatusPoller({
     }
     if (status.state === "FAILED" || status.requiresNewScan) return;
 
-    const interval = window.setInterval(() => void refresh(), 5_000);
-    return () => window.clearInterval(interval);
-  }, [refresh, router, status.requiresNewScan, status.resultToken, status.state]);
+    let cancelled = false;
+    let timeout = 0;
+    const poll = async () => {
+      const nextPollAfterMs = await refresh();
+      if (!cancelled) timeout = window.setTimeout(() => void poll(), nextPollAfterMs);
+    };
+    timeout = window.setTimeout(() => void poll(), pollAfterMs);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [pollAfterMs, refresh, router, status.requiresNewScan, status.resultToken, status.state]);
 
   const copy = stateCopy[status.state];
   const productName = inferredProductName(status.inferredProduct);
@@ -177,6 +199,7 @@ export function ScanStatusPoller({
   const waitingForDeliveryToken =
     status.state === "READY" && !status.resultToken && !status.requiresNewScan;
   const submittedUrl = safeHttpUrl(status.submittedUrl);
+  const automaticRefreshCopy = scanRefreshCopy(refreshState, pollAfterMs);
 
   return (
     <div className="scan-delivery scan-status-page">
@@ -196,11 +219,7 @@ export function ScanStatusPoller({
         <div className="scan-state-readout" aria-live="polite" aria-atomic="true">
           <span>Current state</span>
           <strong>{readableCode(status.state)}</strong>
-          <small>
-            {refreshState === "refreshing"
-              ? "Checking for a new state…"
-              : "Checked automatically every 5 seconds"}
-          </small>
+          <small>{automaticRefreshCopy.readout}</small>
         </div>
       </section>
 
@@ -312,11 +331,7 @@ export function ScanStatusPoller({
       </section>
 
       <div className="scan-refresh-note">
-        <p aria-live="polite">
-          {refreshState === "paused"
-            ? "Automatic refresh paused after a connection problem. Your scan is still stored."
-            : "You can leave this tab and return with the same private link."}
-        </p>
+        <p aria-live="polite">{automaticRefreshCopy.note}</p>
         <button
           type="button"
           onClick={() => void refresh()}

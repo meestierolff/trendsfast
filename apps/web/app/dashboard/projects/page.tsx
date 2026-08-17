@@ -1,7 +1,8 @@
 import { DashboardEmpty } from "@/components/dashboard-empty";
 import { DashboardProjectForm } from "@/components/dashboard-project-form";
 import { DashboardProjectSwitcher } from "@/components/dashboard-project-switcher";
-import { DashboardRefreshControl } from "@/components/dashboard-refresh-control";
+import { isMemberConfirmedProjectContext } from "@trendsfast/database";
+import Link from "next/link";
 import {
   getDashboardProject,
   parseDashboardContext,
@@ -35,13 +36,18 @@ export default async function DashboardProjectsPage({
           path="/dashboard/projects"
         />
         <section className="dashboard-empty">
-          <p className="kicker">Context unavailable</p>
-          <h2>Re-read this product.</h2>
+          <p className="kicker">Website context unavailable</p>
+          <h2>Read this product website.</h2>
           <p>
-            This project has no current context. Request a founder-plan refresh to read the saved
-            product URL, infer a new profile, and create a new reviewable move.
+            This project has no saved context. Read only its public website and review the bounded
+            draft before any broader research can run.
           </p>
-          <DashboardRefreshControl projectId={selected.project.id} label="Re-read product" />
+          <Link
+            className="button button-primary"
+            href={`/dashboard/new?url=${encodeURIComponent(selected.project.url)}`}
+          >
+            Read website <span aria-hidden="true">→</span>
+          </Link>
         </section>
       </>
     );
@@ -69,6 +75,7 @@ export default async function DashboardProjectsPage({
         provenance={parsed.record.contextProvenance}
         voiceProfile={parsed.record.voiceProfile}
         contentCapabilities={parsed.record.contentCapabilities}
+        confirmed={isMemberConfirmedProjectContext(parsed.record.createdBy)}
       />
     </>
   );

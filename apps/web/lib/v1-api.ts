@@ -107,6 +107,11 @@ const OPENAPI_READY_EXAMPLE = {
   auto_publish: false,
 } as const;
 
+const OPENAPI_PROJECT_READY_EXAMPLE = {
+  ...OPENAPI_READY_EXAMPLE,
+  generation_level: "draft",
+} as const;
+
 export type ApiPrincipal = {
   apiKeyId: string;
   environment: "test" | "live";
@@ -305,7 +310,7 @@ export function createV1Api(dependencies: V1ApiDependencies) {
           post: {
             summary: "Create or reuse a Next Move scan for a claimed project",
             description:
-              "The API key must be restricted to this project. TrendsFast loads the saved project URL, context, and capability ceiling server-side.",
+              "The live API key must be restricted to this project and include next_move:write plus next_move:read. TrendsFast loads the saved project URL, confirmed context, and capability ceiling server-side and produces draft-level output.",
             security: [{ bearerApiKey: [] }],
             parameters: [
               {
@@ -330,7 +335,7 @@ export function createV1Api(dependencies: V1ApiDependencies) {
                     objective: "Grow among technical founders",
                     preferred_channels: ["x", "linkedin"],
                     content_capabilities: ["founder_text", "screen_recording"],
-                    generation_level: "brief",
+                    generation_level: "draft",
                   },
                 },
               },
@@ -341,7 +346,7 @@ export function createV1Api(dependencies: V1ApiDependencies) {
                 content: {
                   "application/json": {
                     schema: { $ref: "#/components/schemas/NextMoveStatus" },
-                    example: OPENAPI_READY_EXAMPLE,
+                    example: OPENAPI_PROJECT_READY_EXAMPLE,
                   },
                 },
               },
@@ -572,6 +577,12 @@ export function createV1Api(dependencies: V1ApiDependencies) {
     const principal = context.get("principal");
     if (!principal.scopes.includes("next_move:write"))
       return error("FORBIDDEN", "The API key does not have write scope.", 403);
+    if (!principal.scopes.includes("next_move:read"))
+      return error(
+        "FORBIDDEN",
+        "The project workflow requires both next_move:write and next_move:read scopes.",
+        403,
+      );
     const projectId = context.req.param("projectId");
     if (!z.string().uuid().safeParse(projectId).success)
       return error("INVALID_PROJECT_ID", "The project ID must be a UUID.", 400);

@@ -9,6 +9,7 @@ import {
   founderEntitlementGrantEvents,
   founderEntitlementGrants,
   founderUsageEvents,
+  scanRequests,
 } from "../src/index";
 
 const databaseDescribe = process.env.RUN_DATABASE_INTEGRATION === "1" ? describe : describe.skip;
@@ -97,11 +98,28 @@ databaseDescribe("founder design-partner grants", () => {
       now,
     });
     expect(accepted).toMatchObject({ status: "CREATED" });
+    if (accepted.status !== "CREATED") throw new Error("Founder grant request was not admitted");
+    await expect(
+      repositories.scans.admitApiRequest({
+        apiKeyId: issued.record.id,
+        projectId: project.id,
+        idempotencyKey: randomUUID(),
+        request: { product_url: projectUrl },
+        costReservationUsd: 0.317,
+        since: new Date(now.getTime() - 3_600_000),
+        now: new Date(now.getTime() + 500),
+      }),
+    ).resolves.toMatchObject({ status: "PROJECT_BUSY", request: { id: accepted.request.id } });
     const [usage] = await client.db
       .select()
       .from(founderUsageEvents)
       .where(eq(founderUsageEvents.projectId, project.id));
     expect(usage).toMatchObject({ subscriptionId: null, founderGrantId: open[0]?.id });
+
+    await client.db
+      .update(scanRequests)
+      .set({ state: "FAILED", completedAt: new Date(now.getTime() + 750) })
+      .where(eq(scanRequests.id, accepted.request.id));
 
     await repositories.founderGrants.revoke({
       grantId: open[0]!.id,

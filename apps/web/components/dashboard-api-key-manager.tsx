@@ -84,7 +84,7 @@ export function DashboardApiKeyManager({
   --header 'Authorization: Bearer YOUR_PROJECT_KEY' \\
   --header 'Idempotency-Key: 00000000-0000-4000-8000-000000000001' \\
   --header 'Content-Type: application/json' \\
-  --data '{"objective":"Grow ${projectName.replaceAll('"', "")}","preferred_channels":["x","linkedin","reddit"],"content_capabilities":["founder_text","screen_recording"],"generation_level":"brief"}'`;
+  --data '{"objective":"Grow ${projectName.replaceAll('"', "")}","preferred_channels":["x","linkedin","youtube","blog"],"content_capabilities":["founder_text","screen_recording"],"generation_level":"draft"}'`;
   const instruction = `I want to grow ${projectName} among our saved audience. Use TrendsFast to find the strongest current opportunity. Show me the evidence and the exact PUBLISH, REPLY, REMIX, or WAIT recommendation. Draft the asset in our saved voice, but do not publish without approval.`;
 
   return (

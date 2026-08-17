@@ -11,10 +11,12 @@ import {
   monitoringRuns,
   nextMoves,
   projectContextVersions,
+  projectMemberships,
   projects,
   reviewEvents,
   scanRequests,
   scanRuns,
+  userProfiles,
 } from "../schema";
 import { durableAnalyticsDedupeKey } from "./analytics";
 import { admitFounderUsage, lockProjectEntitlementScope } from "./founder-usage";
@@ -53,6 +55,7 @@ export class DeliveryRepository {
     nextMoveId: string;
     reviewerId: string;
     expiresAt: Date;
+    ownerAuthorization?: { authUserId: string; projectId: string };
   }): Promise<DeliveryIssueResult> {
     return this.db.transaction(async (tx) => {
       const [identity] = await tx
@@ -62,6 +65,26 @@ export class DeliveryRepository {
         .where(eq(nextMoves.id, input.nextMoveId))
         .limit(1);
       if (!identity) throw new Error("Next Move was not found");
+      if (input.ownerAuthorization) {
+        const [owner] = await tx
+          .select({ projectId: scanRequests.projectId })
+          .from(nextMoves)
+          .innerJoin(scanRequests, eq(scanRequests.id, nextMoves.scanRequestId))
+          .innerJoin(projectMemberships, eq(projectMemberships.projectId, scanRequests.projectId))
+          .innerJoin(userProfiles, eq(userProfiles.id, projectMemberships.userProfileId))
+          .where(
+            and(
+              eq(nextMoves.id, identity.move.id),
+              eq(scanRequests.projectId, input.ownerAuthorization.projectId),
+              eq(userProfiles.authUserId, input.ownerAuthorization.authUserId),
+              eq(projectMemberships.role, "OWNER"),
+            ),
+          )
+          .limit(1);
+        if (!owner || owner.projectId !== input.ownerAuthorization.projectId) {
+          throw new Error("Project owner authorization is required for member delivery");
+        }
+      }
       if (identity.projectId) {
         await lockProjectEntitlementScope(tx as unknown as TrendsFastDatabase, identity.projectId);
         await tx.execute(sql`SELECT id FROM projects WHERE id = ${identity.projectId} FOR UPDATE`);
@@ -127,9 +150,18 @@ export class DeliveryRepository {
       ) {
         throw new Error("The reviewed move no longer matches its exact evidence source count");
       }
+      const now = new Date();
+      if (move.validUntil <= now) {
+        throw new Error("The reviewed move is stale and must be recomputed before delivery");
+      }
 
       const [existing] = await tx
-        .select()
+        .select({
+          tokenPrefix: deliveryTokens.tokenPrefix,
+          expiresAt: deliveryTokens.expiresAt,
+          deliveredAt: deliveryTokens.deliveredAt,
+          createdAt: deliveryTokens.createdAt,
+        })
         .from(deliveryTokens)
         .where(
           and(
@@ -176,7 +208,6 @@ export class DeliveryRepository {
         throw new Error("Only a founder-reviewed move in review can be delivered");
       }
 
-      const now = new Date();
       if (input.expiresAt <= now) throw new Error("Delivery expiry must be future-dated");
       const [paidAcceptance] = await tx
         .select({ projectId: founderUsageEvents.projectId })

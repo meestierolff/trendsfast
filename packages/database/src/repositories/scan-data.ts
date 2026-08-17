@@ -485,10 +485,12 @@ export class ScanDataRepository {
     const currentSignals = await this.listSignalsForRun(scanRunId);
     if (currentSignals.length === 0) return [];
     const metricSignals = currentSignals
-      .filter(({ signal }) =>
-        Object.values(signal.metrics).some(
-          (value) => typeof value === "number" && Number.isFinite(value),
-        ),
+      .filter(
+        ({ signal, sourceRun }) =>
+          sourceRun.state === "SUCCEEDED" &&
+          Object.values(signal.metrics).some(
+            (value) => typeof value === "number" && Number.isFinite(value),
+          ),
       )
       .sort((left, right) => right.signal.observedAt.getTime() - left.signal.observedAt.getTime())
       .slice(0, 40);
@@ -515,6 +517,7 @@ export class ScanDataRepository {
         .innerJoin(scanRequests, eq(scanRequests.id, scanRuns.scanRequestId))
         .where(
           and(
+            eq(sourceRuns.state, "SUCCEEDED"),
             eq(signals.source, current.source),
             eq(signals.sourceId, current.sourceId),
             currentRun.projectId === null

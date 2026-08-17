@@ -146,10 +146,36 @@ function xPostParts(rawUrl: string): { url: string; handle: string; statusId: st
     const url = new URL(rawUrl);
     const host = url.hostname.toLocaleLowerCase("en").replace(/^www\./, "");
     if (host !== "x.com" && host !== "twitter.com") return undefined;
-    const match = /^\/([^/]+)\/status\/(\d+)/.exec(url.pathname);
+    const match = /^\/([^/]+)\/status\/(\d+)(?:\/|$)/.exec(url.pathname);
     if (!match?.[1] || !match[2]) return undefined;
     url.hash = "";
     return { url: url.href, handle: match[1], statusId: match[2] };
+  } catch {
+    return undefined;
+  }
+}
+
+const X_SNOWFLAKE_EPOCH_MS = 1_288_834_974_657n;
+
+/**
+ * X status IDs encode their creation millisecond in the upper Snowflake bits.
+ * This is provider-origin metadata, not a generated metric. Invalid, future,
+ * or non-representable IDs intentionally produce no publication timestamp.
+ */
+export function xStatusPublishedAt(statusId: string, retrievedAt: string): string | undefined {
+  try {
+    if (!/^\d{1,32}$/.test(statusId)) return undefined;
+    const retrievedMs = new Date(retrievedAt).getTime();
+    if (!Number.isFinite(retrievedMs)) return undefined;
+    const timestampMs = Number((BigInt(statusId) >> 22n) + X_SNOWFLAKE_EPOCH_MS);
+    if (
+      !Number.isSafeInteger(timestampMs) ||
+      timestampMs < Number(X_SNOWFLAKE_EPOCH_MS) ||
+      timestampMs > retrievedMs
+    ) {
+      return undefined;
+    }
+    return new Date(timestampMs).toISOString();
   } catch {
     return undefined;
   }
@@ -196,6 +222,8 @@ export function normalizeXaiXSearchResponse(
     const parts = xPostParts(citation.url);
     if (!parts || seen.has(parts.statusId)) continue;
     seen.add(parts.statusId);
+    const publishedAt = xStatusPublishedAt(parts.statusId, observedAt);
+    if (publishedAt === undefined) continue;
     signals.push({
       id: stableId("sig", `x:${parts.statusId}`),
       source: "x",
@@ -203,6 +231,7 @@ export function normalizeXaiXSearchResponse(
       url: parts.url,
       title: citation.title ?? `X post by @${parts.handle}`,
       author: { handle: parts.handle },
+      publishedAt,
       observedAt,
       metrics: {},
       queryId,
@@ -362,8 +391,11 @@ export function normalizeDataForSeoGoogleTrends(
           return [{ at: new Date(timestamp * 1_000).toISOString(), value }];
         });
         if (points.length === 0) continue;
-        const fallbackUrl = `https://trends.google.com/trends/explore?q=${encodeURIComponent(keyword)}`;
-        const url = checkUrl && /^https:\/\//i.test(checkUrl) ? checkUrl : fallbackUrl;
+        // DataForSEO's provider-supplied check URL is the evidence boundary.
+        // Never manufacture a Google Trends URL when the read-back omitted it:
+        // a reconstructed URL cannot prove that the exact source was observed.
+        if (!checkUrl || !/^https:\/\//i.test(checkUrl)) continue;
+        const url = checkUrl;
         signals.push({
           id: stableId("sig", `google_trends:${query.id}:${keyword}`),
           source: "google_trends",

@@ -10,10 +10,13 @@ export type VerifiedAuthIdentity = {
   email: string;
   displayName?: string;
   avatarUrl?: string;
+  /** Server-trusted Supabase app_metadata gate for the first private-alpha project. */
+  projectEntryEligible?: true;
 };
 
 export const DASHBOARD_ROUTES = [
   "/dashboard",
+  "/dashboard/new",
   "/dashboard/today",
   "/dashboard/projects",
   "/dashboard/history",
@@ -52,6 +55,7 @@ function verifiedIdentityFromUser(user: User): VerifiedAuthIdentity | null {
     user.user_metadata?.avatar_url ?? user.user_metadata?.picture,
     2_048,
   );
+  const projectEntryEligible = user.app_metadata?.trendsfast_project_entry === "FOUNDER";
   let avatarUrl: string | undefined;
   if (avatarCandidate) {
     try {
@@ -66,6 +70,7 @@ function verifiedIdentityFromUser(user: User): VerifiedAuthIdentity | null {
     email: email!,
     ...(displayName ? { displayName } : {}),
     ...(avatarUrl ? { avatarUrl } : {}),
+    ...(projectEntryEligible ? { projectEntryEligible: true as const } : {}),
   };
 }
 
@@ -77,7 +82,7 @@ export async function getVerifiedAuthSubject(): Promise<string | null> {
   return !error && typeof subject === "string" && /^[0-9a-f-]{36}$/i.test(subject) ? subject : null;
 }
 
-/** Callback-only identity read: getUser confirms current email/profile at Auth. */
+/** High-assurance identity read: getUser confirms current email/profile at Auth. */
 export async function getVerifiedAuthIdentity(): Promise<VerifiedAuthIdentity | null> {
   if (!readSupabasePublicConfig()) return null;
   const supabase = await createSupabaseServerClient();

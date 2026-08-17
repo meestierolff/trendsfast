@@ -89,6 +89,7 @@ export function parseDashboardMove(
   return {
     move,
     request,
+    versionedMove: contract.data,
     contractVersion: contract.data.contractVersion,
     generationLevel: contract.data.generationLevel,
     details: contract.data.details,

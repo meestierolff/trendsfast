@@ -124,6 +124,10 @@ export function storedSignal(
   });
 }
 
+function succeededSignalRows<T extends { sourceRun: { state: string } }>(rows: readonly T[]): T[] {
+  return rows.filter(({ sourceRun }) => sourceRun.state === "SUCCEEDED");
+}
+
 export function measurementFragment(value: unknown): ProviderMeasurement[] {
   const result = StoredProviderFragmentSchema.safeParse(value);
   if (!result.success) return [];
@@ -227,7 +231,11 @@ async function fencedMutation<T>(
  * externally visible artifact is reconstructed from persisted rows, so retries
  * never rely on process memory and evidence can only point at stored signals.
  */
-export function createDatabaseProcessingStore(repositories: Repositories): ProcessingStore {
+export function createDatabaseProcessingStore(
+  repositories: Repositories,
+  options: { includeHistoricalMetricSnapshots?: boolean } = {},
+): ProcessingStore {
+  const includeHistoricalMetricSnapshots = options.includeHistoricalMetricSnapshots === true;
   return {
     async load(publicId) {
       const request = await repositories.scans.getByPublicId(publicId);
@@ -508,19 +516,32 @@ export function createDatabaseProcessingStore(repositories: Repositories): Proce
     async loadCollectedData(scanRunId) {
       const [signalRows, snapshotRows, sourceRuns] = await Promise.all([
         repositories.scanData.listSignalsForRun(scanRunId),
-        repositories.scanData.listHistoricalMetricSnapshotsForRun(scanRunId),
+        includeHistoricalMetricSnapshots
+          ? repositories.scanData.listHistoricalMetricSnapshotsForRun(scanRunId)
+          : Promise.resolve([]),
         repositories.scanData.listSourceRuns(scanRunId),
       ]);
+      const succeededSourceRunIds = new Set(
+        sourceRuns.filter((run) => run.state === "SUCCEEDED").map((run) => run.id),
+      );
+      const eligibleSignalRows = succeededSignalRows(signalRows).filter(({ sourceRun }) =>
+        succeededSourceRunIds.has(sourceRun.id),
+      );
+      const succeededSignalIds = new Set(eligibleSignalRows.map(({ signal }) => signal.id));
       return {
-        signals: signalRows.map(storedSignal),
-        snapshots: snapshotRows.map((snapshot) =>
-          SignalMetricSnapshotSchema.parse({
-            signalId: snapshot.signalId,
-            observedAt: snapshot.observedAt.toISOString(),
-            metrics: snapshot.metrics,
-          }),
-        ),
-        measurements: sourceRuns.flatMap((run) => measurementFragment(run.providerPayloadFragment)),
+        signals: eligibleSignalRows.map(storedSignal),
+        snapshots: snapshotRows
+          .filter((snapshot) => succeededSignalIds.has(snapshot.signalId))
+          .map((snapshot) =>
+            SignalMetricSnapshotSchema.parse({
+              signalId: snapshot.signalId,
+              observedAt: snapshot.observedAt.toISOString(),
+              metrics: snapshot.metrics,
+            }),
+          ),
+        measurements: sourceRuns
+          .filter((run) => run.state === "SUCCEEDED")
+          .flatMap((run) => measurementFragment(run.providerPayloadFragment)),
         coverage: Object.fromEntries(sourceRuns.map((run) => [run.source, run.state])),
       };
     },
@@ -528,7 +549,7 @@ export function createDatabaseProcessingStore(repositories: Repositories): Proce
     async saveDraft(ids, draft) {
       return fencedMutation(repositories, ids, async (repositories) => {
         const signalRows = await repositories.scanData.listSignalsForRun(ids.runId);
-        const signals = signalRows.map(storedSignal);
+        const signals = succeededSignalRows(signalRows).map(storedSignal);
         const allowedSignalIds = new Set(signals.map((signal) => signal.id));
         const evidenceSignalIds = [...new Set(draft.evidenceSignalIds)];
         const reasonBySignalId = Object.fromEntries(

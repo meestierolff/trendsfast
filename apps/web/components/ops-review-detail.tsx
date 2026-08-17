@@ -738,6 +738,9 @@ export function OpsReviewDetail({
         csrfToken={csrfToken}
         requestState={detail.request.state}
         retryEnabled={retryEnabled}
+        decisionSupportReceiptIds={detail.evidence
+          .filter((receipt) => receipt.bindingRole === "DECISION_SUPPORT")
+          .map((receipt) => receipt.id)}
         {...(detail.run ? { runState: detail.run.state } : {})}
         {...(detail.move
           ? {
