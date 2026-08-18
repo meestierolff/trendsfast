@@ -187,13 +187,19 @@ describe("hosted least-privilege database roles", () => {
       ]),
     );
     expect(member.projects).toEqual(["SELECT"]);
+    expect(
+      RUNTIME_COLUMN_PRIVILEGES.member.filter(
+        (grant) => grant.table === "projects" && grant.privilege === "INSERT",
+      ),
+    ).toEqual([
+      {
+        table: "projects",
+        privilege: "INSERT",
+        columns: ["public_id", "name", "url", "normalized_url"],
+      },
+    ]);
     expect(RUNTIME_COLUMN_PRIVILEGES.member).toEqual(
       expect.arrayContaining([
-        {
-          table: "projects",
-          privilege: "INSERT",
-          columns: ["public_id", "name", "url", "normalized_url"],
-        },
         expect.objectContaining({ table: "review_events", privilege: "INSERT" }),
         expect.objectContaining({ table: "evidence_receipts", privilege: "UPDATE" }),
         expect.objectContaining({ table: "delivery_tokens", privilege: "INSERT" }),

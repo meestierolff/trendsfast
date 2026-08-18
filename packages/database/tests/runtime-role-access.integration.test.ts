@@ -30,15 +30,19 @@ async function assertExactLocalIdentity(
 
 roleDescribe("real PostgreSQL runtime-role behavior", () => {
   let client: ReturnType<typeof createDatabaseClient>;
+  let memberClient: ReturnType<typeof createDatabaseClient>;
   let retentionClient: ReturnType<typeof createDatabaseClient>;
   let adminClient: ReturnType<typeof createDatabaseClient>;
   let repositories: ReturnType<typeof createRepositories>;
+  let memberRepositories: ReturnType<typeof createRepositories>;
   const verificationId = randomUUID();
   const publicRequestId = randomUUID();
   const publicRunId = randomUUID();
   const publicSourceRunId = randomUUID();
   const publicSignalId = randomUUID();
   const publicToken = `role_public_${randomUUID().replaceAll("-", "")}`;
+  const memberAuthUserId = randomUUID();
+  const memberUrl = `https://member-project-${randomUUID()}.example`;
   const verificationTarget = {
     releaseSha: "9afad5e123456789",
     deploymentHost: "role-test.trendsfast.invalid",
@@ -61,6 +65,13 @@ roleDescribe("real PostgreSQL runtime-role behavior", () => {
       productionRole: DATABASE_ROLES.retention,
       ciRole: DATABASE_ROLES.retention,
     });
+    const memberTarget = databaseCliTarget({
+      execution,
+      variable: "MEMBER_DATABASE_URL",
+      productionEndpoint: "transaction-pooler",
+      productionRole: DATABASE_ROLES.member,
+      ciRole: DATABASE_ROLES.member,
+    });
     const adminTarget = databaseCliTarget({
       execution,
       variable: "DIRECT_DATABASE_URL",
@@ -76,6 +87,14 @@ roleDescribe("real PostgreSQL runtime-role behavior", () => {
     repositories = createRepositories(client.db, {
       apiKeyPepper: "runtime-role-integration-pepper-at-least-32-characters",
     });
+    memberClient = createDatabaseClient({
+      connectionString: memberTarget.connectionString,
+      maxConnections: 1,
+      applicationName: "trendsfast-member-role-integration",
+    });
+    memberRepositories = createRepositories(memberClient.db, {
+      apiKeyPepper: "runtime-role-integration-pepper-at-least-32-characters",
+    });
     retentionClient = createDatabaseClient({
       connectionString: retentionTarget.connectionString,
       maxConnections: 1,
@@ -88,6 +107,7 @@ roleDescribe("real PostgreSQL runtime-role behavior", () => {
     });
     await Promise.all([
       assertExactLocalIdentity(client, publicTarget),
+      assertExactLocalIdentity(memberClient, memberTarget),
       assertExactLocalIdentity(retentionClient, retentionTarget),
       assertExactLocalIdentity(adminClient, adminTarget),
     ]);
@@ -140,6 +160,12 @@ roleDescribe("real PostgreSQL runtime-role behavior", () => {
   });
 
   afterAll(async () => {
+    await adminClient?.pool.query("delete from public.projects where normalized_url = $1", [
+      `${memberUrl}/`,
+    ]);
+    await adminClient?.pool.query("delete from public.user_profiles where auth_user_id = $1", [
+      memberAuthUserId,
+    ]);
     await adminClient?.pool.query(
       "delete from public.provider_verification_records where id = $1",
       [verificationId],
@@ -148,6 +174,7 @@ roleDescribe("real PostgreSQL runtime-role behavior", () => {
       publicRequestId,
     ]);
     await client?.close();
+    await memberClient?.close();
     await retentionClient?.close();
     await adminClient?.close();
   });
@@ -177,6 +204,128 @@ roleDescribe("real PostgreSQL runtime-role behavior", () => {
         properties: { source: "runtime-role-integration" },
       }),
     ).resolves.toMatchObject({ name: "pricing_viewed" });
+  });
+
+  it("creates and reuses an owner project through the exact member-runtime column ACL", async () => {
+    const identity = {
+      authUserId: memberAuthUserId,
+      email: `member-project-${randomUUID()}@example.com`,
+      projectEntryEligible: true,
+    };
+    const first = await memberRepositories.members.createOrReuseOwnedProject({
+      identity,
+      url: memberUrl,
+    });
+
+    expect(first.created).toBe(true);
+    expect(first.contextVersion).toBeNull();
+    expect(first.project).toMatchObject({
+      id: expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+      ),
+      status: "ACTIVE",
+      publicCaseStudyConsent: false,
+      archivedAt: null,
+    });
+    expect(first.project.createdAt).toBeInstanceOf(Date);
+    expect(Number.isFinite(first.project.createdAt.getTime())).toBe(true);
+    expect(first.project.updatedAt).toBeInstanceOf(Date);
+    expect(Number.isFinite(first.project.updatedAt.getTime())).toBe(true);
+
+    const second = await memberRepositories.members.createOrReuseOwnedProject({
+      identity,
+      url: `${memberUrl}/`,
+    });
+    expect(second).toMatchObject({
+      created: false,
+      project: { id: first.project.id },
+    });
+
+    const storedProjects = await memberClient.pool.query<{
+      id: string;
+      status: string;
+      public_case_study_consent: boolean;
+      created_at: Date;
+      updated_at: Date;
+      archived_at: Date | null;
+    }>(
+      `select id, status, public_case_study_consent, created_at, updated_at, archived_at
+         from public.projects
+        where normalized_url = $1`,
+      [`${memberUrl}/`],
+    );
+    expect(storedProjects.rows).toEqual([
+      {
+        id: first.project.id,
+        status: "ACTIVE",
+        public_case_study_consent: false,
+        created_at: expect.any(Date),
+        updated_at: expect.any(Date),
+        archived_at: null,
+      },
+    ]);
+    const owners = await memberClient.pool.query<{ owner_count: string }>(
+      `select count(*)::text as owner_count
+         from public.project_memberships pm
+         inner join public.user_profiles up on up.id = pm.user_profile_id
+        where pm.project_id = $1 and pm.role = 'OWNER' and up.auth_user_id = $2`,
+      [first.project.id, memberAuthUserId],
+    );
+    expect(owners.rows).toEqual([{ owner_count: "1" }]);
+
+    const duplicates = await memberClient.pool.query<{ project_count: string }>(
+      `select count(*)::text as project_count
+         from public.projects
+        where normalized_url = $1`,
+      [`${memberUrl}/`],
+    );
+    expect(duplicates.rows).toEqual([{ project_count: "1" }]);
+
+    const forbiddenInserts: ReadonlyArray<{ text: string; value: unknown }> = [
+      {
+        text: `insert into public.projects(public_id, name, url, normalized_url, id)
+               values ($1, $2, $3, $4, $5)`,
+        value: randomUUID(),
+      },
+      {
+        text: `insert into public.projects(public_id, name, url, normalized_url, status)
+               values ($1, $2, $3, $4, $5)`,
+        value: "ACTIVE",
+      },
+      {
+        text: `insert into public.projects(
+                 public_id, name, url, normalized_url, public_case_study_consent
+               ) values ($1, $2, $3, $4, $5)`,
+        value: false,
+      },
+      {
+        text: `insert into public.projects(public_id, name, url, normalized_url, created_at)
+               values ($1, $2, $3, $4, $5)`,
+        value: new Date(),
+      },
+      {
+        text: `insert into public.projects(public_id, name, url, normalized_url, updated_at)
+               values ($1, $2, $3, $4, $5)`,
+        value: new Date(),
+      },
+      {
+        text: `insert into public.projects(public_id, name, url, normalized_url, archived_at)
+               values ($1, $2, $3, $4, $5)`,
+        value: null,
+      },
+    ];
+    for (const [index, attempt] of forbiddenInserts.entries()) {
+      const url = `https://member-forbidden-${index}-${randomUUID()}.example/`;
+      await expect(
+        memberClient.pool.query(attempt.text, [
+          `project_${randomUUID().replaceAll("-", "")}`,
+          "Forbidden member insert",
+          url,
+          url,
+          attempt.value,
+        ]),
+      ).rejects.toMatchObject({ code: "42501" });
+    }
   });
 
   it("denies public key issuance, grants, review edits, verification, and billing projection", async () => {
