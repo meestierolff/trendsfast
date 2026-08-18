@@ -129,6 +129,17 @@ describe("hosted least-privilege database roles", () => {
       ]),
     );
     expect(
+      RUNTIME_COLUMN_PRIVILEGES.public.filter(
+        (grant) => grant.table === "scan_runs" && grant.privilege === "INSERT",
+      ),
+    ).toEqual([
+      {
+        table: "scan_runs",
+        privilege: "INSERT",
+        columns: ["scan_request_id", "project_context_version_id", "attempt", "state"],
+      },
+    ]);
+    expect(
       RUNTIME_COLUMN_PRIVILEGES.public.find(
         (grant) => grant.table === "scan_runs" && grant.privilege === "SELECT",
       )?.columns,

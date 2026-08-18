@@ -121,6 +121,10 @@ export type CreateScanRequestInput = {
 
 export type ScanRequestRecord = typeof scanRequests.$inferSelect;
 
+type CreatedScanRunRow = {
+  id: string;
+};
+
 export type CreateScanRequestResult =
   | { request: ScanRequestRecord; created: true; idempotencyConflict: false }
   | { request: ScanRequestRecord; created: false; idempotencyConflict: false }
@@ -604,16 +608,19 @@ export class ScanRepository {
           .where(eq(founderUsageEvents.id, founderUsageEventId));
       }
       if (input.projectContextVersionId) {
-        const [queuedRun] = await tx
-          .insert(scanRuns)
-          .values({
-            scanRequestId: created.id,
-            projectContextVersionId: input.projectContextVersionId,
-            attempt: 1,
-            state: "QUEUED",
-          })
-          .returning({ id: scanRuns.id });
-        if (!queuedRun) throw new Error("Could not pin the claimed-project context version");
+        const queuedRunResult = await tx.execute<CreatedScanRunRow>(sql`
+          INSERT INTO ${scanRuns} (
+            "scan_request_id",
+            "project_context_version_id",
+            "attempt",
+            "state"
+          )
+          VALUES (${created.id}, ${input.projectContextVersionId}, 1, 'QUEUED')
+          RETURNING "id"
+        `);
+        if (!queuedRunResult.rows[0] || queuedRunResult.rows.length !== 1) {
+          throw new Error("Could not pin the claimed-project context version");
+        }
       }
       return { status: "CREATED" as const, request: created };
     });
