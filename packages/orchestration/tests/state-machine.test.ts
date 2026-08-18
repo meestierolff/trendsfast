@@ -5,6 +5,7 @@ import {
   processScan,
   ProviderEvidenceProvenanceError,
   ProviderOutcomeUnknownError,
+  ScanAlreadyClaimedError,
   ScanDeadlineError,
   StaleProcessingClaimError,
   type DecisionDraft,
@@ -645,6 +646,30 @@ describe("resumable scan state machine", () => {
     });
     expect(output.state).toBe("REVIEW_REQUIRED");
     expect(fixture.claim).not.toHaveBeenCalled();
+  });
+
+  it("does not duplicate provider work when concurrent recovery callbacks race to claim", async () => {
+    const { fixture } = store();
+    vi.mocked(fixture.claim).mockRejectedValue(new ScanAlreadyClaimedError("ALREADY_CLAIMED"));
+    const execute = vi.fn();
+    const output = await processScan("scan_1", {
+      store: fixture,
+      inferContext: vi.fn(),
+      planQueries: vi.fn(),
+      providers: {
+        order: ["hacker_news"],
+        eligibility: allowProvider,
+        estimate: vi.fn(),
+        execute,
+      },
+      decide: vi.fn(),
+      maxCostUsd: 0.317,
+      maxDurationMs: 60_000,
+    });
+
+    expect(output.state).toBe("RUNNING");
+    expect(execute).not.toHaveBeenCalled();
+    expect(fixture.failScan).not.toHaveBeenCalled();
   });
 
   it("persists a bounded failure when the deadline is already exhausted", async () => {
