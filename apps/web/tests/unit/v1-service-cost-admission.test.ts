@@ -189,6 +189,105 @@ describe("v1 service cost admission wiring", () => {
     expect(schedule).not.toHaveBeenCalled();
   });
 
+  it("reschedules an exact untouched queued replay without admitting or charging again", async () => {
+    const persistedRequest = {
+      id: "request_queued_replay",
+      publicId: "scan_queued_replay",
+      apiKeyId: "key_1",
+      projectId: "project_1",
+      origin: "API",
+      state: "QUEUED",
+      startedAt: null,
+      completedAt: null,
+      failureCode: null,
+      failureMessage: null,
+      createdAt: new Date(),
+    };
+    repositoryMocks.resolveApiIdempotency.mockResolvedValue({
+      idempotencyConflict: false,
+      request: persistedRequest,
+    });
+    repositoryMocks.getStatusByPublicId.mockResolvedValue({
+      request: persistedRequest,
+      run: { id: "run_queued_replay", state: "QUEUED" },
+      move: null,
+      context: null,
+      project: null,
+      delivery: null,
+      evidence: [],
+    });
+    const schedule = vi.fn();
+    const service = createV1Service({ schedule });
+
+    await expect(
+      service.createOrReuse({
+        principal: {
+          apiKeyId: "key_1",
+          projectId: "project_1",
+          environment: "live",
+          scopes: ["next_move:write"],
+        },
+        idempotencyKey: "5c55b81c-bd64-4bdb-b579-91017b476b7f",
+        request: { product_url: "https://example.com" },
+      }),
+    ).resolves.toMatchObject({ id: "scan_queued_replay", status: "QUEUED" });
+
+    expect(schedule).toHaveBeenCalledOnce();
+    expect(schedule).toHaveBeenCalledWith("scan_queued_replay");
+    expect(repositoryMocks.admitApiRequest).not.toHaveBeenCalled();
+    expect(repositoryMocks.appendAnalytics).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { state: "QUEUED", startedAt: new Date("2026-08-18T08:00:00.000Z") },
+    { state: "RUNNING", startedAt: new Date("2026-08-18T08:00:00.000Z") },
+    { state: "REVIEW_REQUIRED", startedAt: new Date("2026-08-18T08:00:00.000Z") },
+    { state: "FAILED", startedAt: new Date("2026-08-18T08:00:00.000Z") },
+  ])("does not reschedule an idempotent $state request that has already started", async (row) => {
+    const persistedRequest = {
+      id: `request_${row.state.toLowerCase()}`,
+      publicId: `scan_${row.state.toLowerCase()}`,
+      apiKeyId: "key_1",
+      projectId: "project_1",
+      origin: "API",
+      state: row.state,
+      startedAt: row.startedAt,
+      completedAt: row.state === "FAILED" ? new Date("2026-08-18T08:01:00.000Z") : null,
+      failureCode: row.state === "FAILED" ? "SCAN_PROCESSING_FAILED" : null,
+      failureMessage: row.state === "FAILED" ? "Redacted failure" : null,
+      createdAt: new Date(),
+    };
+    repositoryMocks.resolveApiIdempotency.mockResolvedValue({
+      idempotencyConflict: false,
+      request: persistedRequest,
+    });
+    repositoryMocks.getStatusByPublicId.mockResolvedValue({
+      request: persistedRequest,
+      run: { id: `run_${row.state.toLowerCase()}`, state: row.state },
+      move: null,
+      context: null,
+      project: null,
+      delivery: null,
+      evidence: [],
+    });
+    const schedule = vi.fn();
+    const service = createV1Service({ schedule });
+
+    await service.createOrReuse({
+      principal: {
+        apiKeyId: "key_1",
+        projectId: "project_1",
+        environment: "live",
+        scopes: ["next_move:write"],
+      },
+      idempotencyKey: "5c55b81c-bd64-4bdb-b579-91017b476b7f",
+      request: { product_url: "https://example.com" },
+    });
+
+    expect(schedule).not.toHaveBeenCalled();
+    expect(repositoryMocks.admitApiRequest).not.toHaveBeenCalled();
+  });
+
   it("returns controlled rate and provider-cost limits without scheduling work", async () => {
     const schedule = vi.fn();
     const service = createV1Service({ schedule });

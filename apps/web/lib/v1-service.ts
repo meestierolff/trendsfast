@@ -365,6 +365,16 @@ export function createV1Service(input: { schedule(publicId: string): void }): V1
             "The Idempotency-Key was already used for a different request.",
           );
         }
+        if (
+          prior.request.origin === "API" &&
+          prior.request.state === "QUEUED" &&
+          prior.request.startedAt === null &&
+          prior.request.completedAt === null &&
+          prior.request.failureCode === null &&
+          prior.request.failureMessage === null
+        ) {
+          input.schedule(prior.request.publicId);
+        }
         const reused = await responseFor(principal, prior.request.publicId);
         if (!reused)
           throw new ApiServiceError("CONFLICT", "The idempotent request is unavailable.");
