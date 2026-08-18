@@ -41,6 +41,10 @@ roleDescribe("real PostgreSQL runtime-role behavior", () => {
   const publicSourceRunId = randomUUID();
   const publicSignalId = randomUUID();
   const publicToken = `role_public_${randomUUID().replaceAll("-", "")}`;
+  const publicAdmissionProjectId = randomUUID();
+  const publicAdmissionContextId = randomUUID();
+  const publicAdmissionApiKeyId = randomUUID();
+  const publicAdmissionUrl = `https://public-admission-${randomUUID()}.example/`;
   const memberAuthUserId = randomUUID();
   const memberUrl = `https://member-project-${randomUUID()}.example`;
   const verificationTarget = {
@@ -157,9 +161,49 @@ roleDescribe("real PostgreSQL runtime-role behavior", () => {
          '{"provider":"role-test","retrievedAt":"2026-08-13T00:00:00.000Z","cached":false}'::jsonb)`,
       [publicSignalId, publicSourceRunId],
     );
+    await adminClient.pool.query(
+      `insert into public.projects(id, public_id, name, url, normalized_url)
+       values ($1, $2, 'Public admission role test', $3, $3)`,
+      [publicAdmissionProjectId, `project_${randomUUID().replaceAll("-", "")}`, publicAdmissionUrl],
+    );
+    await adminClient.pool.query(
+      `insert into public.project_context_versions(
+         id, project_id, version, inferred_name, category, audience, problem,
+         language, credible_topics, assumptions, context
+       ) values (
+         $1, $2, 1, 'Public admission role test', 'Integration test',
+         'Runtime-role integration', 'Verify exact public scan-run INSERT access',
+         'en', '[]'::jsonb, '[]'::jsonb, '{}'::jsonb
+       )`,
+      [publicAdmissionContextId, publicAdmissionProjectId],
+    );
+    await adminClient.pool.query(
+      `insert into public.api_keys(
+         id, project_id, name, visible_prefix, secret_hash, scopes, environment,
+         rate_limit_per_hour, provider_cost_limit_usd
+       ) values (
+         $1, $2, 'Public admission role test', $3, $4,
+         '["next_move:read","next_move:write"]'::jsonb, 'test', 100, 1
+       )`,
+      [
+        publicAdmissionApiKeyId,
+        publicAdmissionProjectId,
+        `tf_test_${randomUUID().replaceAll("-", "").slice(0, 16)}`,
+        `sha256:${"c".repeat(64)}`,
+      ],
+    );
   });
 
   afterAll(async () => {
+    await adminClient?.pool.query("delete from public.scan_requests where api_key_id = $1", [
+      publicAdmissionApiKeyId,
+    ]);
+    await adminClient?.pool.query("delete from public.api_keys where id = $1", [
+      publicAdmissionApiKeyId,
+    ]);
+    await adminClient?.pool.query("delete from public.projects where id = $1", [
+      publicAdmissionProjectId,
+    ]);
     await adminClient?.pool.query("delete from public.projects where normalized_url = $1", [
       `${memberUrl}/`,
     ]);
@@ -204,6 +248,76 @@ roleDescribe("real PostgreSQL runtime-role behavior", () => {
         properties: { source: "runtime-role-integration" },
       }),
     ).resolves.toMatchObject({ name: "pricing_viewed" });
+  });
+
+  it("admits a pinned project scan through the exact public-runtime scan-run INSERT ACL", async () => {
+    const now = new Date();
+    const admitted = await repositories.scans.admitApiRequest({
+      apiKeyId: publicAdmissionApiKeyId,
+      projectId: publicAdmissionProjectId,
+      projectContextVersionId: publicAdmissionContextId,
+      idempotencyKey: randomUUID(),
+      request: {
+        product_url: publicAdmissionUrl,
+        objective: "Verify exact public scan-run admission",
+        generation_level: "draft",
+      },
+      costReservationUsd: 0.01,
+      since: new Date(now.getTime() - 3_600_000),
+      now,
+    });
+
+    expect(admitted).toMatchObject({ status: "CREATED" });
+    if (admitted.status !== "CREATED") {
+      throw new Error("The public-runtime project scan was not admitted");
+    }
+    const storedRuns = await adminClient.pool.query<{
+      id: string;
+      scan_request_id: string;
+      project_context_version_id: string;
+      attempt: number;
+      state: string;
+      estimated_cost_usd: string;
+      actual_cost_usd: string;
+      created_at: Date;
+      updated_at: Date;
+    }>(
+      `select id, scan_request_id, project_context_version_id, attempt, state,
+              estimated_cost_usd, actual_cost_usd, created_at, updated_at
+         from public.scan_runs
+        where scan_request_id = $1`,
+      [admitted.request.id],
+    );
+    expect(storedRuns.rows).toEqual([
+      {
+        id: expect.stringMatching(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+        ),
+        scan_request_id: admitted.request.id,
+        project_context_version_id: publicAdmissionContextId,
+        attempt: 1,
+        state: "QUEUED",
+        estimated_cost_usd: "0.000000",
+        actual_cost_usd: "0.000000",
+        created_at: expect.any(Date),
+        updated_at: expect.any(Date),
+      },
+    ]);
+
+    for (const [column, value] of [
+      ["id", randomUUID()],
+      ["estimated_cost_usd", "0.000000"],
+      ["created_at", new Date()],
+    ] as const) {
+      await expect(
+        client.pool.query(
+          `insert into public.scan_runs(
+             scan_request_id, project_context_version_id, attempt, state, ${column}
+           ) values ($1, $2, 2, 'QUEUED', $3)`,
+          [admitted.request.id, publicAdmissionContextId, value],
+        ),
+      ).rejects.toMatchObject({ code: "42501" });
+    }
   });
 
   it("creates and reuses an owner project through the exact member-runtime column ACL", async () => {
