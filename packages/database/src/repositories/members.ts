@@ -106,6 +106,30 @@ const MEMBER_PROJECT_DAILY_CREATE_LIMIT = 3;
 const MEMBER_PROJECT_TOTAL_CAPACITY = 10;
 const MEMBER_PROJECT_CREATE_WINDOW_MS = 24 * 60 * 60 * 1_000;
 
+type CreatedProjectRow = {
+  id: string;
+  publicId: string;
+  name: string | null;
+  url: string;
+  normalizedUrl: string;
+  status: string;
+  publicCaseStudyConsent: boolean;
+  createdAt: Date | string;
+  updatedAt: Date | string;
+  archivedAt: Date | string | null;
+};
+
+function projectTimestamp(
+  value: Date | string,
+  field: "createdAt" | "updatedAt" | "archivedAt",
+): Date {
+  const timestamp = new Date(value instanceof Date ? value.getTime() : value);
+  if (!Number.isFinite(timestamp.getTime())) {
+    throw new Error(`Authenticated project ${field} is invalid`);
+  }
+  return timestamp;
+}
+
 export function isMemberConfirmedProjectContext(createdBy: string): boolean {
   const normalized = createdBy.trim();
   return normalized.startsWith("member:") && UUID.test(normalized.slice("member:".length));
@@ -600,18 +624,37 @@ export class MemberRepository {
       }
 
       const inferredName = parsed.hostname.replace(/^www\./i, "").split(".")[0] ?? "Product";
-      const [project] = await tx
-        .insert(projects)
-        .values({
-          publicId: createPrefixedId("project"),
-          name: inferredName
-            .replace(/[-_]+/g, " ")
-            .replace(/\b\w/g, (letter) => letter.toUpperCase()),
-          url: normalizedUrl,
-          normalizedUrl,
-        })
-        .returning();
-      if (!project) throw new Error("Could not create the authenticated project");
+      const inserted = await tx.execute<CreatedProjectRow>(sql`
+        INSERT INTO ${projects} ("public_id", "name", "url", "normalized_url")
+        VALUES (
+          ${createPrefixedId("project")},
+          ${inferredName.replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase())},
+          ${normalizedUrl},
+          ${normalizedUrl}
+        )
+        RETURNING
+          "id",
+          "public_id" AS "publicId",
+          "name",
+          "url",
+          "normalized_url" AS "normalizedUrl",
+          "status",
+          "public_case_study_consent" AS "publicCaseStudyConsent",
+          "created_at" AS "createdAt",
+          "updated_at" AS "updatedAt",
+          "archived_at" AS "archivedAt"
+      `);
+      const created = inserted.rows[0];
+      if (!created || inserted.rows.length !== 1) {
+        throw new Error("Could not create the authenticated project");
+      }
+      const project = {
+        ...created,
+        createdAt: projectTimestamp(created.createdAt, "createdAt"),
+        updatedAt: projectTimestamp(created.updatedAt, "updatedAt"),
+        archivedAt:
+          created.archivedAt === null ? null : projectTimestamp(created.archivedAt, "archivedAt"),
+      };
       await tx.insert(projectMemberships).values({
         projectId: project.id,
         userProfileId: profile.id,
